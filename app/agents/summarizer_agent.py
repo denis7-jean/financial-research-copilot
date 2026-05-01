@@ -1,0 +1,65 @@
+import json
+import os
+import time
+
+import boto3
+from dotenv import load_dotenv
+from pydantic import BaseModel
+
+load_dotenv()
+
+
+class SummaryResponse(BaseModel):
+    summary: str
+    key_points: list[str]
+    risk_flags: list[str]
+    agent: str = "summarize"
+    latency_ms: float
+
+
+class SummarizerAgent:
+    def __init__(self):
+        self._client = boto3.client("bedrock-runtime", region_name="us-east-1")
+        self._model_id = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
+
+    def run(self, query: str) -> SummaryResponse:
+        start = time.monotonic()
+        try:
+            response = self._client.converse(
+                modelId=self._model_id,
+                system=[{"text": "You are a financial document analyst. Always respond in valid JSON only."}],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "text": (
+                                    "Analyze the following and return JSON with keys: "
+                                    "summary (str), key_points (list[str]), risk_flags (list[str])."
+                                    f"\n\n{query}"
+                                )
+                            }
+                        ],
+                    }
+                ],
+            )
+            raw = response["output"]["message"]["content"][0]["text"]
+            data = json.loads(raw)
+            latency_ms = (time.monotonic() - start) * 1000
+            return SummaryResponse.model_validate({**data, "latency_ms": latency_ms})
+        except Exception as e:
+            latency_ms = (time.monotonic() - start) * 1000
+            print(f"SummarizerAgent.run error: {e}")
+            return SummaryResponse(
+                summary="Parse error",
+                key_points=[],
+                risk_flags=[],
+                latency_ms=latency_ms,
+            )
+
+
+if __name__ == "__main__":
+    load_dotenv()
+    agent = SummarizerAgent()
+    result = agent.run("Summarize the key risks in Goldman Sachs 2025 annual report")
+    print(result.model_dump())
