@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import tempfile
 import time
 
 import boto3
@@ -123,8 +124,8 @@ def build_and_save_index(bucket: str, index_s3_key: str, meta_s3_key: str, docs_
     index = faiss.IndexFlatIP(1024)
     index.add(embeddings)
 
-    local_index_path = "/tmp/financial_index.faiss"
-    local_meta_path = "/tmp/financial_meta.json"
+    local_index_path = os.path.join(tempfile.gettempdir(), "financial_index.faiss")
+    local_meta_path = os.path.join(tempfile.gettempdir(), "financial_meta.json")
 
     faiss.write_index(index, local_index_path)
     with open(local_meta_path, "w") as f:

@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 
 import boto3
 import faiss
@@ -26,8 +27,8 @@ def _load_index_if_needed():
     if _index is not None:
         return
 
-    local_index_path = "/tmp/financial_index.faiss"
-    local_meta_path = "/tmp/financial_meta.json"
+    local_index_path = os.path.join(tempfile.gettempdir(), "financial_index.faiss")
+    local_meta_path = os.path.join(tempfile.gettempdir(), "financial_meta.json")
 
     print("Loading FAISS index from S3...")
     s3.download_file(S3_BUCKET_NAME, FAISS_INDEX_S3_KEY, local_index_path)
