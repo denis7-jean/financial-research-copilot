@@ -35,7 +35,7 @@ _USER_PROMPT_TEMPLATE = "Classify this financial research query and respond with
 class RouterAgent:
     def __init__(self):
         self._client = boto3.client("bedrock-runtime", region_name="us-east-1")
-        self._model_id = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
+        self._model_id = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
         self.latency_ms: float = 0.0
 
     def route(self, query: str) -> RouterDecision:
@@ -57,7 +57,13 @@ class RouterAgent:
 
         try:
             raw = response["output"]["message"]["content"][0]["text"]
-            data = json.loads(raw)
+            text = raw.strip()
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+            text = text.strip()
+            data = json.loads(text)
             decision = RouterDecision.model_validate(data)
         except Exception as e:
             print(f"RouterAgent.route parse error: {e}")

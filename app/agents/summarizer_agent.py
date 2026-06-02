@@ -20,7 +20,7 @@ class SummaryResponse(BaseModel):
 class SummarizerAgent:
     def __init__(self):
         self._client = boto3.client("bedrock-runtime", region_name="us-east-1")
-        self._model_id = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
+        self._model_id = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 
     def run(self, query: str) -> SummaryResponse:
         start = time.monotonic()
@@ -44,7 +44,13 @@ class SummarizerAgent:
                 ],
             )
             raw = response["output"]["message"]["content"][0]["text"]
-            data = json.loads(raw)
+            text = raw.strip()
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+            text = text.strip()
+            data = json.loads(text)
             latency_ms = (time.monotonic() - start) * 1000
             return SummaryResponse.model_validate({**data, "latency_ms": latency_ms})
         except Exception as e:

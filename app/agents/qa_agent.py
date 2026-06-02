@@ -14,6 +14,7 @@ class QAResponse(BaseModel):
     confidence: float
     agent: str = "qa"
     latency_ms: float
+    retrieved_context: list[dict] = []
 
 
 class QAAgent:
@@ -31,6 +32,7 @@ class QAAgent:
                 citations=citations,
                 confidence=1.0 if citations else 0.5,
                 latency_ms=latency_ms,
+                retrieved_context=result.get("retrieved_context", []),
             )
         except Exception as e:
             latency_ms = (time.monotonic() - start) * 1000

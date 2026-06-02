@@ -8,7 +8,7 @@ from app.services.retriever import retrieve_chunks
 
 load_dotenv()
 
-BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
+BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 
 bedrock = boto3.client("bedrock-runtime", region_name="us-east-1")
 
@@ -21,6 +21,7 @@ def retrieve_and_generate(query: str, knowledge_base_id: str = None) -> dict:
             return {
                 "answer": "No relevant documents found.",
                 "citations": [],
+                "retrieved_context": [],
                 "error": "empty_retrieval",
             }
 
@@ -51,11 +52,15 @@ def retrieve_and_generate(query: str, knowledge_base_id: str = None) -> dict:
 
         answer = response["output"]["message"]["content"][0]["text"]
         citations = list({chunk["source"] for chunk in chunks})
+        retrieved_context = [
+            {"text": chunk["content"], "source": chunk["source"], "score": chunk["score"]}
+            for chunk in chunks
+        ]
 
-        return {"answer": answer, "citations": citations}
+        return {"answer": answer, "citations": citations, "retrieved_context": retrieved_context}
 
     except Exception as e:
-        return {"answer": "", "citations": [], "error": str(e)}
+        return {"answer": "", "citations": [], "retrieved_context": [], "error": str(e)}
 
 
 if __name__ == "__main__":
