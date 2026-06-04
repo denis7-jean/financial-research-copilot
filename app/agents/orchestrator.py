@@ -3,7 +3,7 @@ import time
 from dotenv import load_dotenv
 
 from app.agents.qa_agent import QAAgent, QAResponse
-from app.agents.router import RouterAgent, RouterDecision
+from app.agents.router import RouterAgent
 from app.agents.summarizer_agent import SummarizerAgent, SummaryResponse
 
 load_dotenv()

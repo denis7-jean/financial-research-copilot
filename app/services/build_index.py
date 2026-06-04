@@ -1,4 +1,3 @@
-import io
 import json
 import os
 import tempfile
@@ -134,7 +133,7 @@ def build_and_save_index(bucket: str, index_s3_key: str, meta_s3_key: str, docs_
     s3.upload_file(local_index_path, bucket, index_s3_key)
     s3.upload_file(local_meta_path, bucket, meta_s3_key)
 
-    print(f"\nDone.")
+    print("\nDone.")
     print(f"  PDFs processed : {pdf_count}")
     print(f"  Total chunks   : {len(all_chunks)}")
     print(f"  Index saved to : s3://{bucket}/{index_s3_key}")
