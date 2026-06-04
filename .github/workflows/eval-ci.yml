@@ -1,0 +1,115 @@
+name: Financial Copilot CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run ruff
+        run: ruff check app/ eval/ tests/
+
+  unit-tests:
+    name: Unit Tests
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run unit tests
+        run: pytest tests/ -m "not llm and not integration" -v
+
+  integration-tests:
+    name: Integration Tests
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      BEDROCK_MODEL_ID: ${{ secrets.BEDROCK_MODEL_ID }}
+      JUDGE_MODEL_ID: ${{ secrets.JUDGE_MODEL_ID }}
+      S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+      FAISS_INDEX_S3_KEY: ${{ secrets.FAISS_INDEX_S3_KEY }}
+      FAISS_META_S3_KEY: ${{ secrets.FAISS_META_S3_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Start uvicorn
+        run: uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+      - name: Wait for server
+        run: sleep 5
+      - name: Health check
+        run: |
+          curl -f http://localhost:8000/health || exit 1
+      - name: Smoke test /ask endpoint
+        run: |
+          curl -f -X POST http://localhost:8000/ask \
+            -H "Content-Type: application/json" \
+            -d '{"query": "What was JPMorgan net revenue in FY2025?"}' || exit 1
+
+  eval-gate:
+    name: Eval Gate (LLM-as-Judge)
+    needs: integration-tests
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      BEDROCK_MODEL_ID: ${{ secrets.BEDROCK_MODEL_ID }}
+      JUDGE_MODEL_ID: ${{ secrets.JUDGE_MODEL_ID }}
+      S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+      FAISS_INDEX_S3_KEY: ${{ secrets.FAISS_INDEX_S3_KEY }}
+      FAISS_META_S3_KEY: ${{ secrets.FAISS_META_S3_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Start uvicorn
+        run: uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+      - name: Wait for server
+        run: sleep 5
+      - name: Run LLM eval suite
+        run: pytest eval/test_llm_judge.py -m llm -v
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: eval/results/latest.json
+
+  deploy-ready:
+    name: Deploy Ready
+    needs: eval-gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm pipeline passed
+        run: |
+          echo "All gates passed. Repository is ready for Phase 7 Lambda deployment."
+          echo "Trigger Phase 7 manually via workflow_dispatch after Lambda is configured."

@@ -123,7 +123,10 @@ def judge_response(
         }
 
 
-def run_evaluation(queries: list[str]) -> dict:
+def run_evaluation(queries: list[str] | None = None) -> dict:
+    if queries is None:
+        from eval.eval_queries import EVAL_QUERIES
+        queries = EVAL_QUERIES
     orchestrator = CopilotOrchestrator()
     client = boto3.client("bedrock-runtime", region_name="us-east-1")
     results = []
