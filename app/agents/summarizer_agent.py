@@ -50,9 +50,12 @@ class SummarizerAgent:
                 if text.startswith("json"):
                     text = text[4:]
             text = text.strip()
-            data = json.loads(text)
+            parsed = json.loads(text)
+            parsed["summary"] = parsed.get("summary") or "No summary returned"
+            parsed["key_points"] = parsed.get("key_points") or []
+            parsed["risk_flags"] = parsed.get("risk_flags") or []
             latency_ms = (time.monotonic() - start) * 1000
-            return SummaryResponse.model_validate({**data, "latency_ms": latency_ms})
+            return SummaryResponse.model_validate({**parsed, "latency_ms": latency_ms})
         except Exception as e:
             latency_ms = (time.monotonic() - start) * 1000
             print(f"SummarizerAgent.run error: {e}")

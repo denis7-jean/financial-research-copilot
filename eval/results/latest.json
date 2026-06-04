@@ -1,0 +1,334 @@
+{
+  "summary": {
+    "total_queries": 20,
+    "judged_queries": 10,
+    "boundary_queries_excluded": 4,
+    "context_relevance_pass_rate": 0.8,
+    "faithfulness_pass_rate": 0.8,
+    "mean_context_relevance": 3.8,
+    "mean_faithfulness": 4.6,
+    "overall_pass": true
+  },
+  "results": [
+    {
+      "query": "What was JPMorgan Chase's total net revenue for fiscal year 2025?",
+      "task_type": "qa",
+      "agent_used": "qa",
+      "answer_preview": "According to JPMorgan Chase's 2025 Form 10-K, **total net revenue for fiscal year 2025 was $182.447 billion**.\n\nThis comprised:\n- Noninterest revenue: $87.004 billion\n- Net interest income: $95.443 bi",
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The first retrieved chunk explicitly states JPMorgan Chase's total net revenue for fiscal year 2025 as $182,447 million in the Consolidated Results of Operations table."
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "All three figures cited\u2014total net revenue of $182.447 billion, noninterest revenue of $87.004 billion, and net interest income of $95.443 billion\u2014are explicitly stated in the retrieved context's revenue table."
+      }
+    },
+    {
+      "query": "What was Goldman Sachs net earnings for fiscal year 2025?",
+      "task_type": "qa",
+      "agent_used": "qa",
+      "answer_preview": "I cannot find the net earnings figure for Goldman Sachs' fiscal year 2025 in the provided context. \n\nWhile the document contains extensive information about net revenues, operating expenses, and pre-t",
+      "context_relevance": {
+        "score": 3,
+        "pass": true,
+        "reasoning": "The chunks provide extensive detail about Goldman Sachs' revenues, operating expenses, efficiency ratio, and pre-tax earnings for FY2025, but do not explicitly state the net earnings (net income) figure for fiscal year 2025, requiring inference."
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "Every claim in the answer is explicitly supported by the context: pre-tax earnings of $17.57 billion for 2025 and the effective tax rate of 21.4% for 2025 are both directly stated in the retrieved excerpts."
+      }
+    },
+    {
+      "query": "What is Mastercard's total net revenue for fiscal year 2025?",
+      "task_type": "qa",
+      "agent_used": "qa",
+      "answer_preview": "I cannot answer this question based on the provided context. The documents provided contain financial information from JPMorgan Chase and Goldman Sachs for fiscal year 2025, but they do not include an",
+      "context_relevance": {
+        "score": 1,
+        "pass": false,
+        "reasoning": "The retrieved chunks contain financial data for JPMorgan Chase and Goldman Sachs for FY2025, but no information about Mastercard's total net revenue."
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The answer makes no factual claims about financial data; it correctly states that the context does not contain Mastercard information, which is fully supported by the retrieved context."
+      }
+    },
+    {
+      "query": "What was BlackRock's total assets under management in 2025?",
+      "task_type": "qa",
+      "agent_used": "qa",
+      "answer_preview": "# BlackRock's Total Assets Under Management in 2025\n\nAccording to BlackRock's FY2025 10-K filing, **total assets under management (AUM) at the end of 2025 was $14,041,518 million, or approximately $14",
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The retrieved chunks explicitly state BlackRock's total AUM at December 31, 2025 was $14,041,518 million (~$14 trillion), directly answering the query."
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "Both figures ($14,041,518 million at end of 2025 and $11,551,251 million at end of 2024) are explicitly stated in the retrieved context's Executive Summary and AUM tables."
+      }
+    },
+    {
+      "query": "What was Bank of America's net income for fiscal year 2025?",
+      "task_type": "qa",
+      "agent_used": "qa",
+      "answer_preview": "# Bank of America Net Income - Fiscal Year 2025\n\nAccording to Bank of America's 10-K filing for FY2025, **net income was $30.509 billion** in 2025.\n\n**Key Details:**\n- **Net income:** $30.509 billion ",
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The retrieved chunks directly state Bank of America's net income for fiscal year 2025 was $30,509 million ($30.5 billion), confirmed across multiple financial statements including the income statement, cash flow statement, and summary income table."
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "Every claim in the answer is explicitly supported by the context, including net income figures for 2025 and 2024, EPS, net income applicable to common shareholders, preferred stock dividends, and the drivers of the net income increase."
+      }
+    },
+    {
+      "query": "What was JPMorgan Chase's return on equity in 2025?",
+      "task_type": "qa",
+      "agent_used": "qa",
+      "answer_preview": "# JPMorgan Chase Return on Equity (ROE) in 2025\n\nAccording to the provided context from JPMorgan Chase's 2025 Form 10-K, the **consolidated return on equity was 17% for 2025**.\n\nHowever, individual bu",
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The retrieved chunks explicitly state JPMorgan Chase's return on equity for 2025 as 17% in the segment results table showing 'Return on equity... 17% 18% 17%' for years 2025, 2024, and 2023 respectively."
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "All claims are explicitly supported by the context: the 17% consolidated ROE for 2025, CCB ROE of 32%, CIB ROE of 18%, and AWM ROE of 40% are all directly stated in the retrieved documents."
+      }
+    },
+    {
+      "query": "How many employees did JPMorgan Chase have in 2025?",
+      "task_type": "qa",
+      "agent_used": "qa",
+      "answer_preview": "# JPMorgan Chase Employee Count in 2025\n\nAccording to JPMorgan Chase's 2025 Form 10-K filing, as of December 31, 2025, the firm had **318,512 employees globally**.\n\nThe document further breaks down th",
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The chunks explicitly state that as of December 31, 2025, JPMorganChase had 318,512 employees globally, with a full breakdown by region and line of business provided."
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "Every factual claim in the answer is explicitly supported by the retrieved context, including total employee count, regional breakdowns, LOB breakdowns, U.S. percentage, and number of countries."
+      }
+    },
+    {
+      "query": "What was Mastercard's net income margin in 2025?",
+      "task_type": "qa",
+      "agent_used": "qa",
+      "answer_preview": "I cannot answer this question based on the provided context. The documents supplied are from JPMorgan Chase's 2025 Form 10-K and Goldman Sachs's 2025 Form 10-K. There is no information about Mastercar",
+      "context_relevance": {
+        "score": 1,
+        "pass": false,
+        "reasoning": "The retrieved chunks contain no information about Mastercard's financials; they are entirely about JPMorgan Chase and Goldman Sachs."
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The answer makes no factual claims about any company's financials; it only states that the provided context contains JPMorgan Chase and Goldman Sachs 10-K documents and lacks Mastercard data, which is accurate based on the retrieved context."
+      }
+    },
+    {
+      "query": "What dividends did Goldman Sachs pay in fiscal year 2025?",
+      "task_type": "qa",
+      "agent_used": "qa",
+      "answer_preview": "# Goldman Sachs Dividends in Fiscal Year 2025\n\nBased on the provided context, Goldman Sachs paid the following dividends in fiscal year 2025:\n\n## Preferred Stock Dividends\nGoldman Sachs declared prefe",
+      "context_relevance": {
+        "score": 4,
+        "pass": true,
+        "reasoning": "The chunks contain detailed information about preferred stock dividends paid per share for various series, total preferred dividends of ~$225 million declared as subsequent events, preferred stock dividends of $876 million for 2025 in the parent company statements, total dividends and dividend equivalents paid of $5.277 billion in the cash flow statement, and a common stock dividend increase from $4.00 per share, though the full common dividend history for all quarters of FY2025 is not explicitly enumerated."
+      },
+      "faithfulness": {
+        "score": 3,
+        "pass": false,
+        "reasoning": "Most claims are supported by the context, but the claim that the common stock dividend was increased from $4.00 per common share to $4.50 per common share is not supported \u2014 the context only states the dividend 'increased from $4.00 per common share' without specifying the new amount of $4.50."
+      }
+    },
+    {
+      "query": "Which had higher net revenue in 2025, JPMorgan Chase or Goldman Sachs?",
+      "task_type": "qa",
+      "agent_used": "qa",
+      "answer_preview": "# Net Revenue Comparison: JPMorgan Chase vs Goldman Sachs (2025)\n\nBased on the provided documents:\n\n- **JPMorgan Chase total net revenue (2025): $182.447 billion**\n- **Goldman Sachs net revenues (2025",
+      "context_relevance": {
+        "score": 4,
+        "pass": true,
+        "reasoning": "The chunks contain JPMorgan Chase's total net revenue for 2025 ($182,447 million) directly, and Goldman Sachs's net revenues for 2024 ($53.51 billion) with context that 2025 was higher, but the exact 2025 Goldman Sachs total net revenue figure is not explicitly stated in the retrieved chunks."
+      },
+      "faithfulness": {
+        "score": 3,
+        "pass": false,
+        "reasoning": "The JPMorgan Chase figure of $182.447 billion is directly supported by the context. However, the Goldman Sachs figure of $53.51 billion cited in the answer is actually the 2024 net revenues figure from the context ('Net revenues in the consolidated statements of earnings were $53.51 billion for 2024'), not the 2025 figure, making this an unsupported or incorrect factual claim for 2025."
+      }
+    },
+    {
+      "query": "Compare the risk factors of BlackRock and Mastercard in 2025.",
+      "task_type": "summarize",
+      "agent_used": "summarize",
+      "answer_preview": "",
+      "context_relevance": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      },
+      "faithfulness": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      }
+    },
+    {
+      "query": "Summarize the key risks in Goldman Sachs 2025 annual report.",
+      "task_type": "summarize",
+      "agent_used": "summarize",
+      "answer_preview": "",
+      "context_relevance": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      },
+      "faithfulness": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      }
+    },
+    {
+      "query": "What are the main business segments of JPMorgan Chase?",
+      "task_type": "summarize",
+      "agent_used": "summarize",
+      "answer_preview": "",
+      "context_relevance": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      },
+      "faithfulness": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      }
+    },
+    {
+      "query": "Summarize BlackRock's investment strategy as described in their 2025 10-K.",
+      "task_type": "summarize",
+      "agent_used": "summarize",
+      "answer_preview": "",
+      "context_relevance": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      },
+      "faithfulness": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      }
+    },
+    {
+      "query": "What is Bank of America's approach to managing credit risk?",
+      "task_type": "summarize",
+      "agent_used": "summarize",
+      "answer_preview": "",
+      "context_relevance": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      },
+      "faithfulness": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      }
+    },
+    {
+      "query": "Describe Mastercard's competitive position in the payments industry.",
+      "task_type": "summarize",
+      "agent_used": "summarize",
+      "answer_preview": "",
+      "context_relevance": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      },
+      "faithfulness": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      }
+    },
+    {
+      "query": "What is a financial statement?",
+      "task_type": "summarize",
+      "agent_used": "summarize",
+      "answer_preview": "",
+      "context_relevance": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      },
+      "faithfulness": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      }
+    },
+    {
+      "query": "What was Apple's revenue in 2025?",
+      "task_type": "qa",
+      "agent_used": "qa",
+      "answer_preview": "I cannot answer this question based on the provided context. The documents are Goldman Sachs and JPMorgan Chase 10-K filings for fiscal year 2025, which discuss these financial institutions' own reven",
+      "context_relevance": {
+        "score": 1,
+        "pass": false,
+        "reasoning": "The retrieved chunks contain financial data for Goldman Sachs, JPMorgan Chase, and mentions of Apple Card transactions, but none contain Apple Inc.'s revenue figures for 2025."
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The answer makes no factual claims about Apple's revenue and correctly notes the context only contains Goldman Sachs and JPMorgan Chase filings, which is accurately supported by the retrieved context."
+      }
+    },
+    {
+      "query": "Goldman Sachs 2025",
+      "task_type": "summarize",
+      "agent_used": "summarize",
+      "answer_preview": "",
+      "context_relevance": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      },
+      "faithfulness": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      }
+    },
+    {
+      "query": "What was JPMorgan Chase's revenue and also summarize their risk factors?",
+      "task_type": "summarize",
+      "agent_used": "summarize",
+      "answer_preview": "",
+      "context_relevance": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      },
+      "faithfulness": {
+        "score": null,
+        "pass": null,
+        "reasoning": "skipped_summarize"
+      }
+    }
+  ]
+}
