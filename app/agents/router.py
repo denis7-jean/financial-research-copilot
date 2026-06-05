@@ -10,6 +10,10 @@ from pydantic import BaseModel
 load_dotenv()
 
 
+def _log(event: str, payload: dict) -> None:
+    print(json.dumps({"event": event, **payload}))
+
+
 class RouterDecision(BaseModel):
     task_type: Literal["qa", "summarize"]
     confidence: float
@@ -38,7 +42,7 @@ class RouterAgent:
         self._model_id = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
         self.latency_ms: float = 0.0
 
-    def route(self, query: str) -> RouterDecision:
+    def route(self, query: str, trace_id: str = "") -> RouterDecision:
         prompt = _USER_PROMPT_TEMPLATE.format(query=query)
 
         start = time.monotonic()
@@ -49,7 +53,7 @@ class RouterAgent:
                 messages=[{"role": "user", "content": [{"text": prompt}]}],
             )
         except Exception as e:
-            print(f"RouterAgent.route converse error: {e}")
+            _log("router.error", {"trace_id": trace_id, "error": str(e)})
             self.latency_ms = (time.monotonic() - start) * 1000
             return _FALLBACK
         finally:
@@ -66,7 +70,7 @@ class RouterAgent:
             data = json.loads(text)
             decision = RouterDecision.model_validate(data)
         except Exception as e:
-            print(f"RouterAgent.route parse error: {e}")
+            _log("router.error", {"trace_id": trace_id, "error": str(e)})
             return _FALLBACK
 
         if decision.confidence < 0.6:

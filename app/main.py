@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import uuid
 
 import boto3
 from dotenv import load_dotenv
@@ -43,12 +44,13 @@ class QueryRequest(BaseModel):
     query: str
 
 
-def _log(endpoint: str, query: str, latency_ms: float):
+def _log(endpoint: str, query: str, latency_ms: float, trace_id: str = ""):
     entry = json.dumps({
         "timestamp": time.time(),
         "endpoint": endpoint,
         "query_preview": query[:100],
         "latency_ms": latency_ms,
+        "trace_id": trace_id,
     })
     try:
         cw.put_log_events(
@@ -62,24 +64,27 @@ def _log(endpoint: str, query: str, latency_ms: float):
 
 @app.post("/ask")
 def ask(request: QueryRequest):
+    trace_id = str(uuid.uuid4())
     start = time.monotonic()
-    result = orchestrator.process(request.query)
+    result = orchestrator.process(request.query, trace_id=trace_id)
     latency_ms = (time.monotonic() - start) * 1000
-    _log("ask", request.query, latency_ms)
-    return result
+    _log("/ask", request.query, latency_ms, trace_id)
+    return {**result, "trace_id": trace_id}
 
 
 @app.post("/summarize")
 def summarize(request: QueryRequest):
+    trace_id = str(uuid.uuid4())
     start = time.monotonic()
-    result = orchestrator.process_direct(request.query, "summarize")
+    result = orchestrator.process_direct(request.query, "summarize", trace_id=trace_id)
     latency_ms = (time.monotonic() - start) * 1000
-    _log("summarize", request.query, latency_ms)
-    return result
+    _log("/summarize", request.query, latency_ms, trace_id)
+    return {**result, "trace_id": trace_id}
 
 
 @app.get("/health")
 def health():
+    trace_id = str(uuid.uuid4())
     return {
         "status": "ok",
         "region": os.getenv("AWS_DEFAULT_REGION"),

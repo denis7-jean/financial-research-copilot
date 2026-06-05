@@ -9,6 +9,10 @@ from pydantic import BaseModel
 load_dotenv()
 
 
+def _log(event: str, payload: dict) -> None:
+    print(json.dumps({"event": event, **payload}))
+
+
 class SummaryResponse(BaseModel):
     summary: str
     key_points: list[str]
@@ -22,7 +26,7 @@ class SummarizerAgent:
         self._client = boto3.client("bedrock-runtime", region_name="us-east-1")
         self._model_id = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 
-    def run(self, query: str) -> SummaryResponse:
+    def run(self, query: str, trace_id: str = "") -> SummaryResponse:
         start = time.monotonic()
         try:
             response = self._client.converse(
@@ -55,10 +59,11 @@ class SummarizerAgent:
             parsed["key_points"] = parsed.get("key_points") or []
             parsed["risk_flags"] = parsed.get("risk_flags") or []
             latency_ms = (time.monotonic() - start) * 1000
+            _log("summarizer.completed", {"trace_id": trace_id})
             return SummaryResponse.model_validate({**parsed, "latency_ms": latency_ms})
         except Exception as e:
             latency_ms = (time.monotonic() - start) * 1000
-            print(f"SummarizerAgent.run error: {e}")
+            _log("summarizer.error", {"trace_id": trace_id, "error": str(e)})
             return SummaryResponse(
                 summary="Parse error",
                 key_points=[],
