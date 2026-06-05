@@ -84,7 +84,6 @@ def summarize(request: QueryRequest):
 
 @app.get("/health")
 def health():
-    trace_id = str(uuid.uuid4())
     return {
         "status": "ok",
         "region": os.getenv("AWS_DEFAULT_REGION"),
