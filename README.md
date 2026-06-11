@@ -4,7 +4,7 @@ A production-grade agentic AI system built on AWS that answers questions
 and generates summaries from FY2025 SEC 10-K filings using a router-based
 multi-agent architecture.
 
-**Live endpoint:** `https://wjobiulo6xuygzb2b4bzzbdmb40geatf.lambda-url.us-east-1.on.aws`
+**Deployment:** Live on AWS Lambda (endpoint available on request)
 
 ---
 
@@ -106,19 +106,19 @@ lint → unit-tests → integration-tests → eval-gate → deploy-ready
 
 **Health check:**
 ```bash
-curl https://wjobiulo6xuygzb2b4bzzbdmb40geatf.lambda-url.us-east-1.on.aws/health
+curl https://<lambda-url>.lambda-url.us-east-1.on.aws/health
 ```
 
 **Ask a question (RAG):**
 ```bash
-curl -X POST https://wjobiulo6xuygzb2b4bzzbdmb40geatf.lambda-url.us-east-1.on.aws/ask \
+curl -X POST https://<lambda-url>.lambda-url.us-east-1.on.aws/ask \
   -H "Content-Type: application/json" \
   -d '{"query": "What was JPMorgan net revenue in FY2025?"}'
 ```
 
 **Summarize:**
 ```bash
-curl -X POST https://wjobiulo6xuygzb2b4bzzbdmb40geatf.lambda-url.us-east-1.on.aws/summarize \
+curl -X POST https://<lambda-url>.lambda-url.us-east-1.on.aws/summarize \
   -H "Content-Type: application/json" \
   -d '{"query": "Summarize Goldman Sachs key risks in 2025"}'
 ```
