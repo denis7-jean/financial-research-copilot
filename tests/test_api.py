@@ -183,3 +183,80 @@ def test_summarize_end_to_end_contract(client, monkeypatch):
     assert set(body) == ASK_KEYS
     assert set(body["result"]) == SUMMARY_RESULT_KEYS
     assert body["router_confidence"] is None
+
+
+# --- /evaluate: disabled by default, token-gated, bounded ---------------------------
+
+def _enable_evaluate(monkeypatch, token="s3cr3t-test-token"):
+    monkeypatch.setenv("ENABLE_EVALUATE_ENDPOINT", "true")
+    monkeypatch.setenv("EVALUATE_ENDPOINT_TOKEN", token)
+    return token
+
+
+def test_evaluate_is_disabled_by_default(client, monkeypatch):
+    orch = RecordingOrchestrator()
+    monkeypatch.setattr(main_module, "orchestrator", orch)
+    response = client.post("/evaluate", json={"test_cases": [{"query": "q"}]})
+    assert response.status_code == 404
+    assert orch.calls == []
+
+
+def test_evaluate_enabled_without_token_configured_stays_closed(client, monkeypatch):
+    monkeypatch.setenv("ENABLE_EVALUATE_ENDPOINT", "true")
+    monkeypatch.setenv("EVALUATE_ENDPOINT_TOKEN", "")
+    response = client.post("/evaluate", json={"test_cases": []}, headers={"X-Evaluate-Token": ""})
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize("headers", [{}, {"X-Evaluate-Token": "wrong"}])
+def test_evaluate_rejects_missing_or_wrong_token(client, monkeypatch, headers):
+    _enable_evaluate(monkeypatch)
+    orch = RecordingOrchestrator()
+    monkeypatch.setattr(main_module, "orchestrator", orch)
+    response = client.post("/evaluate", json={"test_cases": [{"query": "q"}]}, headers=headers)
+    assert response.status_code == 401
+    assert orch.calls == []
+
+
+def test_evaluate_with_valid_token_preserves_response_shape(client, monkeypatch, capsys):
+    token = _enable_evaluate(monkeypatch)
+    orch = RecordingOrchestrator()
+    monkeypatch.setattr(main_module, "orchestrator", orch)
+    response = client.post(
+        "/evaluate",
+        json={"test_cases": [{"query": "a"}, {"query": "b"}]},
+        headers={"X-Evaluate-Token": token},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body, list) and len(body) == 2
+    assert body[0] == orch.result
+    trace_ids = [call[2] for call in orch.calls]
+    assert all(trace_ids) and trace_ids[0] != trace_ids[1]
+    assert len(_timing_records(capsys.readouterr().out)) == 2
+
+
+def test_evaluate_rejects_too_many_cases_before_running_any(client, monkeypatch):
+    token = _enable_evaluate(monkeypatch)
+    orch = RecordingOrchestrator()
+    monkeypatch.setattr(main_module, "orchestrator", orch)
+    cases = [{"query": "q"}] * (main_module.EVALUATE_MAX_CASES + 1)
+    response = client.post("/evaluate", json={"test_cases": cases}, headers={"X-Evaluate-Token": token})
+    assert response.status_code == 413
+    assert orch.calls == []
+
+
+@pytest.mark.parametrize("cases, status", [
+    ("not-a-list", 422),
+    ([{"nope": 1}], 422),
+    ([{"query": "   "}], 422),
+    (["just a string"], 422),
+    ([{"query": "x" * 2001}], 413),
+])
+def test_evaluate_validates_cases(client, monkeypatch, cases, status):
+    token = _enable_evaluate(monkeypatch)
+    orch = RecordingOrchestrator()
+    monkeypatch.setattr(main_module, "orchestrator", orch)
+    response = client.post("/evaluate", json={"test_cases": cases}, headers={"X-Evaluate-Token": token})
+    assert response.status_code == status
+    assert orch.calls == []

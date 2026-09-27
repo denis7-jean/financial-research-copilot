@@ -1,10 +1,11 @@
+import hmac
 import json
 import os
 import time
 
 import boto3
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -117,10 +118,48 @@ def health():
     }
 
 
+EVALUATE_MAX_CASES = 25
+EVALUATE_MAX_QUERY_CHARS = 2000
+
+
+def _evaluate_token() -> str | None:
+    """The configured /evaluate token, or None when the endpoint is disabled.
+
+    Fails closed: the endpoint is off unless ENABLE_EVALUATE_ENDPOINT=true AND a
+    non-empty EVALUATE_ENDPOINT_TOKEN is set. Nothing in this repo calls it; the
+    eval harness drives the orchestrator directly.
+    """
+    if os.getenv("ENABLE_EVALUATE_ENDPOINT", "false").strip().lower() != "true":
+        return None
+    token = os.getenv("EVALUATE_ENDPOINT_TOKEN", "")
+    return token or None
+
+
 @app.post("/evaluate")
-def evaluate(payload: dict):
+def evaluate(payload: dict, x_evaluate_token: str | None = Header(default=None)):
+    expected = _evaluate_token()
+    if expected is None:
+        # Indistinguishable from a route that does not exist.
+        raise HTTPException(status_code=404, detail="Not Found")
+    if not x_evaluate_token or not hmac.compare_digest(x_evaluate_token, expected):
+        raise HTTPException(status_code=401, detail="Invalid or missing X-Evaluate-Token")
+
+    cases = payload.get("test_cases", [])
+    if not isinstance(cases, list):
+        raise HTTPException(status_code=422, detail="test_cases must be a list")
+    if len(cases) > EVALUATE_MAX_CASES:
+        raise HTTPException(status_code=413, detail=f"At most {EVALUATE_MAX_CASES} test_cases per request")
+    for case in cases:
+        query = case.get("query") if isinstance(case, dict) else None
+        if not isinstance(query, str) or not query.strip():
+            raise HTTPException(status_code=422, detail="Each test case needs a non-empty string 'query'")
+        if len(query) > EVALUATE_MAX_QUERY_CHARS:
+            raise HTTPException(status_code=413, detail=f"query exceeds {EVALUATE_MAX_QUERY_CHARS} characters")
+
     results = []
-    for case in payload.get("test_cases", []):
-        result = orchestrator.process(case["query"])
+    for case in cases:
+        with request_trace("/evaluate", case["query"]) as trace:
+            result = orchestrator.process(case["query"], trace_id=trace.trace_id)
+        emit(trace)
         results.append(result)
     return results
