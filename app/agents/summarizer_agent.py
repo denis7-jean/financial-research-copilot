@@ -6,6 +6,8 @@ import boto3
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
+from app.observability import record_converse_usage, record_error, stage
+
 load_dotenv()
 
 
@@ -28,25 +30,29 @@ class SummarizerAgent:
 
     def run(self, query: str, trace_id: str = "") -> SummaryResponse:
         start = time.monotonic()
+        phase = "summarize_invoke"
         try:
-            response = self._client.converse(
-                modelId=self._model_id,
-                system=[{"text": "You are a financial document analyst. Always respond in valid JSON only."}],
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "text": (
-                                    "Analyze the following and return JSON with keys: "
-                                    "summary (str), key_points (list[str]), risk_flags (list[str])."
-                                    f"\n\n{query}"
-                                )
-                            }
-                        ],
-                    }
-                ],
-            )
+            with stage("llm.summarize"):
+                response = self._client.converse(
+                    modelId=self._model_id,
+                    system=[{"text": "You are a financial document analyst. Always respond in valid JSON only."}],
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "text": (
+                                        "Analyze the following and return JSON with keys: "
+                                        "summary (str), key_points (list[str]), risk_flags (list[str])."
+                                        f"\n\n{query}"
+                                    )
+                                }
+                            ],
+                        }
+                    ],
+                )
+            record_converse_usage("summarize", self._model_id, response)
+            phase = "summarize_parse"
             raw = response["output"]["message"]["content"][0]["text"]
             text = raw.strip()
             if text.startswith("```"):
@@ -63,7 +69,8 @@ class SummarizerAgent:
             return SummaryResponse.model_validate({**parsed, "latency_ms": latency_ms})
         except Exception as e:
             latency_ms = (time.monotonic() - start) * 1000
-            _log("summarizer.error", {"trace_id": trace_id, "error": str(e)})
+            record_error(phase, e)
+            _log("summarizer.error", {"trace_id": trace_id, "phase": phase, "error": str(e)})
             return SummaryResponse(
                 summary="Parse error",
                 key_points=[],

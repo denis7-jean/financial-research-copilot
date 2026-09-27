@@ -33,6 +33,9 @@ class QAAgent:
             latency_ms = (time.monotonic() - start) * 1000
             citations = result.get("citations", [])
             retrieved_context = result.get("retrieved_context", [])
+            if result.get("error"):
+                # Response contract is unchanged; the failure is surfaced in logs and the trace.
+                _log("qa.degraded", {"trace_id": trace_id, "error": str(result["error"])[:200]})
             _log("qa.completed", {
                 "trace_id": trace_id,
                 "chunks_retrieved": len(retrieved_context),

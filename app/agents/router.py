@@ -7,6 +7,8 @@ import boto3
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
+from app.observability import record_converse_usage, set_route
+
 load_dotenv()
 
 
@@ -55,9 +57,11 @@ class RouterAgent:
         except Exception as e:
             _log("router.error", {"trace_id": trace_id, "error": str(e)})
             self.latency_ms = (time.monotonic() - start) * 1000
-            return _FALLBACK
+            return self._fallback("fallback_invoke_error", e)
         finally:
             self.latency_ms = (time.monotonic() - start) * 1000
+
+        record_converse_usage("router", self._model_id, response)
 
         try:
             raw = response["output"]["message"]["content"][0]["text"]
@@ -71,12 +75,23 @@ class RouterAgent:
             decision = RouterDecision.model_validate(data)
         except Exception as e:
             _log("router.error", {"trace_id": trace_id, "error": str(e)})
-            return _FALLBACK
+            return self._fallback("fallback_parse_error", e)
 
         if decision.confidence < 0.6:
+            set_route(
+                router_outcome="fallback_low_confidence",
+                model_task_type=decision.task_type,
+                model_confidence=decision.confidence,
+            )
             return _FALLBACK
 
+        set_route(router_outcome="model")
         return decision
+
+    @staticmethod
+    def _fallback(outcome: str, error: Exception) -> RouterDecision:
+        set_route(router_outcome=outcome, router_error_type=type(error).__name__)
+        return _FALLBACK
 
 
 if __name__ == "__main__":
