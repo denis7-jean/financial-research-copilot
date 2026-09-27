@@ -6,7 +6,15 @@ import pytest
 
 from app import observability
 from eval import llm_judge
-from eval.eval_queries import BOUNDARY_QUERIES, CASES_BY_ID, EVAL_CASES, EVAL_QUERIES, EvalCase
+from eval.eval_queries import (
+    BOUNDARY_QUERIES,
+    CASES_BY_ID,
+    EVAL_CASES,
+    EVAL_QUERIES,
+    LEGACY_QUERIES_2026_06,
+    RETIRED_LEGACY_IDS,
+    EvalCase,
+)
 from eval.metrics import (
     GATES,
     company_for_source,
@@ -19,31 +27,11 @@ from eval.metrics import (
 )
 from tests.conftest import converse_text
 
-ORIGINAL_20 = [
-    "What was JPMorgan Chase's total net revenue for fiscal year 2025?",
-    "What was Goldman Sachs net earnings for fiscal year 2025?",
-    "What is Mastercard's total net revenue for fiscal year 2025?",
-    "What was BlackRock's total assets under management in 2025?",
-    "What was Bank of America's net income for fiscal year 2025?",
-    "What was JPMorgan Chase's return on equity in 2025?",
-    "How many employees did JPMorgan Chase have in 2025?",
-    "What was Mastercard's net income margin in 2025?",
-    "What dividends did Goldman Sachs pay in fiscal year 2025?",
-    "Which had higher net revenue in 2025, JPMorgan Chase or Goldman Sachs?",
-    "Compare the risk factors of BlackRock and Mastercard in 2025.",
-    "Summarize the key risks in Goldman Sachs 2025 annual report.",
-    "What are the main business segments of JPMorgan Chase?",
-    "Summarize BlackRock's investment strategy as described in their 2025 10-K.",
-    "What is Bank of America's approach to managing credit risk?",
-    "Describe Mastercard's competitive position in the payments industry.",
-    "What is a financial statement?",
-    "What was Apple's revenue in 2025?",
-    "Goldman Sachs 2025",
-    "What was JPMorgan Chase's revenue and also summarize their risk factors?",
-]
 
 JPM_SRC = "s3://b/docs/jpmorgan-chase-10k-fy2025.pdf"
 GS_SRC = "s3://b/docs/goldman-sachs-10k-fy2025.pdf"
+VISA_SRC = "s3://financial-copilot-hl/docs/visa-10k-fy2025.pdf"
+VISA_LEGACY_SRC = "s3://financial-copilot-hl/docs/mastercard-10k-fy2025.pdf"
 
 
 # --- dataset ----------------------------------------------------------------------
@@ -52,9 +40,22 @@ def test_case_ids_are_unique():
     assert len(CASES_BY_ID) == len(EVAL_CASES)
 
 
-def test_legacy_queries_are_preserved_verbatim_and_in_order():
-    assert EVAL_QUERIES == ORIGINAL_20
-    assert BOUNDARY_QUERIES == ORIGINAL_20[16:]
+def test_active_dataset_has_34_cases():
+    assert len(EVAL_CASES) == 34
+
+
+def test_legacy_queries_are_active_verbatim_or_explicitly_retired():
+    legacy_ids = [f"L{i:02d}" for i in range(1, 21)]
+    assert len(LEGACY_QUERIES_2026_06) == 20
+    for case_id, query in zip(legacy_ids, LEGACY_QUERIES_2026_06):
+        if case_id in RETIRED_LEGACY_IDS:
+            assert case_id not in CASES_BY_ID
+            assert CASES_BY_ID[RETIRED_LEGACY_IDS[case_id]].replaces == case_id
+        else:
+            assert CASES_BY_ID[case_id].query == query
+            assert CASES_BY_ID[case_id].legacy is True
+    assert EVAL_QUERIES == [q for i, q in zip(legacy_ids, LEGACY_QUERIES_2026_06) if i not in RETIRED_LEGACY_IDS]
+    assert BOUNDARY_QUERIES == list(LEGACY_QUERIES_2026_06[16:])
 
 
 def test_labels_use_allowed_values():
@@ -78,11 +79,40 @@ def test_abstain_cases_have_no_reference_answer():
             assert case.reference_answer is None, case.id
 
 
-def test_mastercard_cases_are_flagged_as_corpus_defect():
+def test_mastercard_questions_are_out_of_corpus_abstentions():
+    mastercard = [c for c in EVAL_CASES if "mastercard" in c.query.lower()]
+    assert {c.id for c in mastercard} == {"L03", "L08"}
+    for case in mastercard:
+        assert case.category == "out_of_corpus", case.id
+        assert case.expected_behavior == "abstain", case.id
+        assert case.reference_answer is None and case.companies == (), case.id
+        assert "mastercard" in case.tags, case.id
+        # Visa is the nearest in-corpus neighbour; its figures must not leak into the answer.
+        assert case.forbidden_facts, case.id
+
+
+def test_visa_is_the_fifth_company_with_verified_references():
+    visa = [c for c in EVAL_CASES if "V" in c.companies]
+    assert {c.id for c in visa} == {"N10", "V01", "V02", "V03"}
+    for case in visa:
+        if case.reference_source:
+            assert case.reference_source.startswith("visa-10k-fy2025.pdf"), case.id
+    assert CASES_BY_ID["V03"].gated_for_retrieval
+
+
+def test_reference_sources_only_cite_corpus_files():
+    corpus = {"jpmorgan-chase-10k-fy2025.pdf", "goldman-sachs-10k-fy2025.pdf", "bank-of-america-10k-fy2025.pdf",
+              "blackrock-10k-fy2025.pdf", "visa-10k-fy2025.pdf"}
     for case in EVAL_CASES:
-        if "Mastercard" in case.query:
-            assert case.category == "corpus_defect", case.id
-            assert case.expected_behavior in ("abstain", "either"), case.id
+        if case.reference_source:
+            cited = {part.strip().split(" ")[0] for part in case.reference_source.split(";")}
+            assert cited <= corpus, (case.id, cited)
+        assert "mastercard" not in (case.reference_source or "").lower(), case.id
+
+
+def test_no_active_case_expects_mastercard_retrieval():
+    for case in EVAL_CASES:
+        assert "MA" not in case.companies, case.id
 
 
 def test_needs_review_cases_are_never_in_the_gated_population():
@@ -98,7 +128,12 @@ def test_needs_review_cases_are_never_in_the_gated_population():
     (GS_SRC, "GS"),
     ("s3://b/docs/bank-of-america-10k-fy2025.pdf", "BAC"),
     ("s3://b/docs/blackrock-10k-fy2025.pdf", "BLK"),
-    ("s3://b/docs/mastercard-10k-fy2025.pdf", "V"),
+    ("s3://b/docs/visa-10k-fy2025.pdf", "V"),
+    # Legacy object name (Visa content) until the S3 migration is complete.
+    ("s3://financial-copilot-hl/docs/mastercard-10k-fy2025.pdf", "V"),
+    # Any other Mastercard file is Mastercard, never Visa.
+    ("s3://b/docs/mastercard-10k-fy2026.pdf", "MA"),
+    ("s3://b/docs/MASTERCARD-10K-FY2025.PDF", "V"),
     ("s3://b/docs/apple-10k.pdf", "UNKNOWN"),
     ("", "UNKNOWN"),
 ])
@@ -417,7 +452,7 @@ def test_judge_calls_are_deterministic(tmp_path):
 
 
 def test_legacy_comparable_uses_pre_phase0_population(tmp_path):
-    ids = ["L01", "L03", "L12", "L18"]  # qa, qa (corpus defect), summarize, boundary
+    ids = ["L01", "L03", "L12", "L18"]  # qa, qa (Mastercard, out of corpus), summarize, boundary
     cases = [CASES_BY_ID[i] for i in ids]
     results = {
         CASES_BY_ID["L01"].query: _qa_result("x", [JPM_SRC]),
@@ -435,7 +470,7 @@ def test_legacy_comparable_uses_pre_phase0_population(tmp_path):
 
 
 def test_query_strings_are_accepted_for_backward_compatibility(tmp_path):
-    query = ORIGINAL_20[0]
+    query = LEGACY_QUERIES_2026_06[0]
     summary, data, _ = _run(tmp_path, [query, "an unlabeled query"],
                             {query: _qa_result("x", [JPM_SRC]), "an unlabeled query": _qa_result("y", [JPM_SRC])},
                             FakeJudge({}))
@@ -460,7 +495,43 @@ def test_full_dataset_runs_offline(tmp_path):
     summary, data, _ = _run(tmp_path, list(EVAL_CASES), results, FakeJudge({}))
     gated = [c for c in EVAL_CASES if c.gated_for_retrieval]
     assert summary["total_queries"] == len(EVAL_CASES) == 34
-    assert summary["judged_queries"] == len(gated) == 18
+    assert summary["judged_queries"] == len(gated) == 19
     assert summary["routing"]["accuracy_all"]["pass_rate"] == 1.0
-    assert {r["id"] for r in summary["corpus_defects"]} == {"L03", "L08", "L11", "L16"}
-    assert {r["id"] for r in summary["boundary_and_out_of_corpus"]} == {"L17", "L18", "L19", "L20", "N11", "N12"}
+    assert {r["id"] for r in summary["boundary_and_out_of_corpus"]} == {
+        "L03", "L08", "L17", "L18", "L19", "L20", "N11"}
+    assert summary["forbidden_fact_leaks"]["cases_checked"] == ["L03", "L08"]
+    assert summary["forbidden_fact_leaks"]["leaks"] == {}
+
+
+def test_visa_figures_in_a_mastercard_answer_are_flagged(tmp_path):
+    case = CASES_BY_ID["L03"]
+    answer = "Mastercard is not covered, but Visa's net revenue was $40.0 billion."
+    judge = FakeJudge({case.query: {"assess": {"abstained": True, "correctness_score": None, "reasoning": "r"}}})
+    summary, data, _ = _run(tmp_path, [case], {case.query: _qa_result(answer, [VISA_SRC])}, judge)
+    row = data["results"][0]
+    assert row["forbidden_fact_hits"] == ["40.0 billion"]
+    assert summary["forbidden_fact_leaks"]["leaks"] == {"L03": ["40.0 billion"]}
+    # Abstention is judged separately and can still pass.
+    assert row["abstention_appropriate"] is True
+
+
+def test_clean_mastercard_abstention_is_appropriate_and_leak_free(tmp_path):
+    case = CASES_BY_ID["L08"]
+    answer = "The provided documents do not include Mastercard's filing, so I cannot answer."
+    judge = FakeJudge({case.query: {"assess": {"abstained": True, "correctness_score": None, "reasoning": "r"}}})
+    summary, data, _ = _run(tmp_path, [case], {case.query: _qa_result(answer, [VISA_SRC])}, judge)
+    row = data["results"][0]
+    assert row["abstention_appropriate"] is True
+    assert row["forbidden_fact_hits"] == []
+    assert row["retrieval"]["sources"] == ["V"]
+    assert row["retrieval"]["contaminated"] is None  # no expected company for out-of-corpus
+
+
+def test_visa_question_counts_visa_chunks_as_on_target(tmp_path):
+    case = CASES_BY_ID["N10"]
+    results = {case.query: _qa_result("$40,000 million", [VISA_SRC, VISA_LEGACY_SRC, JPM_SRC])}
+    _, data, _ = _run(tmp_path, [case], results, FakeJudge({}))
+    retrieval = data["results"][0]["retrieval"]
+    assert retrieval["sources"] == ["V", "V", "JPM"]
+    assert retrieval["company_precision"] == pytest.approx(2 / 3)
+    assert retrieval["contaminated"] is True

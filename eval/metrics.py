@@ -9,14 +9,24 @@ import math
 import os
 from dataclasses import asdict, dataclass
 
-# Source file name fragment -> company ticker. The file named "mastercard..."
-# contains Visa Inc.'s 10-K (see eval_queries module docstring), so it maps to V.
+# Exact legacy object names, checked before the patterns. Visa's 10-K was
+# originally uploaded and indexed as docs/mastercard-10k-fy2025.pdf. Until the S3
+# metadata migration (scripts/migrate_visa_source.py) is complete and the old
+# object is deleted, retrieved chunks may still carry that source. Remove this
+# entry afterwards.
+LEGACY_SOURCE_NAMES: dict[str, str] = {
+    "mastercard-10k-fy2025.pdf": "V",
+}
+
+# Source file name fragment -> company ticker.
 SOURCE_COMPANY_PATTERNS: tuple[tuple[str, str], ...] = (
     ("jpmorgan", "JPM"),
     ("goldman", "GS"),
     ("bank-of-america", "BAC"),
     ("blackrock", "BLK"),
-    ("mastercard", "V"),
+    ("visa-10k", "V"),
+    # Mastercard is not in the corpus; any other Mastercard file must not count as Visa.
+    ("mastercard", "MA"),
 )
 
 BOUNDARY_LEGACY_IDS = frozenset({"L17", "L18", "L19", "L20"})
@@ -57,6 +67,8 @@ GATES: tuple[Gate, ...] = (
 
 def company_for_source(source: str) -> str:
     name = os.path.basename(source or "").lower()
+    if name in LEGACY_SOURCE_NAMES:
+        return LEGACY_SOURCE_NAMES[name]
     for fragment, ticker in SOURCE_COMPANY_PATTERNS:
         if fragment in name:
             return ticker
@@ -304,7 +316,12 @@ def summarize_results(rows: list[dict], judge_calls: list[dict]) -> dict:
         "abstention": abstention,
         "boundary_and_out_of_corpus": [_compact(r) for r in rows
                                        if r["category"] in ("boundary", "out_of_corpus")],
-        "corpus_defects": [_compact(r) for r in rows if r["category"] == "corpus_defect"],
+        "forbidden_fact_leaks": {
+            "note": "Deterministic: answers containing a fact that belongs to a different "
+                    "company (e.g. Visa figures in a Mastercard answer).",
+            "cases_checked": [r["id"] for r in rows if r.get("forbidden_facts_checked")],
+            "leaks": {r["id"]: r["forbidden_fact_hits"] for r in rows if r.get("forbidden_fact_hits")},
+        },
         "errors": {
             "cases_with_system_errors": [r["id"] for r in rows if r["system_error"] or r["trace_errors"]],
             "judge_errors": sum(r["judge_errors"] for r in rows),

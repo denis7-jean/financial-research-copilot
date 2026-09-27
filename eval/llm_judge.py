@@ -289,6 +289,9 @@ def evaluate_case(case: EvalCase, orchestrator, client, retrieve_evidence, judge
         abstained = None
         correctness = _failed("empty_answer") if case.reference_answer else None
 
+    answer_lower = answer.lower()
+    forbidden_hits = [fact for fact in case.forbidden_facts if fact.lower() in answer_lower]
+
     if case.expected_behavior == "either":
         abstention_appropriate = None
     elif not answer:
@@ -331,6 +334,10 @@ def evaluate_case(case: EvalCase, orchestrator, client, retrieve_evidence, judge
         "answer_correctness": correctness,
         "abstained": abstained,
         "abstention_appropriate": abstention_appropriate,
+        "forbidden_facts_checked": bool(case.forbidden_facts),
+        "forbidden_fact_hits": forbidden_hits,
+        "tags": list(case.tags),
+        "replaces": case.replaces,
         "judge_errors": judge_errors,
         "latency": {
             "total_ms": record["total_ms"],
@@ -427,6 +434,7 @@ def _print_summary(summary: dict) -> None:
         print(f"{gate['metric']:<32} {_fmt(gate['value']):>8}  >= {gate['threshold']:.0%}  {status}  [{flag}]")
     print(f"Router mismatches: {summary['routing']['mismatches']}")
     print(f"Contaminated     : {summary['retrieval']['companies']['contaminated_cases']}")
+    print(f"Fact leaks       : {summary['forbidden_fact_leaks']['leaks']}")
     print(f"System errors    : {summary['errors']['cases_with_system_errors']}")
     print(f"Judge errors     : {summary['errors']['judge_errors']}")
     print(f"Overall pass     : {summary['overall_pass']}  (enforced gates only)")

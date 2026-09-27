@@ -11,8 +11,16 @@ for the judge. See [Cost](#cost) below.
 
 ## Dataset
 
-The dataset has 34 labeled cases. The 20 original queries are kept verbatim as `L01`–`L20`.
-Phase 0 added 14 cases, `N01`–`N14`.
+The dataset has 34 labeled cases:
+- 18 of the 20 original queries, kept verbatim as `L01`–`L20`.
+- 12 cases added in Phase 0 (`N01`–`N14`, without N12).
+- 3 Visa cases (`V01`–`V03`).
+
+When Visa replaced Mastercard as the fifth company:
+- L11 and L16 (Mastercard summaries) were retired and replaced by V01 and V02.
+- N12 (Morgan Stanley, out of corpus) was replaced by V03, keeping the total at 34.
+- The original 20 queries are listed in `LEGACY_QUERIES_2026_06`. Their archived results are in
+  `eval/results/legacy/`.
 
 | Label | Meaning |
 |---|---|
@@ -21,17 +29,21 @@ Phase 0 added 14 cases, `N01`–`N14`.
 | `expected_behavior` | `answer`, `abstain` (the filings don't contain the answer), or `either` (not scored for abstention) |
 | `companies` | Tickers whose filing should supply the retrieved context |
 | `reference_answer` / `reference_source` | Ground truth checked against the local PDFs in `../data` (file and page) |
+| `forbidden_facts` | Strings that must not appear in the answer, such as Visa's figures in an answer about Mastercard |
 
-**Corpus defect.** `data/mastercard-10k-fy2025.pdf` is Visa Inc.'s 10-K (EDGAR accession
-`0001403161-25-000089`, fiscal year ended 2025-09-30), not Mastercard's. This was verified from
-the PDF metadata and cover page. Re-chunking the local files reproduces the index size exactly
-(2,220 vectors), so S3 very likely holds the same file; this has not been checked against S3.
+**Corpus.** The five companies are JPMorgan Chase, Goldman Sachs, Bank of America,
+BlackRock and **Visa**. Visa's FY2025 10-K has EDGAR accession `0001403161-25-000089` and a
+fiscal year ending 2025-09-30.
 
-Consequences:
-- The corpus contains no Mastercard filing.
-- The Mastercard cases (L03, L08, L11, L16) are tagged `corpus_defect`. Their expected behavior
-  is `abstain` (or `either` for L11).
-- N10 asks about Visa to show that the mislabeled file is still retrievable.
+**Mastercard is out of corpus.**
+- L03 and L08 are Mastercard abstention cases (`out_of_corpus`, tagged `mastercard`).
+- Retrieval will surface Visa chunks for them. Visa's figures are listed as `forbidden_facts`,
+  and any leak is reported deterministically under `forbidden_fact_leaks`.
+
+**Source names.** Visa's PDF was first uploaded as `docs/mastercard-10k-fy2025.pdf`.
+- `eval/metrics.py` maps that exact legacy name to Visa (`V`) until the S3 rename is complete.
+- Any other Mastercard file name maps to `MA`.
+- See `docs/runbooks/visa-source-migration.md`.
 
 ## Metrics
 
@@ -47,15 +59,15 @@ Consequences:
 | Latency / tokens / cost | From the request trace (`app/observability.py`) | All cases | Reported |
 
 \* **Gated QA population**: `expected_route=qa`, `expected_behavior=answer`, and a clear route
-label. This is 18 cases. It is fixed by the labels, so the router can't shrink it.
+label. This is 19 cases. It is fixed by the labels, so the router can't shrink it.
 
 **Failures are never excluded.** A gated case that is misrouted, returns an error or an empty
 answer, or gets a judge error (exception or unparseable output) counts as a **failure**.
 Judge errors are also counted separately under `errors.judge_errors`.
 
 **Always visible.** Boundary and out-of-corpus cases appear under
-`boundary_and_out_of_corpus`, and the corpus-defect cases under `corpus_defects`, in every
-results file.
+`boundary_and_out_of_corpus` in every results file. Checks for leaked facts from other
+companies appear under `forbidden_fact_leaks`.
 
 **Continuity.** `legacy_comparable` recomputes context relevance and faithfulness using the
 pre-Phase-0 population rule (legacy queries routed to qa, boundary queries excluded). It is for
@@ -63,7 +75,7 @@ comparison only. It is not gated, because that population depends on what the ro
 
 ### Known limitations of the metrics
 
-- n = 18 for the enforced gates, so each case moves the pass rate by about 5.6 points.
+- n = 19 for the enforced gates, so each case moves the pass rate by about 5.3 points.
 - One run of a nondeterministic system. The judge is at temperature 0; the system under test is
   not (Phase 0 does not change inference parameters).
 - Summary grounding penalizes true claims that don't appear in the 5 evidence chunks.
