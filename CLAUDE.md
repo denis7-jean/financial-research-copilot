@@ -13,6 +13,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## AWS Configuration
 - Region: us-east-1 (enforce on all boto3 clients)
 - S3 bucket: financial-copilot-hl (PDFs at /docs/ prefix)
+- Corpus: JPMorgan Chase, Goldman Sachs, Bank of America, BlackRock, Visa. Mastercard is out of corpus.
+  Visa's PDF was uploaded as docs/mastercard-10k-fy2025.pdf; see docs/runbooks/visa-source-migration.md
+- Never run build_index while both docs/mastercard-10k-fy2025.pdf and docs/visa-10k-fy2025.pdf exist
 - FAISS index stored at S3 keys from env: FAISS_INDEX_S3_KEY, FAISS_META_S3_KEY
 - Bedrock model: us.anthropic.claude-haiku-4-5-20251001-v1:0
 - Embedding model: amazon.titan-embed-text-v2:0 (1024 dimensions)
@@ -66,6 +69,10 @@ financial-multi-agent-copilot/
 │   └── results/
 │       ├── latest.json        ← generated, gitignored
 │       └── legacy/            ← archived pre-Phase-0 result
+├── scripts/
+│   ├── package_lambda.ps1
+│   └── migrate_visa_source.py ← S3 Visa rename (plan is read-only; execute/rollback gated)
+├── docs/runbooks/visa-source-migration.md
 ├── .github/workflows/eval-ci.yml
 ├── .env                           ← Never commit
 ├── .gitignore

@@ -12,7 +12,7 @@ multi-agent architecture.
 
 - **Multi-agent orchestration** — RouterAgent classifies intent and dispatches to specialized agents
 - **Manual RAG pipeline** — PDF extraction → chunking → Titan Embeddings V2 → FAISS vector search → Claude generation, all via pure boto3
-- **Production CI/CD** — 5-job GitHub Actions pipeline. An LLM-as-judge gate enforces ≥ 80% context relevance and faithfulness on 18 labeled QA cases
+- **Production CI/CD** — 5-job GitHub Actions pipeline. An LLM-as-judge gate enforces ≥ 80% context relevance and faithfulness on 19 labeled QA cases
 - **Serverless deployment** — FastAPI + Mangum on AWS Lambda with a Function URL
 - **Observability** — one structured `request.timing` record per request: stage latency, Bedrock token usage, router outcome, cold-start flag and trace ID
 
@@ -43,7 +43,7 @@ Pydantic validated response + trace_id
 **RAG Pipeline (one-time indexing):**
 
 ```
-5 x FY2025 10-K PDFs (S3)             ← see Known Limitations: one file is mislabeled
+5 x FY2025 10-K PDFs (S3)             ← JPM, GS, BAC, BLK, Visa
 ↓ PyMuPDF extraction
 ↓ 500-word chunks (50-word overlap)
 ↓ Titan Embeddings V2 (1024 dims)
@@ -112,7 +112,7 @@ lint → unit-tests → integration-tests → eval-gate → deploy-ready
 
 What each job actually verifies:
 
-- **lint** — `ruff check app/ eval/ tests/`.
+- **lint** — `ruff check app/ eval/ tests/ scripts/`.
 - **unit-tests** — `pytest tests/ -m "not llm and not integration"`:
   - Covers routing and fallbacks, error paths, response contracts, `/evaluate` access control,
     trace records and all evaluation/metric logic.
@@ -224,19 +224,25 @@ Five FY2025 10-K filings stored in S3:
 - Goldman Sachs
 - Bank of America
 - BlackRock
-- Visa (the file is named `mastercard-10k-fy2025.pdf`; see below)
+- Visa (fiscal year ended September 30, 2025)
+
+**Mastercard is not covered.** Questions about Mastercard (or any other company outside the
+five) are out of corpus; the correct behavior is to say the documents don't contain the answer.
+
+**Pending S3 rename.** Visa's 10-K was originally uploaded as `docs/mastercard-10k-fy2025.pdf`,
+and the live index still cites it under that name.
+- Until the approved migration in
+  [`docs/runbooks/visa-source-migration.md`](docs/runbooks/visa-source-migration.md) runs,
+  citations for Visa chunks show the old path.
+- The content, chunks and vectors are unaffected, as verified row by row against the PDF.
 
 ---
 
 ## Known Limitations
 
-- **The Mastercard filing is not in the corpus.**
-  - `mastercard-10k-fy2025.pdf` is actually Visa Inc.'s 10-K (EDGAR accession
-    `0001403161-25-000089`), as verified from the local file.
-  - Mastercard questions therefore cannot be answered from the documents. This, rather than
-    ranking, explains the earlier "Mastercard retrieval" failures.
-  - The index size matches the local files exactly, so S3 very likely holds the same file; this
-    has not been checked against S3.
+- **Visa citations use the old file name** until the S3 metadata migration runs (see Data
+  Sources). The earlier "Mastercard retrieval" failures came from this mislabeling: Mastercard
+  was never in the corpus. Retrieval ranking was not the cause.
 - **No company filtering in retrieval.** Top-5 similarity search runs over the shared index, so
   chunks from other companies can appear in the context.
 - **The summarizer is not grounded.** SummarizerAgent calls Claude without retrieval. When
@@ -325,6 +331,13 @@ eval/
 └── results/legacy/          ← Archived pre-Phase-0 result
 
 tests/                       ← Offline unit tests (network blocked in conftest.py)
+
+scripts/
+├── package_lambda.ps1       ← Lambda packaging (manual)
+└── migrate_visa_source.py   ← S3 Visa rename: read-only plan, gated execute/rollback
+
+docs/runbooks/
+└── visa-source-migration.md ← Evidence, exact S3 writes, Lambda refresh, rollback
 
 .github/workflows/
 └── eval-ci.yml              ← 5-job CI/CD pipeline
