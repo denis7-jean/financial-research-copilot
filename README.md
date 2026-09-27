@@ -12,9 +12,9 @@ multi-agent architecture.
 
 - **Multi-agent orchestration** — RouterAgent classifies intent and dispatches to specialized agents
 - **Manual RAG pipeline** — PDF extraction → chunking → Titan Embeddings V2 → FAISS vector search → Claude generation, all via pure boto3
-- **Production CI/CD** — 5-job GitHub Actions pipeline with an LLM-as-Judge eval gate enforcing 80% quality threshold
-- **Serverless deployment** — FastAPI + Mangum on AWS Lambda with Function URL
-- **Observability** — UUID trace_id threaded through every layer, structured JSON logs queryable in CloudWatch Logs Insights
+- **Production CI/CD** — 5-job GitHub Actions pipeline. An LLM-as-judge gate enforces ≥ 80% context relevance and faithfulness on 18 labeled QA cases
+- **Serverless deployment** — FastAPI + Mangum on AWS Lambda with a Function URL
+- **Observability** — one structured `request.timing` record per request: stage latency, Bedrock token usage, router outcome, cold-start flag and trace ID
 
 ---
 
@@ -27,23 +27,25 @@ FastAPI (/ask or /summarize)          ← Mangum ASGI adapter on AWS Lambda
 ↓
 CopilotOrchestrator
 ↓
-RouterAgent (Claude Haiku 4.5)        ← classifies: "qa" or "summarize"
+RouterAgent (Claude Haiku 4.5)        ← classifies: "qa" or "summarize" (/ask only)
 ↓                    ↓
-QAAgent              SummarizerAgent
+QAAgent              SummarizerAgent  ← direct Converse call, no retrieval
 ↓
-retriever.py                          ← FAISS similarity search
+retriever.py                          ← Titan query embedding + FAISS similarity search
 ↓
 bedrock_client.py                     ← Claude Haiku 4.5 via Converse API
 ↓
 Pydantic validated response + trace_id
 ```
 
+`/summarize` bypasses the router and goes straight to the SummarizerAgent.
+
 **RAG Pipeline (one-time indexing):**
 
 ```
-5 x FY2025 SEC 10-K PDFs (S3)
+5 x FY2025 10-K PDFs (S3)             ← see Known Limitations: one file is mislabeled
 ↓ PyMuPDF extraction
-↓ 500-word chunks
+↓ 500-word chunks (50-word overlap)
 ↓ Titan Embeddings V2 (1024 dims)
 ↓ FAISS IndexFlatIP
 → 2,220 vectors stored on S3
@@ -55,7 +57,7 @@ Pydantic validated response + trace_id
 
 | Component | Technology |
 |---|---|
-| LLM | Claude Haiku 4.5 (main), Claude Sonnet 4.6 (eval judge) |
+| LLM | Claude Haiku 4.5 (router, QA, summarizer), Claude Sonnet 4.6 (eval judge) |
 | Embeddings | Amazon Titan Embeddings V2 |
 | Vector store | FAISS IndexFlatIP (manual, $0/month) |
 | API framework | FastAPI + Mangum |
@@ -63,7 +65,7 @@ Pydantic validated response + trace_id
 | Storage | Amazon S3 |
 | LLM API | Amazon Bedrock (pure boto3, no wrappers) |
 | CI/CD | GitHub Actions (5-job pipeline) |
-| Eval | Custom LLM-as-Judge (RAGAS-inspired) |
+| Eval | Custom LLM-as-judge with labeled cases (RAGAS-inspired) |
 | Linting | Ruff |
 
 **Hard constraints (no exceptions):**
@@ -75,16 +77,30 @@ Pydantic validated response + trace_id
 
 ## Eval Results
 
-Evaluated against 20 queries across 5 categories using Claude Sonnet 4.6 as judge:
+**Measured** (last run of the pre-Phase-0 harness, 2026-06-04; archived at
+`eval/results/legacy/2026-06-04_pre_phase0_harness.json`):
 
 | Metric | Score | Threshold |
 |---|---|---|
-| Context Relevance | 80% | 80% ✅ |
-| Faithfulness | 90% | 80% ✅ |
+| Context Relevance | 80% (8/10) | 80% |
+| Faithfulness | 80% (8/10) | 80% |
 | Mean Context Relevance | 3.8 / 5 | — |
-| Mean Faithfulness | 4.8 / 5 | — |
+| Mean Faithfulness | 4.6 / 5 | — |
 
-Eval gate runs automatically on every push to main via GitHub Actions.
+What that run did **not** measure:
+- Only 10 of the 20 queries were judged. The 9 routed to the summarizer were skipped, and the
+  boundary queries were excluded.
+- Routing accuracy, answer correctness and abstention were not measured.
+- The population depended on router output.
+
+**Current harness (Phase 0)** — see [`eval/README.md`](eval/README.md):
+- 34 labeled cases.
+- Separate metrics for routing, retrieval relevance, faithfulness, summary grounding, answer
+  correctness, abstention and cross-company contamination.
+- Label-based gate populations.
+- Latency and token capture per case.
+
+**It has not been run yet.** No results from the new harness exist, and none are claimed here.
 
 ---
 
@@ -94,11 +110,61 @@ Eval gate runs automatically on every push to main via GitHub Actions.
 lint → unit-tests → integration-tests → eval-gate → deploy-ready
 ```
 
-- **lint** — Ruff checks app/, eval/, tests/
-- **unit-tests** — pytest, no AWS calls
-- **integration-tests** — live uvicorn, /health + /ask smoke test
-- **eval-gate** — 20-query LLM-as-Judge eval, fails build if below 80%
-- **deploy-ready** — confirms all gates passed
+What each job actually verifies:
+
+- **lint** — `ruff check app/ eval/ tests/`.
+- **unit-tests** — `pytest tests/ -m "not llm and not integration"`:
+  - Covers routing and fallbacks, error paths, response contracts, `/evaluate` access control,
+    trace records and all evaluation/metric logic.
+  - Bedrock, S3 and CloudWatch are mocked.
+  - The test harness forces fake credentials and blocks botocore network I/O, so these tests
+    cannot reach AWS.
+- **integration-tests** (live AWS):
+  - Starts uvicorn and checks `/health`.
+  - Sends one `/ask` request. Fails on a non-2xx status, an `error` field, an empty answer or a
+    missing `trace_id`.
+  - It does not check answer content.
+- **eval-gate** (live, billable) — `pytest eval/test_llm_judge.py -m llm`:
+  - Runs all 34 cases.
+  - Fails the build if context relevance or faithfulness falls below 80% on the gated QA
+    population.
+  - Other metrics are report-only.
+  - Results are uploaded as a build artifact.
+- **deploy-ready** — confirms the earlier jobs passed. **It does not deploy anything.**
+  Deployment is a manual step (`scripts/package_lambda.ps1`).
+
+The pipeline runs on pushes and pull requests to `main`. The integration and eval-gate jobs make
+Bedrock calls.
+
+---
+
+## Observability
+
+Each `/ask`, `/summarize` and (authorized) `/evaluate` request writes one JSON line to stdout,
+which Lambda ships to CloudWatch Logs. The record has `"event": "request.timing"` and contains:
+
+- `trace_id` (the same value returned in the response)
+- `endpoint`
+- `cold_start` (true only for the first request in a process)
+- `total_ms`
+- `stages_ms`: `route`, `agent`, `retrieval.index_load`, `retrieval.embed`, `retrieval.search`,
+  `qa.build_context`, `llm.qa_generate`, `llm.summarize`, `request_log`
+- `model_calls`: input/output tokens and Bedrock server latency for each of `router`,
+  `embed_query`, `qa_generate` and `summarize`
+- `route`: task type, confidence, and `router_outcome` (`model`, `fallback_invoke_error`,
+  `fallback_parse_error`, `fallback_low_confidence` or `direct`)
+- `errors`: failures that the API still reports with HTTP 200
+- `query_chars` and a 12-character SHA-256 prefix of the query
+
+The query text itself is never logged. The digest is pseudonymous, not anonymous.
+
+The custom log group `/financial-copilot/requests` still receives a small per-request entry. It
+is on by default; set `COPILOT_CW_REQUEST_LOG=false` to disable it. The entry now carries
+`query_chars` in place of the former 100-character `query_preview`.
+
+**Measured latency data:** none is committed to this repository. The example response below is a
+single request, not a benchmark. P50/P95 figures will come from the first approved baseline eval
+run or from CloudWatch Logs Insights over `request.timing` records.
 
 ---
 
@@ -123,7 +189,7 @@ curl -X POST https://<lambda-url>.lambda-url.us-east-1.on.aws/summarize \
   -d '{"query": "Summarize Goldman Sachs key risks in 2025"}'
 ```
 
-**Example response:**
+**Example response** (one request; illustrative, not a benchmark):
 ```json
 {
   "task_type": "qa",
@@ -140,24 +206,50 @@ curl -X POST https://<lambda-url>.lambda-url.us-east-1.on.aws/summarize \
 }
 ```
 
+`total_latency_ms` is router plus agent time only. Errors are returned in an `error` field with
+HTTP 200.
+
+**`/evaluate`** is disabled by default and returns 404. To enable it:
+- Set `ENABLE_EVALUATE_ENDPOINT=true` **and** a non-empty `EVALUATE_ENDPOINT_TOKEN`.
+- Send the token in an `X-Evaluate-Token` header.
+- A request may contain at most 25 cases, with queries of at most 2,000 characters.
+
 ---
 
 ## Data Sources
 
-Five FY2025 SEC 10-K filings stored in S3:
+Five FY2025 10-K filings stored in S3:
 
 - JPMorgan Chase
 - Goldman Sachs
 - Bank of America
 - BlackRock
-- Mastercard
+- Visa (the file is named `mastercard-10k-fy2025.pdf`; see below)
 
 ---
 
 ## Known Limitations
 
-- **Mastercard FAISS retrieval** — cross-company vector confusion; Mastercard queries occasionally return JPMorgan/Goldman chunks due to overlapping financial terminology in the shared index
-- **Summarizer context** — SummarizerAgent makes direct Converse API calls without RAG retrieval; it does not ground responses in the 10-K documents
+- **The Mastercard filing is not in the corpus.**
+  - `mastercard-10k-fy2025.pdf` is actually Visa Inc.'s 10-K (EDGAR accession
+    `0001403161-25-000089`), as verified from the local file.
+  - Mastercard questions therefore cannot be answered from the documents. This, rather than
+    ranking, explains the earlier "Mastercard retrieval" failures.
+  - The index size matches the local files exactly, so S3 very likely holds the same file; this
+    has not been checked against S3.
+- **No company filtering in retrieval.** Top-5 similarity search runs over the shared index, so
+  chunks from other companies can appear in the context.
+- **The summarizer is not grounded.** SummarizerAgent calls Claude without retrieval. When
+  `/ask` routes a question to it, the answer is not based on the filings.
+- **Errors return HTTP 200** with an `error` field or an empty answer. Failures are visible in
+  the `request.timing` trace.
+- **`/ask` and `/summarize` are unauthenticated** and allow CORS from any origin.
+- **Packaging script.**
+  - `scripts/package_lambda.ps1` installs packages for the host platform. On Windows that means
+    Windows binaries, for example `pydantic_core`.
+  - It does not install `faiss-cpu` or `numpy`.
+  - A package built this way on Windows will not import on Lambda (Linux) unless those gaps are
+    covered some other way, such as a Linux build or a layer.
 
 ---
 
@@ -179,6 +271,9 @@ cp .env.example .env
 
 # Run locally
 uvicorn app.main:app --reload --port 8000
+
+# Offline tests (no AWS calls)
+pytest tests/ -m "not llm and not integration" -v
 ```
 
 **Required `.env` keys:**
@@ -193,28 +288,43 @@ FAISS_INDEX_S3_KEY=index/financial_index.faiss
 FAISS_META_S3_KEY=index/financial_meta.json
 ```
 
+**Optional keys:**
+```
+COPILOT_CW_REQUEST_LOG=true        # custom CloudWatch request log (default on)
+ENABLE_EVALUATE_ENDPOINT=false     # /evaluate stays 404 unless true AND a token is set
+EVALUATE_ENDPOINT_TOKEN=           # secret; set in the deployment environment, never commit
+EVAL_RESULTS_PATH=eval/results/latest.json
+EVAL_SLEEP_SECONDS=2
+```
+
 ---
 
 ## Project Structure
 
 ```
 app/
-├── main.py                  ← FastAPI app + CloudWatch logging
+├── main.py                  ← FastAPI app, request tracing, CloudWatch request log
 ├── lambda_handler.py        ← Mangum ASGI adapter for Lambda
+├── observability.py         ← request.timing trace: stages, tokens, cold start
 ├── agents/
 │   ├── orchestrator.py      ← CopilotOrchestrator
 │   ├── router.py            ← RouterAgent (intent classification)
 │   ├── qa_agent.py          ← QAAgent (RAG-grounded answers)
-│   └── summarizer_agent.py  ← SummarizerAgent
+│   └── summarizer_agent.py  ← SummarizerAgent (no retrieval)
 └── services/
     ├── build_index.py       ← One-time PDF → FAISS indexing pipeline
     ├── retriever.py         ← FAISS similarity search
     └── bedrock_client.py    ← RAG generation via Bedrock
 
 eval/
-├── llm_judge.py             ← LLM-as-Judge evaluation pipeline
-├── eval_queries.py          ← 20 test queries + boundary cases
-└── test_llm_judge.py        ← pytest wrapper for CI eval gate
+├── README.md                ← Evaluation methodology, metrics, gates, cost
+├── eval_queries.py          ← 34 labeled cases with verified references
+├── metrics.py               ← Pure metric/gate logic (single source of thresholds)
+├── llm_judge.py             ← LLM-as-judge harness (live)
+├── test_llm_judge.py        ← CI eval gate (live)
+└── results/legacy/          ← Archived pre-Phase-0 result
+
+tests/                       ← Offline unit tests (network blocked in conftest.py)
 
 .github/workflows/
 └── eval-ci.yml              ← 5-job CI/CD pipeline
