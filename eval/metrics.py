@@ -222,13 +222,23 @@ INFRASTRUCTURE_KINDS = frozenset({"access_denied", "throttled", "unavailable", "
 # Model-output failures are genuine system findings: they count against the
 # metrics but do not invalidate the run.
 MODEL_OUTPUT_KINDS = frozenset({"model_error", "invalid_model_output"})
+# Failure codes raised by an offline network guard (tests/offline_guard.py). The
+# app classifies them as "internal", but the request never reached AWS, so the
+# case measured nothing about the system. Any of these makes a run invalid.
+NETWORK_BLOCKED_CODES = frozenset({"NetworkBlockedError"})
+# Unexpected application errors (kind "internal") are quality findings while they
+# are sporadic. Above this share of evaluated cases the run is treated as broken
+# (an application or harness fault), not as a measurement of quality.
+MAX_APPLICATION_ERROR_SHARE = 0.2
 
 
 def classify_system_failure(row: dict) -> str | None:
-    """'infrastructure', 'model_output', 'application' or None for a result row."""
+    """'network_blocked', 'infrastructure', 'model_output', 'application' or None."""
     detail = row.get("system_error_detail") or {}
     if not row.get("system_error") and not detail:
         return None
+    if detail.get("code") in NETWORK_BLOCKED_CODES:
+        return "network_blocked"
     kind = detail.get("kind")
     if kind in INFRASTRUCTURE_KINDS:
         return "infrastructure"
@@ -237,43 +247,88 @@ def classify_system_failure(row: dict) -> str | None:
     return "application"
 
 
-def run_validity(rows: list[dict], judge_calls: list[dict], complete: bool = True) -> dict:
+def _environment_failure_label(error: dict) -> str | None:
+    """'network_blocked' or the infrastructure kind for a trace error, else None."""
+    if error.get("code") in NETWORK_BLOCKED_CODES:
+        return "network_blocked"
+    if error.get("kind") in INFRASTRUCTURE_KINDS:
+        return error.get("kind")
+    return None
+
+
+def run_validity(rows: list[dict], judge_calls: list[dict], complete: bool = True,
+                 harness_failure: dict | None = None) -> dict:
     """Is this run usable as a quality baseline?
 
-    Infrastructure problems (in the system under test, the judge or the harness),
-    including non-fatal ones such as a throttled router falling back, or an
-    incomplete run, make the gate numbers unrepresentative. The run is then
-    reported as invalid, so an outage is never mistaken for a quality regression.
+    Invalid when the numbers cannot describe the system's quality:
+    - no case was evaluated, or none produced a usable result (every case failed
+      with a system error);
+    - an offline network guard blocked any system, judge or harness call (the run
+      never reached AWS);
+    - infrastructure problems in the system under test, the judge or the harness,
+      including non-fatal ones such as a throttled router falling back;
+    - unexpected application errors in more than MAX_APPLICATION_ERROR_SHARE of
+      cases (systemic breakage);
+    - an unexpected harness exception, or any other reason the run is incomplete.
+
+    Model-output failures and sporadic application errors stay quality findings:
+    they count against the metrics without invalidating the run. An outage or a
+    broken harness is therefore never mistaken for a quality regression.
     """
-    system_infra = {r["id"]: r["system_error_detail"]["kind"] for r in rows
-                    if classify_system_failure(r) == "infrastructure"}
-    degraded = {r["id"]: [e.get("kind") for e in r.get("trace_errors", [])
-                          if not e.get("fatal", True) and e.get("kind") in INFRASTRUCTURE_KINDS]
+    classes = {r["id"]: classify_system_failure(r) for r in rows}
+    network_blocked = sorted(i for i, c in classes.items() if c == "network_blocked")
+    system_infra = {r["id"]: r["system_error_detail"]["kind"] for r in rows if classes[r["id"]] == "infrastructure"}
+    application = sorted(i for i, c in classes.items() if c == "application")
+    usable = sum(1 for c in classes.values() if c is None)
+    degraded = {r["id"]: [label for e in r.get("trace_errors", []) if not e.get("fatal", True)
+                          for label in [_environment_failure_label(e)] if label]
                 for r in rows}
     degraded = {k: v for k, v in degraded.items() if v}
-    judge_infra = [c.get("error_kind") for c in judge_calls if not c.get("invoked", True)]
+    failed_judge_calls = [c for c in judge_calls if not c.get("invoked", True)]
+    judge_infra = [c.get("error_kind") for c in failed_judge_calls]
+    judge_blocked = sum(1 for c in failed_judge_calls if c.get("error_code") in NETWORK_BLOCKED_CODES)
     harness_infra = sum(r.get("harness_infra_errors", 0) for r in rows)
+    application_share = len(application) / len(rows) if rows else None
     reasons = []
+    if not rows:
+        reasons.append("no cases evaluated")
+    elif not usable:
+        reasons.append(f"no usable results: all {len(rows)} evaluated cases failed with system errors")
+    if harness_failure:
+        reasons.append(f"unexpected harness failure at {harness_failure.get('case')} "
+                       f"({harness_failure.get('error_type')})")
     if not complete:
         reasons.append("run incomplete")
+    if network_blocked:
+        reasons.append(f"network blocked by an offline guard in {network_blocked} (the run never reached AWS)")
     if system_infra:
         reasons.append(f"system infrastructure failures in {sorted(system_infra)}")
     if degraded:
-        reasons.append(f"degraded by non-fatal infrastructure failures in {sorted(degraded)}")
+        reasons.append(f"degraded by non-fatal infrastructure or network-blocked failures in {sorted(degraded)}")
     if judge_infra:
-        reasons.append(f"{len(judge_infra)} judge call(s) failed to invoke")
+        blocked = f", {judge_blocked} blocked by an offline guard" if judge_blocked else ""
+        reasons.append(f"{len(judge_infra)} judge call(s) failed to invoke{blocked}")
     if harness_infra:
         reasons.append(f"{harness_infra} harness evidence retrieval failure(s)")
+    if application_share is not None and application_share > MAX_APPLICATION_ERROR_SHARE:
+        reasons.append(f"systemic application failure: {len(application)}/{len(rows)} cases failed with "
+                       f"unexpected application errors (limit {MAX_APPLICATION_ERROR_SHARE:.0%})")
     return {
         "valid_for_baseline": not reasons,
         "reasons": reasons,
+        "evaluated_cases": len(rows),
+        "usable_cases": usable,
+        "network_blocked_cases": network_blocked,
         "system_infrastructure_failures": system_infra,
-        "system_model_output_failures": sorted(r["id"] for r in rows if classify_system_failure(r) == "model_output"),
-        "application_errors": sorted(r["id"] for r in rows if classify_system_failure(r) == "application"),
+        "system_model_output_failures": sorted(i for i, c in classes.items() if c == "model_output"),
+        "application_errors": application,
+        "application_error_share": application_share,
         "degraded_cases": degraded,
         "judge_infrastructure_errors": len(judge_infra),
         "judge_infrastructure_error_kinds": sorted(set(k for k in judge_infra if k)),
+        "judge_network_blocked_calls": judge_blocked,
         "harness_infrastructure_errors": harness_infra,
+        "harness_failure": harness_failure,
     }
 
 

@@ -604,11 +604,14 @@ def test_infrastructure_failures_invalidate_the_run(tmp_path, kind, bucket):
     ("internal", "application_errors"),
 ])
 def test_model_and_application_failures_are_findings_not_invalidations(tmp_path, kind, bucket):
-    summary, _, _ = _run(tmp_path, [_case("A", "a")], {"a": _failure_result(kind)}, FakeJudge({}))
+    cases = [_case("A", "a")] + [_case(f"C{i}", f"q{i}") for i in range(9)]
+    results = {"a": _failure_result(kind), **{f"q{i}": _qa_result("x", [JPM_SRC]) for i in range(9)}}
+    summary, _, _ = _run(tmp_path, cases, results, FakeJudge({}))
     validity = summary["run_validity"]
-    assert validity["valid_for_baseline"] is True
+    assert validity["valid_for_baseline"] is True, validity["reasons"]
     assert validity[bucket] == ["A"]
-    assert summary["context_relevance_pass_rate"] == 0.0  # still a metric failure
+    assert validity["usable_cases"] == 9
+    assert "A" in summary["retrieval"]["context_relevance"]["failures"]  # still a metric failure
 
 
 def test_degraded_router_invalidates_the_run(tmp_path):
@@ -968,3 +971,152 @@ def test_run_evaluation_refuses_real_clients_without_live(monkeypatch, tmp_path,
 def test_fully_injected_run_needs_no_live_flag(tmp_path):
     summary, _, _ = _run(tmp_path, [_case("A", "a")], {"a": _qa_result("x", [JPM_SRC])}, FakeJudge({}))
     assert summary["completion"]["complete"] is True
+
+
+# --- Run validity: failed runs can never pass (2026-09-28 incident) -------------------------
+
+def _blocked_result() -> dict:
+    """The result every case returned in the incident run c7aba364 (guard blocked S3)."""
+    return {"error": "Internal error (stage: retrieval.index_load)",
+            "error_detail": {"stage": "retrieval.index_load", "kind": "internal", "code": "NetworkBlockedError",
+                             "retryable": False},
+            "task_type": "qa", "agent_used": "qa", "result": {}}
+
+
+class BlockedOrchestrator(FakeOrchestrator):
+    """Reproduces the incident trace: router blocked (non-fatal fallback), then index load blocked."""
+
+    def process(self, query, trace_id=None):
+        from app.errors import ServiceFailure
+
+        observability.record_failure(ServiceFailure("router", "internal", "NetworkBlockedError"), fatal=False)
+        observability.record_failure(ServiceFailure("retrieval.index_load", "internal", "NetworkBlockedError"),
+                                     fatal=True)
+        return self.results[query]
+
+
+def test_incident_run_where_every_case_was_network_blocked_is_invalid(tmp_path):
+    """Regression: run c7aba364 (34/34 cases blocked, zero model calls) was marked valid."""
+    cases = list(EVAL_CASES)
+    orchestrator = BlockedOrchestrator({c.query: _blocked_result() for c in cases})
+    summary = llm_judge.run_evaluation(cases, orchestrator=orchestrator, client=FakeJudge({}),
+                                       retrieve_evidence=lambda q, n_results=5: [],
+                                       results_path=str(tmp_path / "r.json"), sleep_seconds=0)
+    validity = summary["run_validity"]
+    assert validity["valid_for_baseline"] is False
+    assert validity["usable_cases"] == 0
+    assert validity["network_blocked_cases"] == sorted(c.id for c in cases)
+    assert validity["application_errors"] == []  # no longer misfiled as quality findings
+    assert any(r.startswith("no usable results: all 34") for r in validity["reasons"])
+    assert any("network blocked by an offline guard" in r for r in validity["reasons"])
+    assert len(validity["degraded_cases"]) == 34
+    assert summary["tokens"]["judge"]["calls"] == 0
+
+
+def test_every_case_failing_with_application_errors_is_invalid(tmp_path):
+    cases = [_case(f"C{i}", f"q{i}") for i in range(5)]
+    summary, _, _ = _run(tmp_path, cases, {f"q{i}": _failure_result("internal") for i in range(5)}, FakeJudge({}))
+    validity = summary["run_validity"]
+    assert validity["valid_for_baseline"] is False
+    assert validity["application_errors"] == [f"C{i}" for i in range(5)]
+    assert any(r.startswith("no usable results") for r in validity["reasons"])
+    assert any(r.startswith("systemic application failure: 5/5") for r in validity["reasons"])
+
+
+@pytest.mark.parametrize("n_errors, valid", [(1, True), (2, True), (3, False), (10, False)])
+def test_application_errors_invalidate_only_when_systemic(tmp_path, n_errors, valid):
+    cases = [_case(f"C{i}", f"q{i}") for i in range(10)]
+    results = {f"q{i}": _failure_result("internal") if i < n_errors else _qa_result("x", [JPM_SRC])
+               for i in range(10)}
+    summary, _, _ = _run(tmp_path, cases, results, FakeJudge({}))
+    validity = summary["run_validity"]
+    assert validity["valid_for_baseline"] is valid, validity["reasons"]
+    assert len(validity["application_errors"]) == n_errors
+    assert validity["application_error_share"] == n_errors / 10
+
+
+def test_infrastructure_outage_is_not_counted_as_application_failure(tmp_path):
+    cases = [_case(f"C{i}", f"q{i}") for i in range(3)]
+    summary, _, _ = _run(tmp_path, cases, {f"q{i}": _failure_result("throttled") for i in range(3)}, FakeJudge({}))
+    validity = summary["run_validity"]
+    assert validity["valid_for_baseline"] is False
+    assert validity["system_infrastructure_failures"] == {f"C{i}": "throttled" for i in range(3)}
+    assert validity["application_errors"] == []
+    assert not any("systemic application failure" in r for r in validity["reasons"])
+
+
+def test_a_run_with_no_cases_is_invalid():
+    validity = llm_judge.run_validity([], [], complete=True)
+    assert validity["valid_for_baseline"] is False
+    assert validity["reasons"] == ["no cases evaluated"]
+
+
+def test_non_fatal_network_block_invalidates_the_run(tmp_path):
+    class BlockedRouter(FakeOrchestrator):
+        def process(self, query, trace_id=None):
+            from app.errors import ServiceFailure
+
+            observability.record_failure(ServiceFailure("router", "internal", "NetworkBlockedError"), fatal=False)
+            return super().process(query, trace_id)
+
+    summary = llm_judge.run_evaluation(
+        [_case("A", "a")], orchestrator=BlockedRouter({"a": _qa_result("x", [JPM_SRC])}), client=FakeJudge({}),
+        retrieve_evidence=lambda q, n_results=5: [], results_path=str(tmp_path / "r.json"), sleep_seconds=0)
+    assert summary["run_validity"]["degraded_cases"] == {"A": ["network_blocked"]}
+    assert summary["run_validity"]["valid_for_baseline"] is False
+
+
+def test_judge_calls_blocked_by_the_guard_invalidate_the_run(tmp_path):
+    from tests.conftest import NetworkBlockedError
+
+    judge = FakeJudge({"q": {"cr": NetworkBlockedError("Live AWS call attempted in unit tests: https://x")}})
+    summary, _, _ = _run(tmp_path, [_case("A", "q")], {"q": _qa_result("x", [JPM_SRC])}, judge)
+    validity = summary["run_validity"]
+    assert validity["valid_for_baseline"] is False
+    assert validity["judge_network_blocked_calls"] == 1
+    assert any("blocked by an offline guard" in r for r in validity["reasons"])
+
+
+def test_unexpected_harness_exception_keeps_rows_and_invalidates_the_run(tmp_path, monkeypatch):
+    real_evaluate_case = llm_judge.evaluate_case
+
+    def flaky_evaluate_case(case, *args):
+        if case.id == "B":
+            raise KeyError("unexpected")
+        return real_evaluate_case(case, *args)
+
+    monkeypatch.setattr(llm_judge, "evaluate_case", flaky_evaluate_case)
+    cases = [_case("A", "a"), _case("B", "b"), _case("C", "c")]
+    results = {q: _qa_result("x", [JPM_SRC]) for q in ("a", "b", "c")}
+    summary, data, _ = _run(tmp_path, cases, results, FakeJudge({}))
+    validity = summary["run_validity"]
+    assert [r["id"] for r in data["results"]] == ["A"]
+    assert summary["completion"]["complete"] is False
+    assert summary["completion"]["aborted_reason"] == "unexpected harness failure at B: KeyError"
+    assert validity["harness_failure"] == {"case": "B", "error_type": "KeyError"}
+    assert validity["valid_for_baseline"] is False
+
+
+def test_harness_exception_on_the_first_case_is_invalid_not_a_crash(tmp_path, monkeypatch):
+    def broken_evaluate_case(case, *args):
+        raise TypeError("harness bug")
+
+    monkeypatch.setattr(llm_judge, "evaluate_case", broken_evaluate_case)
+    summary, data, _ = _run(tmp_path, [_case("A", "a")], {"a": _qa_result("x", [JPM_SRC])}, FakeJudge({}))
+    assert data["results"] == []
+    assert summary["run_validity"]["valid_for_baseline"] is False
+    assert "no cases evaluated" in summary["run_validity"]["reasons"]
+
+
+def test_cli_exits_one_when_the_run_stops_early(monkeypatch, tmp_path):
+    real_run_evaluation = llm_judge.run_evaluation
+    cases = [_case(f"C{i}", f"q{i}") for i in range(3)]
+
+    def ceiling_hit(**kwargs):
+        return real_run_evaluation(
+            cases, orchestrator=FakeOrchestrator({c.query: _qa_result("x", [JPM_SRC]) for c in cases}),
+            client=FakeJudge({}), retrieve_evidence=lambda q, n_results=5: [],
+            results_path=str(tmp_path / "r.json"), sleep_seconds=0, max_cost_usd=0.0001)
+
+    monkeypatch.setattr(llm_judge, "run_evaluation", ceiling_hit)
+    assert llm_judge.main(["--live"]) == 1

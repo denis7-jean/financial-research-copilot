@@ -176,6 +176,7 @@ def _call_judge(client, system_prompt: str, user_text: str, judge_calls: list[di
     except Exception as e:
         failure = failure_from("judge", e)
         attempt["error_kind"] = failure.kind
+        attempt["error_code"] = failure.code
         return {}, f"{JUDGE_INFRA_ERROR_PREFIX}{failure.kind}:{failure.code}"
     usage = response.get("usage") or {}
     attempt.update(input_tokens=usage.get("inputTokens"), output_tokens=usage.get("outputTokens"), invoked=True)
@@ -544,10 +545,17 @@ def run_evaluation(
     judge_calls: list[dict] = []
     rows = []
     aborted_reason = None
+    harness_failure = None
 
     for i, case in enumerate(cases):
         print(f"[{i + 1}/{len(cases)}] {case.id} {case.category}: {case.query[:60]}...")
-        rows.append(evaluate_case(case, orchestrator, client, retrieve_evidence, judge_calls))
+        try:
+            rows.append(evaluate_case(case, orchestrator, client, retrieve_evidence, judge_calls))
+        except Exception as exc:  # a harness defect: keep the rows already paid for, mark the run invalid
+            harness_failure = {"case": case.id, "error_type": type(exc).__name__}
+            aborted_reason = f"unexpected harness failure at {case.id}: {type(exc).__name__}"
+            print(f"ABORTING: {aborted_reason}")
+            break
         spent = _estimated_spend(rows, judge_calls)
         if spent > max_cost_usd and i < len(cases) - 1:
             aborted_reason = (f"cost ceiling: estimated ${spent:.4f} exceeded EVAL_MAX_COST_USD=${max_cost_usd:.2f} "
@@ -582,7 +590,8 @@ def run_evaluation(
         **summarize_results(rows, judge_calls),
         "results_path": results_path,
     }
-    summary["run_validity"] = run_validity(rows, judge_calls, complete=aborted_reason is None)
+    summary["run_validity"] = run_validity(rows, judge_calls, complete=aborted_reason is None,
+                                           harness_failure=harness_failure)
 
     directory = os.path.dirname(results_path)
     if directory:
@@ -619,9 +628,10 @@ def _print_summary(summary: dict) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point. The exit code reflects whether the run completed, not gate
-    results (gates are enforced by eval/test_llm_judge.py). Without --live it
-    refuses to start (exit 2) and makes no AWS calls."""
+    """CLI entry point. The exit code reflects whether the run completed (0) or
+    stopped early (1), not gate results (gates are enforced by
+    eval/test_llm_judge.py). Without --live it refuses to start (exit 2) and makes
+    no AWS calls."""
     parser = argparse.ArgumentParser(
         prog="python -m eval.llm_judge",
         description="Live LLM-as-judge evaluation: billable Bedrock calls (system under test and judge).",
@@ -638,7 +648,7 @@ def main(argv: list[str] | None = None) -> int:
     print("\nOverall pass:", summary["overall_pass"])
     print("Enforced gates:", [g.metric for g in GATES if g.enforced])
     print("Valid for baseline:", summary["run_validity"]["valid_for_baseline"])
-    return 0
+    return 0 if summary["completion"]["complete"] else 1
 
 
 if __name__ == "__main__":
