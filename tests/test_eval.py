@@ -712,3 +712,80 @@ def test_corpus_fingerprint_matches_serialized_metadata(monkeypatch):
     fp = llm_judge._corpus_fingerprint()
     assert fp == {"index_vectors": 0, "metadata_rows": 1,
                   "metadata_sha256": hashlib.sha256(json.dumps(meta).encode("ascii")).hexdigest()}
+
+
+# --- Report-only retrieval-quality tracking ------------------------------------------------
+
+JPM_SMOKE_RETRIEVAL = [  # order and content shape observed in the 2026-09-28 production smoke test
+    {"text": "Forward-Looking Statements on page 160 and Part I, Item 1A: Risk Factors", "source": JPM_SRC},
+    {"text": "fees 1,184 874 697 All other income 563 456 1,037 Noninterest revenue 17,241", "source": JPM_SRC},
+    {"text": "95,443 92,583 89,267 Total net revenue 7,025 17,394 8,038 182,447 177,556", "source": JPM_SRC},
+    {"text": "lower fair value losses on credit protection", "source": JPM_SRC},
+    {"text": "$1.5 trillion of liquidity sources", "source": JPM_SRC},
+]
+
+
+def test_evidence_rank_reproduces_the_jpm_boilerplate_observation():
+    from eval.metrics import evidence_ranks
+
+    result = evidence_ranks(JPM_SMOKE_RETRIEVAL, CASES_BY_ID["L01"].evidence)
+    assert result["groups"][0]["rank"] == 3
+    assert result["all_found"] is True and result["worst_rank"] == 3
+    assert result["reciprocal_rank"] == pytest.approx(1 / 3)
+
+
+def test_evidence_from_another_company_never_matches():
+    from eval.metrics import evidence_ranks
+
+    wrong_company = [{"text": "Total net revenue 182,447", "source": GS_SRC}]
+    assert evidence_ranks(wrong_company, CASES_BY_ID["L01"].evidence)["all_found"] is False
+
+
+def test_multi_company_evidence_needs_every_group():
+    from eval.metrics import evidence_ranks
+
+    only_jpm = [{"text": "182,447", "source": JPM_SRC}]
+    both = only_jpm + [{"text": "Net revenues were $58.28 billion", "source": GS_SRC}]
+    evidence = CASES_BY_ID["L10"].evidence
+    assert evidence_ranks(only_jpm, evidence)["all_found"] is False
+    assert evidence_ranks(only_jpm, evidence)["reciprocal_rank"] == pytest.approx(0.5)
+    assert evidence_ranks(both, evidence)["worst_rank"] == 2
+
+
+def test_cases_without_markers_are_not_tracked():
+    from eval.metrics import evidence_ranks
+
+    assert evidence_ranks(JPM_SMOKE_RETRIEVAL, ()) is None
+
+
+@pytest.mark.parametrize("answer, refs", [
+    ("Source: Form 10-K (page 50)", ["page 50"]),
+    ("See pages 49-51 and p. 12; also pp. 3", ["pages 49-51", "p. 12", "pp. 3"]),
+    ("Total net revenue was $182.447 billion.", []),
+    ("The paging system", []),
+])
+def test_page_references(answer, refs):
+    from eval.metrics import page_references
+
+    assert page_references(answer) == refs
+
+
+def test_tracking_is_reported_but_never_gated(tmp_path):
+    case = CASES_BY_ID["L01"]
+    answer = "Total net revenue was $182.447 billion. Source: Form 10-K (page 50)"
+    result = _qa_result(answer, [JPM_SRC])
+    result["result"]["retrieved_context"] = [{**c, "score": 0.7} for c in JPM_SMOKE_RETRIEVAL]
+    summary, data, _ = _run(tmp_path, [case], {case.query: result}, FakeJudge({}))
+    tracking = summary["retrieval_quality_tracking"]
+    assert tracking["evidence_rank"]["evidence_not_top_ranked"] == {"L01": 3}
+    assert tracking["unverified_page_references"] == {"L01": ["page 50"]}
+    assert data["results"][0]["evidence"]["worst_rank"] == 3
+    assert "retrieval_quality_tracking" not in {g["metric"] for g in summary["gates"]}
+    assert summary["overall_pass"] is True  # tracking does not affect gates
+
+
+def test_every_gated_case_has_evidence_markers():
+    for case in EVAL_CASES:
+        if case.gated_for_retrieval:
+            assert case.evidence, case.id
+            assert all(ticker in case.companies for ticker, _ in case.evidence), case.id

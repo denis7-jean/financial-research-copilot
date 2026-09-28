@@ -18,6 +18,11 @@ router happened to do:
   Used for out-of-corpus questions whose nearest in-corpus neighbour could leak
   its figures, e.g. Visa's numbers in an answer about Mastercard.
 - replaces: id of the historical case this one superseded, if any.
+- evidence: (ticker, markers) groups identifying the chunk(s) that contain the
+  answer. A retrieved chunk matches a group if it comes from that company's
+  filing and contains every marker. Markers were checked against the indexed
+  chunk text (metadata SHA-256 f771ba6c...). Used only for the report-only
+  evidence-rank metric; never gated.
 
 CORPUS (2026-09-27): the fifth company is Visa Inc. Its FY2025 10-K (EDGAR
 accession 0001403161-25-000089, fiscal year ended September 30, 2025) was
@@ -54,6 +59,7 @@ class EvalCase:
     tags: tuple[str, ...] = field(default_factory=tuple)
     forbidden_facts: tuple[str, ...] = ()
     replaces: str | None = None
+    evidence: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     @property
     def gated_for_retrieval(self) -> bool:
@@ -81,11 +87,13 @@ EVAL_CASES: list[EvalCase] = [
     EvalCase("L01", "What was JPMorgan Chase's total net revenue for fiscal year 2025?",
              "numeric_qa", "qa", "clear", "answer", ("JPM",),
              "Total net revenue was $182,447 million (about $182.4 billion) for 2025.",
-             f"{JPM} p46, p49", legacy=True),
+             f"{JPM} p46, p49", legacy=True,
+             evidence=(("JPM", ('182,447',)),)),
     EvalCase("L02", "What was Goldman Sachs net earnings for fiscal year 2025?",
              "numeric_qa", "qa", "clear", "answer", ("GS",),
              "Net earnings were $17.18 billion for 2025 (vs $14.28 billion in 2024).",
-             f"{GS} p67", legacy=True),
+             f"{GS} p67", legacy=True,
+             evidence=(("GS", ('net earnings of $17.18 billion',)),)),
     EvalCase("L03", "What is Mastercard's total net revenue for fiscal year 2025?",
              "out_of_corpus", "qa", "clear", "abstain", (),
              legacy=True, notes=MASTERCARD_OUT_OF_CORPUS_NOTE, tags=("mastercard",),
@@ -93,19 +101,23 @@ EVAL_CASES: list[EvalCase] = [
     EvalCase("L04", "What was BlackRock's total assets under management in 2025?",
              "numeric_qa", "qa", "clear", "answer", ("BLK",),
              "AUM was $14,041,518 million (about $14.04 trillion) at December 31, 2025.",
-             f"{BLK} p4, p43", legacy=True),
+             f"{BLK} p4, p43", legacy=True,
+             evidence=(("BLK", ('14,041,518',)),)),
     EvalCase("L05", "What was Bank of America's net income for fiscal year 2025?",
              "numeric_qa", "qa", "clear", "answer", ("BAC",),
              "Net income was $30,509 million (about $30.5 billion) in 2025.",
-             f"{BAC} p29", legacy=True),
+             f"{BAC} p29", legacy=True,
+             evidence=(("BAC", ('30,509',)),)),
     EvalCase("L06", "What was JPMorgan Chase's return on equity in 2025?",
              "metric_qa", "qa", "clear", "answer", ("JPM",),
              "Return on common equity (ROE) was 17% for 2025.",
-             f"{JPM} p46, p49", legacy=True),
+             f"{JPM} p46, p49", legacy=True,
+             evidence=(("JPM", ('Return on common equity', '17 %')),)),
     EvalCase("L07", "How many employees did JPMorgan Chase have in 2025?",
              "metric_qa", "qa", "clear", "answer", ("JPM",),
              "318,512 employees as of December 31, 2025.",
-             f"{JPM} p9, p46", legacy=True),
+             f"{JPM} p9, p46", legacy=True,
+             evidence=(("JPM", ('318,512',)),)),
     EvalCase("L08", "What was Mastercard's net income margin in 2025?",
              "out_of_corpus", "qa", "clear", "abstain", (),
              legacy=True, notes=MASTERCARD_OUT_OF_CORPUS_NOTE, tags=("mastercard",),
@@ -116,12 +128,14 @@ EVAL_CASES: list[EvalCase] = [
              "(vs $11.50 in 2024).",
              f"{GS} p212", legacy=True,
              notes="Filing reports dividends declared; answers citing preferred dividends "
-                   "in addition are acceptable if the common figure is correct."),
+                   "in addition are acceptable if the common figure is correct.",
+             evidence=(("GS", ('Dividends declared per common share', '14.00')),)),
     EvalCase("L10", "Which had higher net revenue in 2025, JPMorgan Chase or Goldman Sachs?",
              "cross_company", "qa", "clear", "answer", ("JPM", "GS"),
              "JPMorgan Chase: total net revenue $182,447 million; Goldman Sachs: net revenues "
              "$58.28 billion. JPMorgan Chase was higher.",
-             f"{JPM} p49; {GS} p67", legacy=True),
+             f"{JPM} p49; {GS} p67", legacy=True,
+             evidence=(("JPM", ('182,447',)), ("GS", ('58.28 billion',)),)),
     EvalCase("L12", "Summarize the key risks in Goldman Sachs 2025 annual report.",
              "summarize", "summarize", "clear", "answer", ("GS",), legacy=True),
     EvalCase("L13", "What are the main business segments of JPMorgan Chase?",
@@ -150,41 +164,52 @@ EVAL_CASES: list[EvalCase] = [
              "Total net revenue was $182,447 million for 2025 (risk-factor portion not "
              "reference-graded).",
              f"{JPM} p49", legacy=True,
-             notes="Multi-intent. Only one route is possible today."),
+             notes="Multi-intent. Only one route is possible today.",
+             evidence=(("JPM", ('182,447',)),)),
 
     # --- Added in Phase 0: more gated QA cases with verified references ------
     EvalCase("N01", "What was JPMorgan Chase's net income in 2025?",
              "numeric_qa", "qa", "clear", "answer", ("JPM",),
-             "Net income was $57,048 million for 2025.", f"{JPM} p46, p49"),
+             "Net income was $57,048 million for 2025.", f"{JPM} p46, p49",
+             evidence=(("JPM", ('57,048',)),)),
     EvalCase("N02", "What were JPMorgan Chase's diluted earnings per share for 2025?",
              "metric_qa", "qa", "clear", "answer", ("JPM",),
-             "Diluted EPS was $20.02 for 2025.", f"{JPM} p46, p49"),
+             "Diluted EPS was $20.02 for 2025.", f"{JPM} p46, p49",
+             evidence=(("JPM", ('20.02',)),)),
     EvalCase("N03", "What was Bank of America's total revenue, net of interest expense, in 2025?",
              "numeric_qa", "qa", "clear", "answer", ("BAC",),
-             "Total revenue, net of interest expense, was $113,097 million for 2025.", f"{BAC} p29"),
+             "Total revenue, net of interest expense, was $113,097 million for 2025.", f"{BAC} p29",
+             evidence=(("BAC", ('113,097',)),)),
     EvalCase("N04", "What was Bank of America's return on average common shareholders' equity in 2025?",
              "metric_qa", "qa", "clear", "answer", ("BAC",),
-             "Return on average common shareholders' equity was 10.59% for 2025.", f"{BAC} p29"),
+             "Return on average common shareholders' equity was 10.59% for 2025.", f"{BAC} p29",
+             evidence=(("BAC", ('Return on average common shareholders', '10.59')),)),
     EvalCase("N05", "How many employees did Bank of America have at the end of 2025?",
              "metric_qa", "qa", "clear", "answer", ("BAC",),
-             "Approximately 213,000 employees at December 31, 2025.", f"{BAC} p5, p29"),
+             "Approximately 213,000 employees at December 31, 2025.", f"{BAC} p5, p29",
+             evidence=(("BAC", ('213,000',)),)),
     EvalCase("N06", "What was Goldman Sachs' return on equity for 2025?",
              "metric_qa", "qa", "clear", "answer", ("GS",),
-             "ROE was 15.0% for 2025.", f"{GS} p67"),
+             "ROE was 15.0% for 2025.", f"{GS} p67",
+             evidence=(("GS", ('ROE was 15.0%',)),)),
     EvalCase("N07", "What were Goldman Sachs' net revenues in 2025?",
              "numeric_qa", "qa", "clear", "answer", ("GS",),
-             "Net revenues were $58.28 billion for 2025.", f"{GS} p67"),
+             "Net revenues were $58.28 billion for 2025.", f"{GS} p67",
+             evidence=(("GS", ('58.28 billion',)),)),
     EvalCase("N08", "What was BlackRock's total revenue in 2025?",
              "numeric_qa", "qa", "clear", "answer", ("BLK",),
-             "Total revenue was $24,216 million for 2025.", f"{BLK} p4, p43"),
+             "Total revenue was $24,216 million for 2025.", f"{BLK} p4, p43",
+             evidence=(("BLK", ('24,216',)),)),
     EvalCase("N09", "What was BlackRock's GAAP net income attributable to BlackRock in 2025?",
              "numeric_qa", "qa", "clear", "answer", ("BLK",),
              "GAAP net income attributable to BlackRock was $5,553 million for 2025 "
-             "(as adjusted: $7,736 million).", f"{BLK} p43"),
+             "(as adjusted: $7,736 million).", f"{BLK} p43",
+             evidence=(("BLK", ('5,553',)),)),
     EvalCase("N10", "What was Visa's net revenue for fiscal year 2025?",
              "numeric_qa", "qa", "clear", "answer", ("V",),
              "Net revenue was $40,000 million for fiscal 2025 (year ended September 30, 2025).",
-             f"{VISA} p41, p46"),
+             f"{VISA} p41, p46",
+             evidence=(("V", ('40,000',)),)),
 
     # --- Added in Phase 0: abstention and summarize coverage ------------------
     EvalCase("N11", "What was Wells Fargo's net income in 2025?",
@@ -204,7 +229,8 @@ EVAL_CASES: list[EvalCase] = [
              "GAAP diluted EPS was $10.20 for fiscal 2025 (non-GAAP: $11.47).",
              f"{VISA} p41", replaces="N12",
              notes="Replaced N12 (Morgan Stanley, out-of-corpus) to keep 34 cases; "
-                   "out-of-corpus coverage remains in L03, L08, L18, N11."),
+                   "out-of-corpus coverage remains in L03, L08, L18, N11.",
+             evidence=(("V", ('10.20',)),)),
 ]
 
 CASES_BY_ID = {case.id: case for case in EVAL_CASES}

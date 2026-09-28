@@ -7,6 +7,7 @@ never dropped from the denominator.
 """
 import math
 import os
+import re
 from dataclasses import asdict, dataclass
 
 # Exact legacy object names, checked before the patterns. Visa's 10-K was
@@ -136,6 +137,54 @@ def evaluate_gates(values: dict[str, float | None], gates: tuple[Gate, ...] = GA
         results.append({**asdict(gate), "value": value, "passed": passed})
     overall = all(r["passed"] for r in results if r["enforced"])
     return results, overall
+
+
+_PAGE_REFERENCE = re.compile(r"\b(?:pages?|pp?\.)\s*\d+(?:\s*[-–]\s*\d+)?", re.IGNORECASE)
+
+
+def evidence_ranks(retrieved: list[dict], evidence) -> dict | None:
+    """Report-only: where does the answer-bearing chunk rank in the retrieved list?
+
+    For each (ticker, markers) group, the 1-based rank of the first retrieved
+    chunk from that company's filing whose text contains every marker, or None
+    if no retrieved chunk matches. Chunks from other companies never match.
+    """
+    if not evidence:
+        return None
+    groups = []
+    for ticker, markers in evidence:
+        rank = next((i + 1 for i, chunk in enumerate(retrieved)
+                     if company_for_source(chunk.get("source", "")) == ticker
+                     and all(marker in chunk.get("text", "") for marker in markers)), None)
+        groups.append({"company": ticker, "markers": list(markers), "rank": rank})
+    ranks = [g["rank"] for g in groups]
+    return {
+        "groups": groups,
+        "all_found": all(r is not None for r in ranks),
+        "worst_rank": None if any(r is None for r in ranks) else max(ranks),
+        "reciprocal_rank": sum(0.0 if r is None else 1.0 / r for r in ranks) / len(ranks),
+    }
+
+
+def page_references(answer: str) -> list[str]:
+    """Page numbers cited in an answer. Chunk metadata has no page numbers, so none can be verified."""
+    return [m.group(0) for m in _PAGE_REFERENCE.finditer(answer or "")]
+
+
+def _retrieval_quality_tracking(rows: list[dict]) -> dict:
+    tracked = [r for r in rows if r.get("evidence") is not None]
+    return {
+        "note": "Report-only; not gated. See eval/README.md, Tracked retrieval-quality issues.",
+        "evidence_rank": {
+            "cases": len(tracked),
+            "found_rate": (sum(1 for r in tracked if r["evidence"]["all_found"]) / len(tracked)) if tracked else None,
+            "mean_reciprocal_rank": _mean([r["evidence"]["reciprocal_rank"] for r in tracked]),
+            "evidence_not_top_ranked": {r["id"]: r["evidence"]["worst_rank"] for r in tracked
+                                        if r["evidence"]["all_found"] and r["evidence"]["worst_rank"] > 1},
+            "evidence_not_retrieved": sorted(r["id"] for r in tracked if not r["evidence"]["all_found"]),
+        },
+        "unverified_page_references": {r["id"]: r["page_references"] for r in rows if r.get("page_references")},
+    }
 
 
 # Failure kinds (app/errors.py) that describe the environment rather than the
@@ -393,4 +442,5 @@ def summarize_results(rows: list[dict], judge_calls: list[dict]) -> dict:
         "latency_ms": _latency_summary(rows),
         "tokens": _token_summary(rows, judge_calls),
         "legacy_comparable": legacy_comparable,
+        "retrieval_quality_tracking": _retrieval_quality_tracking(rows),
     }

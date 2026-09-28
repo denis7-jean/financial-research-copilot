@@ -30,7 +30,9 @@ from eval.metrics import (
     company_for_source,
     company_precision,
     estimate_cost_usd,
+    evidence_ranks,
     is_contaminated,
+    page_references,
     run_validity,
     summarize_results,
 )
@@ -374,6 +376,8 @@ def evaluate_case(case: EvalCase, orchestrator, client, retrieve_evidence, judge
             "company_precision": company_precision(raw_sources, case.companies),
             "contaminated": is_contaminated(raw_sources, case.companies),
         },
+        "evidence": evidence_ranks(retrieved, case.evidence),
+        "page_references": page_references(answer),
         "context_relevance": context_relevance,
         "faithfulness": faithfulness,
         "summary_grounding": summary_grounding,
