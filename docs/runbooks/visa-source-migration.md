@@ -2,8 +2,11 @@
 
 **Status:**
 - **S3 writes executed and verified on 2026-09-28** (see [Execution record](#execution-record)).
-- Pending, each needing separate approval: Lambda refresh, `/ask` smoke test, deletion of the
-  old object.
+- **Production validated on 2026-09-28** (see
+  [Production validation](#production-validation)): no Lambda refresh was needed, and the
+  JPMorgan and Visa smoke tests passed.
+- Pending, with separate approval: deletion of the old object. The backup and rollback below
+  remain valid until then.
 
 ## Background
 
@@ -163,3 +166,34 @@ python -m scripts.migrate_visa_source rollback --backup-key index/backups/financ
 ```
 
 Then refresh Lambda environments.
+
+## Production validation
+
+Lambda `financial-copilot`: `$LATEST` only, no aliases, **no Function URL or other public entry
+point**. It runs the June 2026 build (revision `5ce50a73-c488-4c52-8f84-c15c8fa2e542`).
+
+- **Lambda refresh: not needed and not performed.**
+  - The function had 0 invocations in the 90 days before the migration, so no warm container
+    held the old metadata.
+  - The first invocation afterwards cold-started and logged
+    `Index loaded: 2220 vectors, 2220 metadata entries`.
+- **First attempt (about 01:10 UTC): failed.** Bedrock returned `AccessDeniedException` with
+  AWS's account-verification message.
+  - Read-only diagnosis ruled out IAM: `AmazonBedrockFullAccess` is attached, the policy
+    simulator says allowed, and there are no SCPs.
+  - It also ruled out model entitlement: all three models report `AUTHORIZED`.
+  - The hold cleared by about 01:41 UTC.
+- **Retry (two direct `Invoke` calls with a `POST /ask` event): passed.**
+
+| Question | Router | Retrieval | Citation | Answer vs filing |
+|---|---|---|---|---|
+| JPMorgan Chase FY2025 total net revenue | `qa` 0.95 | 5 of 5 JPMorgan chunks | `docs/jpmorgan-chase-10k-fy2025.pdf` | $182.447B = $182,447M ✓ |
+| Visa FY2025 net revenue | `qa` 0.99 | 5 of 5 Visa chunks | `docs/visa-10k-fy2025.pdf` | $40,000M (+11% from $35,926M) ✓ |
+
+- No cross-company contamination, and no citation of the old path.
+- Timing (single samples):
+  - JPMorgan: cold start, 1,508 ms init + 3,519 ms run.
+  - Visa: warm container, 2,339 ms run.
+
+The metadata backup and the rollback procedure above stay in place until the old object is
+deleted.

@@ -9,8 +9,21 @@ multi-agent architecture.
 HTTP entry point**: no Function URL, no API Gateway and no invoke permission for other
 principals, so it can only be invoked directly with AWS credentials.
 
-As of 2026-09-28, production Bedrock calls are also blocked while AWS completes an account-level
-verification.
+**Deployed build vs this branch.**
+- Production runs the **June 2026 build** (code last modified 2026-06-08, revision
+  `5ce50a73-c488-4c52-8f84-c15c8fa2e542`).
+- None of the Phase 0 changes are deployed: request tracing, the `/evaluate` gate, 5xx error
+  responses and the eval harness exist only locally.
+
+**Production validation (2026-09-28).** Bedrock access was blocked for a short time by an AWS
+account-verification hold. After it cleared, two direct Lambda invocations of `/ask` passed:
+
+| Question | Retrieved chunks | Citation | Answer | Filing |
+|---|---|---|---|---|
+| JPMorgan Chase FY2025 total net revenue | 5 of 5 JPMorgan | `docs/jpmorgan-chase-10k-fy2025.pdf` | $182.447 billion | $182,447M ✓ |
+| Visa FY2025 net revenue | 5 of 5 Visa | `docs/visa-10k-fy2025.pdf` | $40,000 million | $40,000M ✓ |
+
+These are two single requests, not a benchmark.
 
 ---
 
@@ -273,9 +286,9 @@ metadata cites the new path. The FAISS index was not changed. See
 No Lambda refresh was needed. The function had 0 invocations in the previous 90 days, so no
 warm container held the old metadata, and a cold start on 2026-09-28 loaded the migrated file.
 
-Still pending:
-- A production smoke test (blocked by the Bedrock account verification).
-- Deletion of the old object.
+The production smoke tests passed and cite the new Visa path (see Deployment).
+
+Still pending: deletion of the old object (separate approval). The rollback backup is kept.
 
 ---
 
@@ -290,6 +303,10 @@ Still pending:
 - **Deployed code predates these changes.** The Lambda still runs the June 2026 build, which
   reports failures as HTTP 200 with a "No relevant documents found." answer. The 5xx behavior
   above applies once this code is deployed.
+- **No public HTTP endpoint** (see Deployment). Production can currently only be exercised by
+  direct Lambda invocation.
+- **Retrieval quality items being tracked (report-only)**: see `eval/README.md` → *Tracked
+  retrieval-quality issues*.
 - **`/ask` and `/summarize` are unauthenticated** and allow CORS from any origin.
 - **Packaging script.**
   - `scripts/package_lambda.ps1` installs packages for the host platform. On Windows that means
