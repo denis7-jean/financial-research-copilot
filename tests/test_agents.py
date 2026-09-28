@@ -11,7 +11,8 @@ from app.agents.router import RouterDecision
 from app.agents.summarizer_agent import SummarizerAgent, SummaryResponse
 from app.observability import request_trace
 from app.services import bedrock_client, retriever
-from tests.conftest import FakeBedrock, converse_text
+from app.errors import ServiceFailure
+from tests.conftest import ACCESS_DENIED_MESSAGE, FakeBedrock, aws_error, converse_text
 
 DIM = 1024
 
@@ -62,15 +63,41 @@ def test_retrieve_chunks_returns_ranked_chunks_and_traces_stages(monkeypatch, ti
     assert json.loads(fake.invoke_calls[0]["body"])["dimensions"] == 1024
 
 
-def test_retrieve_chunks_error_returns_empty_and_is_traced(monkeypatch, tiny_index, capsys):
-    monkeypatch.setattr(retriever, "bedrock", FakeBedrock(invoke_responses=[RuntimeError("AccessDenied")]))
-    with request_trace("/ask", "q") as trace:
-        assert retriever.retrieve_chunks("q") == []
-    assert trace.errors[0]["stage"] == "retrieval"
-    assert trace.errors[0]["type"] == "RuntimeError"
-    logged = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
-    assert logged[-1]["event"] == "retrieval.error"
-    assert logged[-1]["trace_id"] == trace.trace_id
+def test_embedding_access_denied_raises_instead_of_returning_empty(monkeypatch, tiny_index):
+    monkeypatch.setattr(retriever, "bedrock", FakeBedrock(
+        invoke_responses=[aws_error("AccessDeniedException", ACCESS_DENIED_MESSAGE, "InvokeModel")]))
+    with pytest.raises(ServiceFailure) as info:
+        retriever.retrieve_chunks("q")
+    failure = info.value
+    assert (failure.stage, failure.kind, failure.code, failure.retryable) == (
+        "retrieval.embed", "access_denied", "AccessDeniedException", False)
+    assert "123456789012" not in failure.detail and "arn:aws" not in failure.detail
+
+
+def test_embedding_malformed_response_is_invalid_model_output(monkeypatch, tiny_index):
+    monkeypatch.setattr(retriever, "bedrock", FakeBedrock(invoke_responses=[{"unexpected": True}]))
+    with pytest.raises(ServiceFailure) as info:
+        retriever.retrieve_chunks("q")
+    assert (info.value.stage, info.value.kind) == ("retrieval.embed", "invalid_model_output")
+
+
+def test_index_load_failure_is_a_service_failure(monkeypatch):
+    class BrokenS3:
+        def download_file(self, *args):
+            raise aws_error("NoSuchKey", "missing", "GetObject", 404)
+
+    monkeypatch.setattr(retriever, "_index", None)
+    monkeypatch.setattr(retriever, "s3", BrokenS3())
+    with pytest.raises(ServiceFailure) as info:
+        retriever.retrieve_chunks("q")
+    assert (info.value.stage, info.value.kind) == ("retrieval.index_load", "configuration")
+
+
+def test_genuinely_empty_search_returns_empty_list(monkeypatch):
+    monkeypatch.setattr(retriever, "_index", faiss.IndexFlatIP(DIM))  # no vectors: FAISS returns -1 ids
+    monkeypatch.setattr(retriever, "_metadata", [])
+    monkeypatch.setattr(retriever, "bedrock", FakeBedrock(invoke_responses=[_titan(_unit(1))]))
+    assert retriever.retrieve_chunks("q") == []
 
 
 def test_index_is_loaded_from_s3_once_and_timed(monkeypatch, tmp_path):
@@ -140,24 +167,41 @@ def test_retrieve_and_generate_contract_and_usage(monkeypatch):
     assert "Source: s3://b/docs/jpmorgan-chase-10k-fy2025.pdf" in prompt
 
 
-def test_retrieve_and_generate_empty_retrieval(monkeypatch):
+def test_retrieve_and_generate_empty_retrieval_is_not_an_error(monkeypatch):
     monkeypatch.setattr(bedrock_client, "retrieve_chunks", lambda q, n_results=5: [])
-    result = bedrock_client.retrieve_and_generate("q")
-    assert result["answer"] == "No relevant documents found."
-    assert result["error"] == "empty_retrieval"
-
-
-def test_retrieve_and_generate_generation_error(monkeypatch):
-    monkeypatch.setattr(
-        bedrock_client, "retrieve_chunks",
-        lambda q, n_results=5: [{"content": "c", "source": "s", "score": 0.1}],
-    )
-    monkeypatch.setattr(bedrock_client, "bedrock", FakeBedrock(converse_responses=[RuntimeError("ModelTimeout")]))
     with request_trace("/ask", "q") as trace:
         result = bedrock_client.retrieve_and_generate("q")
-    assert result["answer"] == ""
-    assert "ModelTimeout" in result["error"]
-    assert trace.errors[0]["stage"] == "qa_generate"
+    assert result["answer"] == bedrock_client.NO_EVIDENCE_ANSWER == "No relevant documents found."
+    assert result["outcome"] == "empty_retrieval"
+    assert "error" not in result
+    assert trace.attrs["outcome"] == "no_evidence"
+
+
+def _one_chunk(q, n_results=5):
+    return [{"content": "c", "source": "s", "score": 0.1}]
+
+
+@pytest.mark.parametrize("error, kind, retryable", [
+    (aws_error("AccessDeniedException", ACCESS_DENIED_MESSAGE), "access_denied", False),
+    (aws_error("ThrottlingException", "slow down"), "throttled", True),
+    (aws_error("ModelTimeoutException", "took too long", status=408), "timeout", True),
+    (aws_error("SomethingNew", "boom", status=500), "unavailable", True),
+])
+def test_generation_invocation_failures_are_classified(monkeypatch, error, kind, retryable):
+    monkeypatch.setattr(bedrock_client, "retrieve_chunks", _one_chunk)
+    monkeypatch.setattr(bedrock_client, "bedrock", FakeBedrock(converse_responses=[error]))
+    with pytest.raises(ServiceFailure) as info:
+        bedrock_client.retrieve_and_generate("q")
+    assert (info.value.stage, info.value.kind, info.value.retryable) == ("qa_generate", kind, retryable)
+
+
+@pytest.mark.parametrize("response", [{"output": {"message": {"content": []}}}, converse_text("   ")])
+def test_generation_malformed_or_empty_output_is_invalid_model_output(monkeypatch, response):
+    monkeypatch.setattr(bedrock_client, "retrieve_chunks", _one_chunk)
+    monkeypatch.setattr(bedrock_client, "bedrock", FakeBedrock(converse_responses=[response]))
+    with pytest.raises(ServiceFailure) as info:
+        bedrock_client.retrieve_and_generate("q")
+    assert info.value.kind == "invalid_model_output"
 
 
 # --- QAAgent ----------------------------------------------------------------------
@@ -173,24 +217,34 @@ def test_qa_agent_success_contract(monkeypatch):
     assert response.confidence == 1.0
 
 
-def test_qa_agent_degraded_result_keeps_contract_and_logs(monkeypatch, capsys):
+def test_qa_agent_no_evidence_keeps_contract(monkeypatch):
     monkeypatch.setattr("app.agents.qa_agent.retrieve_and_generate", lambda q: {
-        "answer": "", "citations": [], "retrieved_context": [], "error": "ThrottlingException",
+        "answer": "No relevant documents found.", "citations": [], "retrieved_context": [],
+        "outcome": "empty_retrieval",
     })
-    response = QAAgent().run("q", trace_id="t2")
-    assert response.answer == ""
-    assert response.confidence == 0.5
-    events = [json.loads(line)["event"] for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
-    assert "qa.degraded" in events
+    response = QAAgent().run("q")
+    assert response.answer == "No relevant documents found."
+    assert response.confidence == 0.5 and response.citations == []
 
 
-def test_qa_agent_unexpected_exception(monkeypatch):
+def test_qa_agent_propagates_service_failures_unchanged(monkeypatch):
+    failure = ServiceFailure("retrieval.embed", "access_denied", "AccessDeniedException")
+
+    def fail(q):
+        raise failure
+    monkeypatch.setattr("app.agents.qa_agent.retrieve_and_generate", fail)
+    with pytest.raises(ServiceFailure) as info:
+        QAAgent().run("q")
+    assert info.value is failure
+
+
+def test_qa_agent_wraps_unexpected_exceptions_as_internal(monkeypatch):
     def boom(q):
         raise ValueError("bad")
     monkeypatch.setattr("app.agents.qa_agent.retrieve_and_generate", boom)
-    response = QAAgent().run("q")
-    assert response.answer == ""
-    assert response.confidence == 0.0
+    with pytest.raises(ServiceFailure) as info:
+        QAAgent().run("q")
+    assert (info.value.stage, info.value.kind, info.value.code) == ("qa", "internal", "ValueError")
 
 
 # --- SummarizerAgent -------------------------------------------------------------
@@ -220,20 +274,20 @@ def test_summarizer_fills_missing_fields():
     assert response.key_points == [] and response.risk_flags == []
 
 
-def test_summarizer_parse_error_keeps_contract():
+def test_summarizer_unparseable_output_is_invalid_model_output():
     with request_trace("/summarize", "q") as trace:
-        response = _summarizer(converse_text("Here is a summary without JSON")).run("q")
-    assert response.summary == "Parse error"
-    assert trace.errors[0]["stage"] == "summarize_parse"
+        with pytest.raises(ServiceFailure) as info:
+            _summarizer(converse_text("Here is a summary without JSON")).run("q")
+    assert (info.value.stage, info.value.kind) == ("summarize_parse", "invalid_model_output")
     # Usage is still recorded: the call happened and was billed.
     assert len(trace.model_calls) == 1
 
 
-def test_summarizer_invoke_error_is_distinguished_from_parse_error():
+def test_summarizer_access_denied_is_distinguished_from_parse_error():
     with request_trace("/summarize", "q") as trace:
-        response = _summarizer(RuntimeError("AccessDenied")).run("q")
-    assert response.summary == "Parse error"
-    assert trace.errors[0]["stage"] == "summarize_invoke"
+        with pytest.raises(ServiceFailure) as info:
+            _summarizer(aws_error("AccessDeniedException", ACCESS_DENIED_MESSAGE)).run("q")
+    assert (info.value.stage, info.value.kind) == ("summarize", "access_denied")
     assert trace.model_calls == []
 
 
@@ -312,8 +366,31 @@ def test_process_agent_exception_returns_error_contract():
     )
     with request_trace("/ask", "q") as trace:
         result = orch.process("q")
-    assert result == {"error": "kaboom", "task_type": "unknown", "result": {}}
-    assert trace.errors[0]["stage"] == "orchestrator"
+    assert set(result) == {"error", "error_detail", "task_type", "result"}
+    assert result["task_type"] == "unknown" and result["result"] == {}
+    assert "kaboom" not in result["error"]  # raw exception text stays in logs only
+    assert result["error_detail"] == {"stage": "orchestrator", "kind": "internal", "code": "RuntimeError",
+                                      "retryable": False}
+    assert trace.errors[0]["stage"] == "orchestrator" and trace.errors[0]["fatal"] is True
+    assert trace.attrs["outcome"] == "failed"
+
+
+def test_process_surfaces_structured_service_failure():
+    failure = ServiceFailure("retrieval.embed", "access_denied", "AccessDeniedException", ACCESS_DENIED_MESSAGE)
+    orch = _orchestrator(RouterDecision(task_type="qa", confidence=0.9, reasoning="r"), qa=_StubAgent(exc=failure))
+    result = orch.process("q")
+    assert result["error_detail"] == {"stage": "retrieval.embed", "kind": "access_denied",
+                                      "code": "AccessDeniedException", "retryable": False}
+    assert "verified" not in result["error"] and "123456789012" not in json.dumps(result)
+
+
+def test_process_direct_surfaces_summarizer_failure():
+    failure = ServiceFailure("summarize_parse", "invalid_model_output", "JSONDecodeError")
+    orch = _orchestrator(RouterDecision(task_type="qa", confidence=0.9, reasoning="r"),
+                         summarizer=_StubAgent(exc=failure))
+    result = orch.process_direct("q", "summarize")
+    assert result["task_type"] == "summarize"
+    assert result["error_detail"]["kind"] == "invalid_model_output"
 
 
 def test_process_unknown_task_type():
@@ -335,4 +412,6 @@ def test_process_direct_contract_and_trace():
 
 def test_process_direct_unknown_task_type():
     orch = _orchestrator(RouterDecision(task_type="qa", confidence=0.9, reasoning="r"))
-    assert orch.process_direct("q", "nope") == {"error": "unknown task_type", "result": {}}
+    result = orch.process_direct("q", "nope")
+    assert result["error"] == "unknown task_type" and result["result"] == {}
+    assert result["error_detail"]["code"] == "UnknownTaskType"

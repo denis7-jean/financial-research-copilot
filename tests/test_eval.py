@@ -535,3 +535,28 @@ def test_visa_question_counts_visa_chunks_as_on_target(tmp_path):
     assert retrieval["sources"] == ["V", "V", "JPM"]
     assert retrieval["company_precision"] == pytest.approx(2 / 3)
     assert retrieval["contaminated"] is True
+
+
+def test_evidence_retrieval_failure_fails_grounding_without_crashing(tmp_path):
+    from app.errors import ServiceFailure
+
+    def failing_evidence(query, n_results=5):
+        raise ServiceFailure("retrieval.embed", "access_denied", "AccessDeniedException")
+
+    case = _case("S1", "summarize q", expected_route="summarize", reference_answer=None, reference_source=None)
+    path = tmp_path / "r.json"
+    llm_judge.run_evaluation([case], orchestrator=FakeOrchestrator({"summarize q": _summary_result()}),
+                             client=FakeJudge({}), retrieve_evidence=failing_evidence,
+                             results_path=str(path), sleep_seconds=0)
+    row = json.loads(path.read_text(encoding="utf-8"))["results"][0]
+    assert row["summary_grounding"]["pass"] is False
+    assert row["summary_grounding"]["reasoning"] == "evidence_retrieval_failed: access_denied at retrieval.embed"
+
+
+def test_structured_system_errors_are_recorded(tmp_path):
+    detail = {"stage": "retrieval.embed", "kind": "access_denied", "code": "AccessDeniedException", "retryable": False}
+    results = {"q": {"error": "denied", "error_detail": detail, "task_type": "unknown", "result": {}}}
+    summary, data, _ = _run(tmp_path, [_case("A", "q")], results, FakeJudge({}))
+    assert data["results"][0]["system_error"] == "denied"
+    assert summary["errors"]["cases_with_system_errors"] == ["A"]
+    assert summary["context_relevance_pass_rate"] == 0.0

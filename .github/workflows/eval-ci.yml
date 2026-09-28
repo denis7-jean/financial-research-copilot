@@ -65,25 +65,11 @@ jobs:
       - name: Health check
         run: |
           curl -f http://localhost:8000/health || exit 1
-      - name: Smoke test /ask endpoint
-        # The API reports failures in the body with HTTP 200, so the status code
-        # alone cannot detect them; inspect the body as well.
-        run: |
-          curl -sf -X POST http://localhost:8000/ask \
-            -H "Content-Type: application/json" \
-            -d '{"query": "What was JPMorgan net revenue in FY2025?"}' -o ask.json || exit 1
-          python - <<'EOF'
-          import json, sys
-          body = json.load(open("ask.json"))
-          if "error" in body:
-              sys.exit(f"/ask returned an error: {body['error']}")
-          result = body.get("result") or {}
-          if not (result.get("answer") or result.get("summary")):
-              sys.exit("/ask returned an empty answer")
-          if not body.get("trace_id"):
-              sys.exit("/ask response has no trace_id")
-          print("smoke ok:", body.get("task_type"), body["trace_id"])
-          EOF
+      - name: Smoke test /ask with known in-corpus questions
+        # Requires HTTP 200, no error, a real answer (not the no-evidence answer),
+        # a citation of the expected filing and the expected figure.
+        # Infrastructure failures return 5xx with error_detail and fail here.
+        run: python -m scripts.smoke_check --base-url http://localhost:8000
 
   eval-gate:
     name: Eval Gate (LLM-as-Judge)

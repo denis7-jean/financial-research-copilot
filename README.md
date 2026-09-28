@@ -4,7 +4,13 @@ A production-grade agentic AI system built on AWS that answers questions
 and generates summaries from FY2025 SEC 10-K filings using a router-based
 multi-agent architecture.
 
-**Deployment:** Live on AWS Lambda (endpoint available on request)
+**Deployment:** the `financial-copilot` Lambda function exists in `us-east-1` (Python 3.11,
+`$LATEST` only, dependencies in the `financial-copilot-deps` layer). It currently has **no public
+HTTP entry point**: no Function URL, no API Gateway and no invoke permission for other
+principals, so it can only be invoked directly with AWS credentials.
+
+As of 2026-09-28, production Bedrock calls are also blocked while AWS completes an account-level
+verification.
 
 ---
 
@@ -13,7 +19,7 @@ multi-agent architecture.
 - **Multi-agent orchestration** — RouterAgent classifies intent and dispatches to specialized agents
 - **Manual RAG pipeline** — PDF extraction → chunking → Titan Embeddings V2 → FAISS vector search → Claude generation, all via pure boto3
 - **Production CI/CD** — 5-job GitHub Actions pipeline. An LLM-as-judge gate enforces ≥ 80% context relevance and faithfulness on 19 labeled QA cases
-- **Serverless deployment** — FastAPI + Mangum on AWS Lambda with a Function URL
+- **Serverless deployment** — FastAPI + Mangum on AWS Lambda (see Deployment above for the current state)
 - **Observability** — one structured `request.timing` record per request: stage latency, Bedrock token usage, router outcome, cold-start flag and trace ID
 
 ---
@@ -61,7 +67,7 @@ Pydantic validated response + trace_id
 | Embeddings | Amazon Titan Embeddings V2 |
 | Vector store | FAISS IndexFlatIP (manual, $0/month) |
 | API framework | FastAPI + Mangum |
-| Deployment | AWS Lambda + Function URL |
+| Deployment | AWS Lambda (no public HTTP entry point at present) |
 | Storage | Amazon S3 |
 | LLM API | Amazon Bedrock (pure boto3, no wrappers) |
 | CI/CD | GitHub Actions (5-job pipeline) |
@@ -121,9 +127,11 @@ What each job actually verifies:
     cannot reach AWS.
 - **integration-tests** (live AWS):
   - Starts uvicorn and checks `/health`.
-  - Sends one `/ask` request. Fails on a non-2xx status, an `error` field, an empty answer or a
-    missing `trace_id`.
-  - It does not check answer content.
+  - Runs `python -m scripts.smoke_check` with two known in-corpus questions (JPMorgan Chase and
+    Visa FY2025 net revenue).
+  - Each must return HTTP 200 with no `error`, a real answer (not the no-evidence answer), a
+    citation of the expected filing and the expected figure.
+  - Infrastructure failures return 5xx and fail the job.
 - **eval-gate** (live, billable) — `pytest eval/test_llm_judge.py -m llm`:
   - Runs all 34 cases.
   - Fails the build if context relevance or faithfulness falls below 80% on the gated QA
@@ -153,7 +161,9 @@ which Lambda ships to CloudWatch Logs. The record has `"event": "request.timing"
   `embed_query`, `qa_generate` and `summarize`
 - `route`: task type, confidence, and `router_outcome` (`model`, `fallback_invoke_error`,
   `fallback_parse_error`, `fallback_low_confidence` or `direct`)
-- `errors`: failures that the API still reports with HTTP 200
+- `errors`: sanitized failures (`stage`, `kind`, `code`, `retryable`, `fatal`). A router
+  fallback is recorded as non-fatal
+- `attrs`: includes `http_status` and `outcome` (`generated`, `no_evidence` or `failed`)
 - `query_chars` and a 12-character SHA-256 prefix of the query
 
 The query text itself is never logged. The digest is pseudonymous, not anonymous.
@@ -170,21 +180,24 @@ run or from CloudWatch Logs Insights over `request.timing` records.
 
 ## API Usage
 
+There is currently no public endpoint (see Deployment). The examples use a local server
+(`uvicorn app.main:app --port 8000`).
+
 **Health check:**
 ```bash
-curl https://<lambda-url>.lambda-url.us-east-1.on.aws/health
+curl http://localhost:8000/health
 ```
 
 **Ask a question (RAG):**
 ```bash
-curl -X POST https://<lambda-url>.lambda-url.us-east-1.on.aws/ask \
+curl -X POST http://localhost:8000/ask \
   -H "Content-Type: application/json" \
   -d '{"query": "What was JPMorgan net revenue in FY2025?"}'
 ```
 
 **Summarize:**
 ```bash
-curl -X POST https://<lambda-url>.lambda-url.us-east-1.on.aws/summarize \
+curl -X POST http://localhost:8000/summarize \
   -H "Content-Type: application/json" \
   -d '{"query": "Summarize Goldman Sachs key risks in 2025"}'
 ```
@@ -206,8 +219,31 @@ curl -X POST https://<lambda-url>.lambda-url.us-east-1.on.aws/summarize \
 }
 ```
 
-`total_latency_ms` is router plus agent time only. Errors are returned in an `error` field with
-HTTP 200.
+`total_latency_ms` is router plus agent time only.
+
+**Outcomes and status codes**
+
+Legitimate outcomes return **200** with the normal contract:
+- a grounded answer;
+- an evidence-based abstention ("the documents don't contain…");
+- a genuinely empty retrieval (`"answer": "No relevant documents found."`, no citations).
+
+Infrastructure and model failures return the same body shape with `"result": {}`, a sanitized
+`error` message and `error_detail`
+(`{"stage", "kind", "code", "retryable"}`). Raw provider messages, ARNs and account IDs never
+appear in responses.
+
+| `kind` | Status | Example |
+|---|---|---|
+| `access_denied` | 503 | Bedrock `AccessDeniedException` |
+| `throttled` | 503 | `ThrottlingException` (retryable) |
+| `unavailable` | 503 | connection failure, provider 5xx (retryable) |
+| `timeout` | 504 | read/connect timeout, `ModelTimeoutException` (retryable) |
+| `model_error`, `invalid_model_output` | 502 | malformed or empty model output, unparseable summary |
+| `configuration`, `internal` | 500 | missing S3 object or model ID, unexpected exception |
+
+A router failure on its own does not fail the request: routing falls back to `qa`.
+`/evaluate` is a batch endpoint, so it stays 200 overall with per-case `error_detail`.
 
 **`/evaluate`** is disabled by default and returns 404. To enable it:
 - Set `ENABLE_EVALUATE_ENDPOINT=true` **and** a non-empty `EVALUATE_ENDPOINT_TOKEN`.
@@ -234,24 +270,26 @@ five) are out of corpus; the correct behavior is to say the documents don't cont
 metadata cites the new path. The FAISS index was not changed. See
 [`docs/runbooks/visa-source-migration.md`](docs/runbooks/visa-source-migration.md).
 
+No Lambda refresh was needed. The function had 0 invocations in the previous 90 days, so no
+warm container held the old metadata, and a cold start on 2026-09-28 loaded the migrated file.
+
 Still pending:
-- Refresh Lambda execution environments that loaded the old metadata. Until then, warm
-  containers may still cite the old path.
-- Delete the old object.
+- A production smoke test (blocked by the Bedrock account verification).
+- Deletion of the old object.
 
 ---
 
 ## Known Limitations
 
-- **Warm Lambda containers may cite the old Visa file name** until they are refreshed (see
-  Data Sources). The earlier "Mastercard retrieval" failures came from the mislabeled file:
-  Mastercard was never in the corpus. Retrieval ranking was not the cause.
+- **The earlier "Mastercard retrieval" failures** came from the mislabeled file: Mastercard was
+  never in the corpus. Retrieval ranking was not the cause (see Data Sources).
 - **No company filtering in retrieval.** Top-5 similarity search runs over the shared index, so
   chunks from other companies can appear in the context.
 - **The summarizer is not grounded.** SummarizerAgent calls Claude without retrieval. When
   `/ask` routes a question to it, the answer is not based on the filings.
-- **Errors return HTTP 200** with an `error` field or an empty answer. Failures are visible in
-  the `request.timing` trace.
+- **Deployed code predates these changes.** The Lambda still runs the June 2026 build, which
+  reports failures as HTTP 200 with a "No relevant documents found." answer. The 5xx behavior
+  above applies once this code is deployed.
 - **`/ask` and `/summarize` are unauthenticated** and allow CORS from any origin.
 - **Packaging script.**
   - `scripts/package_lambda.ps1` installs packages for the host platform. On Windows that means
@@ -315,6 +353,7 @@ app/
 ├── main.py                  ← FastAPI app, request tracing, CloudWatch request log
 ├── lambda_handler.py        ← Mangum ASGI adapter for Lambda
 ├── observability.py         ← request.timing trace: stages, tokens, cold start
+├── errors.py                ← ServiceFailure: classified, sanitized failures → HTTP status
 ├── agents/
 │   ├── orchestrator.py      ← CopilotOrchestrator
 │   ├── router.py            ← RouterAgent (intent classification)
@@ -337,6 +376,7 @@ tests/                       ← Offline unit tests (network blocked in conftest
 
 scripts/
 ├── package_lambda.ps1       ← Lambda packaging (manual)
+├── smoke_check.py           ← CI/post-deploy /ask check (live when run)
 └── migrate_visa_source.py   ← S3 Visa rename: read-only plan, gated execute/rollback
 
 docs/runbooks/

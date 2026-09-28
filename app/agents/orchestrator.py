@@ -7,7 +7,8 @@ from dotenv import load_dotenv
 from app.agents.qa_agent import QAAgent, QAResponse
 from app.agents.router import RouterAgent
 from app.agents.summarizer_agent import SummarizerAgent, SummaryResponse
-from app.observability import current_trace_id, record_error, set_route, stage
+from app.errors import ServiceFailure, failure_from
+from app.observability import annotate, current_trace_id, record_failure, set_route, stage
 
 load_dotenv()
 
@@ -18,6 +19,19 @@ def _log(event: str, payload: dict) -> None:
 
 def _resolve_trace_id(trace_id: str | None) -> str:
     return trace_id or current_trace_id() or str(uuid.uuid4())
+
+
+def _failure_result(failure: ServiceFailure, task_type: str, trace_id: str) -> dict:
+    """Existing error shape plus sanitized structured detail. Raw messages never leave the logs."""
+    record_failure(failure, fatal=True)
+    annotate("outcome", "failed")
+    _log("orchestrator.failed", {"trace_id": trace_id, **failure.to_log()})
+    return {
+        "error": failure.public_message(),
+        "error_detail": failure.to_public(),
+        "task_type": task_type,
+        "result": {},
+    }
 
 
 class CopilotOrchestrator:
@@ -44,7 +58,9 @@ class CopilotOrchestrator:
             with stage("agent"):
                 agent_response = self._dispatch(query, decision.task_type, trace_id=trace_id)
             if agent_response is None:
-                return {"error": f"unknown task_type: {decision.task_type}", "task_type": decision.task_type, "result": {}}
+                failure = ServiceFailure("orchestrator", "internal", "UnknownTaskType", decision.task_type)
+                return {**_failure_result(failure, decision.task_type, trace_id),
+                        "error": f"unknown task_type: {decision.task_type}"}
 
             _log("orchestrator.completed", {
                 "trace_id": trace_id,
@@ -58,8 +74,7 @@ class CopilotOrchestrator:
                 "total_latency_ms": router_latency_ms + agent_response.latency_ms,
             }
         except Exception as e:
-            record_error("orchestrator", e)
-            return {"error": str(e), "task_type": "unknown", "result": {}}
+            return _failure_result(failure_from("orchestrator", e), "unknown", trace_id)
 
     def process_direct(self, query: str, task_type: str, trace_id: str | None = None) -> dict:
         trace_id = _resolve_trace_id(trace_id)
@@ -73,7 +88,9 @@ class CopilotOrchestrator:
             with stage("agent"):
                 agent_response = self._dispatch(query, task_type, trace_id=trace_id)
             if agent_response is None:
-                return {"error": "unknown task_type", "result": {}}
+                failure = ServiceFailure("orchestrator", "internal", "UnknownTaskType", task_type)
+                result = _failure_result(failure, task_type, trace_id)
+                return {"error": "unknown task_type", "error_detail": result["error_detail"], "result": {}}
 
             _log("orchestrator.completed", {
                 "trace_id": trace_id,
@@ -87,8 +104,7 @@ class CopilotOrchestrator:
                 "total_latency_ms": agent_response.latency_ms,
             }
         except Exception as e:
-            record_error("orchestrator", e)
-            return {"error": str(e), "task_type": task_type, "result": {}}
+            return _failure_result(failure_from("orchestrator", e), task_type, trace_id)
 
     def _dispatch(self, query: str, task_type: str, trace_id: str | None = None) -> QAResponse | SummaryResponse | None:
         if task_type == "qa":

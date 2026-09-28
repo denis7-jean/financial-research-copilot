@@ -6,13 +6,15 @@ import time
 import boto3
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 load_dotenv()
 
 from app.agents.orchestrator import CopilotOrchestrator
-from app.observability import RequestTrace, emit, request_trace, stage
+from app.errors import http_status_for
+from app.observability import RequestTrace, annotate, emit, request_trace, stage
 
 app = FastAPI()
 
@@ -75,6 +77,7 @@ def _log(endpoint: str, latency_ms: float, trace: RequestTrace) -> None:
         "latency_ms": latency_ms,
         "trace_id": trace.trace_id,
         "cold_start": trace.cold_start,
+        "http_status": trace.attrs.get("http_status"),
     })
     try:
         with stage("request_log"):
@@ -87,15 +90,26 @@ def _log(endpoint: str, latency_ms: float, trace: RequestTrace) -> None:
         pass
 
 
+def _respond(result: dict, trace: RequestTrace):
+    """Successful results keep the plain 200 contract. Failures carry the same body
+    (with sanitized error and error_detail) under a 5xx status."""
+    body = {**result, "trace_id": trace.trace_id}
+    status = trace.attrs["http_status"]
+    if status == 200:
+        return body
+    return JSONResponse(status_code=status, content=body)
+
+
 @app.post("/ask")
 def ask(request: QueryRequest):
     with request_trace("/ask", request.query) as trace:
         start = time.monotonic()
         result = orchestrator.process(request.query, trace_id=trace.trace_id)
         latency_ms = (time.monotonic() - start) * 1000
+        annotate("http_status", http_status_for(result))
         _log("/ask", latency_ms, trace)
     emit(trace)
-    return {**result, "trace_id": trace.trace_id}
+    return _respond(result, trace)
 
 
 @app.post("/summarize")
@@ -104,9 +118,10 @@ def summarize(request: QueryRequest):
         start = time.monotonic()
         result = orchestrator.process_direct(request.query, "summarize", trace_id=trace.trace_id)
         latency_ms = (time.monotonic() - start) * 1000
+        annotate("http_status", http_status_for(result))
         _log("/summarize", latency_ms, trace)
     emit(trace)
-    return {**result, "trace_id": trace.trace_id}
+    return _respond(result, trace)
 
 
 @app.get("/health")
@@ -158,8 +173,10 @@ def evaluate(payload: dict, x_evaluate_token: str | None = Header(default=None))
 
     results = []
     for case in cases:
+        # Batch endpoint: stays 200 overall; failed cases carry error/error_detail in the list.
         with request_trace("/evaluate", case["query"]) as trace:
             result = orchestrator.process(case["query"], trace_id=trace.trace_id)
+            annotate("http_status", http_status_for(result))
         emit(trace)
         results.append(result)
     return results

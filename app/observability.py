@@ -193,6 +193,13 @@ def record_error(stage_name: str, exc: BaseException) -> None:
         trace.add_error(stage_name, exc)
 
 
+def record_failure(failure, fatal: bool = True) -> None:
+    """Record an app.errors.ServiceFailure (already sanitized) on the active trace."""
+    trace = _current.get()
+    if trace is not None:
+        trace.errors.append({**failure.to_log(), "type": failure.code or failure.kind, "fatal": fatal})
+
+
 def set_route(**fields) -> None:
     trace = _current.get()
     if trace is not None:

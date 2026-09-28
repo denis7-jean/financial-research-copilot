@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 import boto3
 
 from app.agents.orchestrator import CopilotOrchestrator
+from app.errors import ServiceFailure
 from app.observability import request_trace
 from eval.eval_queries import EVAL_CASES, EvalCase
 from eval.metrics import GATES, company_for_source, company_precision, is_contaminated, summarize_results
@@ -275,12 +276,16 @@ def evaluate_case(case: EvalCase, orchestrator, client, retrieve_evidence, judge
             summary_grounding = _failed("empty_or_unparseable_summary")
         else:
             # Evidence retrieval happens outside the request trace: eval overhead, not system latency.
-            evidence = retrieve_evidence(case.query, n_results=5)
-            if evidence:
-                summary_grounding = judge_summary_grounding(client, case.query, evidence, answer, judge_calls)
-                judge_errors += summary_grounding["judge_error"]
+            try:
+                evidence = retrieve_evidence(case.query, n_results=5)
+            except ServiceFailure as failure:
+                summary_grounding = _failed(f"evidence_retrieval_failed: {failure.kind} at {failure.stage}")
             else:
-                summary_grounding = _failed("no_evidence_retrieved")
+                if evidence:
+                    summary_grounding = judge_summary_grounding(client, case.query, evidence, answer, judge_calls)
+                    judge_errors += summary_grounding["judge_error"]
+                else:
+                    summary_grounding = _failed("no_evidence_retrieved")
 
     if answer:
         abstained, correctness, assessment_error = assess_answer(client, case, answer, judge_calls)

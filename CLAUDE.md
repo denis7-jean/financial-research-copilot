@@ -43,6 +43,7 @@ financial-multi-agent-copilot/
 │   ├── main.py                    ← FastAPI app, request tracing, /evaluate gate
 │   ├── lambda_handler.py          ← Mangum ASGI adapter
 │   ├── observability.py           ← request.timing trace (stages, tokens, cold start)
+│   ├── errors.py                  ← ServiceFailure: classified, sanitized failures → HTTP status
 │   ├── agents/
 │   │   ├── router.py              ← RouterAgent + RouterDecision
 │   │   ├── qa_agent.py            ← QAAgent + QAResponse
@@ -71,6 +72,7 @@ financial-multi-agent-copilot/
 │       └── legacy/            ← archived pre-Phase-0 result
 ├── scripts/
 │   ├── package_lambda.ps1
+│   ├── smoke_check.py         ← CI /ask smoke check (live when run)
 │   └── migrate_visa_source.py ← S3 Visa rename (plan is read-only; execute/rollback gated)
 ├── docs/runbooks/visa-source-migration.md
 ├── .github/workflows/eval-ci.yml
@@ -111,6 +113,8 @@ EVAL_SLEEP_SECONDS=2
 - Unit tests must mock Bedrock/S3 (see `tests/conftest.py` FakeBedrock); real
   botocore network calls raise in tests
 - Eval thresholds live only in `eval/metrics.py` GATES
+- Infrastructure/model failures raise `app.errors.ServiceFailure` (via `failure_from`); never
+  return an empty result for a failure. Empty retrieval and abstention stay HTTP 200
 
 ## Commands
 ```bash

@@ -7,7 +7,8 @@ import boto3
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
-from app.observability import record_converse_usage, set_route
+from app.errors import ServiceFailure, failure_from
+from app.observability import record_converse_usage, record_failure, set_route
 
 load_dotenv()
 
@@ -55,9 +56,8 @@ class RouterAgent:
                 messages=[{"role": "user", "content": [{"text": prompt}]}],
             )
         except Exception as e:
-            _log("router.error", {"trace_id": trace_id, "error": str(e)})
             self.latency_ms = (time.monotonic() - start) * 1000
-            return self._fallback("fallback_invoke_error", e)
+            return self._fallback("fallback_invoke_error", failure_from("router", e), trace_id)
         finally:
             self.latency_ms = (time.monotonic() - start) * 1000
 
@@ -74,8 +74,8 @@ class RouterAgent:
             data = json.loads(text)
             decision = RouterDecision.model_validate(data)
         except Exception as e:
-            _log("router.error", {"trace_id": trace_id, "error": str(e)})
-            return self._fallback("fallback_parse_error", e)
+            failure = ServiceFailure("router", "invalid_model_output", type(e).__name__, str(e))
+            return self._fallback("fallback_parse_error", failure, trace_id)
 
         if decision.confidence < 0.6:
             set_route(
@@ -89,8 +89,13 @@ class RouterAgent:
         return decision
 
     @staticmethod
-    def _fallback(outcome: str, error: Exception) -> RouterDecision:
-        set_route(router_outcome=outcome, router_error_type=type(error).__name__)
+    def _fallback(outcome: str, failure: ServiceFailure, trace_id: str) -> RouterDecision:
+        # Routing degrades gracefully to "qa" (the grounded path); the failure is
+        # recorded as non-fatal. If the dependency is really down, the QA path
+        # fails too and surfaces the error.
+        _log("router.error", {"trace_id": trace_id, **failure.to_log()})
+        record_failure(failure, fatal=False)
+        set_route(router_outcome=outcome, router_error_type=failure.code)
         return _FALLBACK
 
 

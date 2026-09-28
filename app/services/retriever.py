@@ -8,7 +8,8 @@ import faiss
 import numpy as np
 from dotenv import load_dotenv
 
-from app.observability import annotate, current_trace_id, record_error, record_model_call, stage
+from app.errors import ServiceFailure, failure_from
+from app.observability import annotate, record_model_call, stage
 
 load_dotenv()
 
@@ -51,16 +52,24 @@ def _load_index_if_needed():
 
 
 def embed_query(query: str) -> np.ndarray:
+    """Embed the query with Titan. Raises ServiceFailure (stage retrieval.embed)."""
     body = json.dumps({"inputText": query, "dimensions": 1024, "normalize": True})
     start = time.monotonic()
     with stage("retrieval.embed"):
-        response = bedrock.invoke_model(
-            modelId=EMBEDDING_MODEL_ID,
-            body=body,
-            contentType="application/json",
-            accept="application/json",
-        )
-        payload = json.loads(response["body"].read())
+        try:
+            response = bedrock.invoke_model(
+                modelId=EMBEDDING_MODEL_ID,
+                body=body,
+                contentType="application/json",
+                accept="application/json",
+            )
+        except Exception as e:
+            raise failure_from("retrieval.embed", e) from e
+        try:
+            payload = json.loads(response["body"].read())
+            embedding = payload["embedding"]
+        except (KeyError, TypeError, ValueError) as e:
+            raise ServiceFailure("retrieval.embed", "invalid_model_output", type(e).__name__, str(e)) from e
     record_model_call(
         "embed_query",
         EMBEDDING_MODEL_ID,
@@ -68,17 +77,26 @@ def embed_query(query: str) -> np.ndarray:
         output_tokens=0,
         latency_ms=round((time.monotonic() - start) * 1000, 1),
     )
-    embedding = payload["embedding"]
     return np.array([embedding], dtype=np.float32)
 
 
 def retrieve_chunks(query: str, n_results: int = 5) -> list[dict]:
+    """Top-n chunks for the query.
+
+    Returns [] only when the search genuinely finds nothing. Infrastructure and
+    model failures raise app.errors.ServiceFailure instead of looking like an
+    empty result.
+    """
     try:
         _load_index_if_needed()
-        query_embedding = embed_query(query)
+    except Exception as e:
+        raise failure_from("retrieval.index_load", e) from e
+
+    query_embedding = embed_query(query)
+
+    try:
         with stage("retrieval.search"):
             distances, indices = _index.search(query_embedding, n_results)
-
         results = []
         for distance, idx in zip(distances[0], indices[0]):
             if idx == -1:
@@ -89,20 +107,10 @@ def retrieve_chunks(query: str, n_results: int = 5) -> list[dict]:
                 "source": entry["source"],
                 "score": float(distance),
             })
-
-        return results
-
     except Exception as e:
-        # Contract unchanged (callers receive []), but the failure is no longer
-        # indistinguishable from an empty result: it is logged and traced.
-        record_error("retrieval", e)
-        print(json.dumps({
-            "event": "retrieval.error",
-            "trace_id": current_trace_id(),
-            "error_type": type(e).__name__,
-            "error": str(e)[:200],
-        }))
-        return []
+        raise failure_from("retrieval.search", e) from e
+
+    return results
 
 
 if __name__ == "__main__":

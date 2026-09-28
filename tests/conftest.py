@@ -85,3 +85,21 @@ def converse_text(text: str, input_tokens: int = 100, output_tokens: int = 20, l
         "metrics": {"latencyMs": latency_ms},
         "stopReason": "end_turn",
     }
+
+
+# The production AccessDenied text, plus an ARN/account ID to prove they never leak.
+ACCESS_DENIED_MESSAGE = (
+    "Your account is currently being verified. Verification normally takes less than 2 hours. "
+    "Until your account is verified, you may not have access to this operation. "
+    "Caller: arn:aws:iam::123456789012:role/financial-copilot-lambda-role"
+)
+
+
+def aws_error(code: str, message: str = "", operation: str = "Converse", status: int = 400):
+    """A real botocore ClientError, as boto3 raises it."""
+    from botocore.exceptions import ClientError
+
+    return ClientError(
+        {"Error": {"Code": code, "Message": message}, "ResponseMetadata": {"HTTPStatusCode": status}},
+        operation,
+    )
