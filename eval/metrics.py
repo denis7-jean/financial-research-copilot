@@ -138,6 +138,67 @@ def evaluate_gates(values: dict[str, float | None], gates: tuple[Gate, ...] = GA
     return results, overall
 
 
+# Failure kinds (app/errors.py) that describe the environment rather than the
+# system's quality. Any of these makes a run invalid as a baseline.
+INFRASTRUCTURE_KINDS = frozenset({"access_denied", "throttled", "unavailable", "timeout", "configuration"})
+# Model-output failures are genuine system findings: they count against the
+# metrics but do not invalidate the run.
+MODEL_OUTPUT_KINDS = frozenset({"model_error", "invalid_model_output"})
+
+
+def classify_system_failure(row: dict) -> str | None:
+    """'infrastructure', 'model_output', 'application' or None for a result row."""
+    detail = row.get("system_error_detail") or {}
+    if not row.get("system_error") and not detail:
+        return None
+    kind = detail.get("kind")
+    if kind in INFRASTRUCTURE_KINDS:
+        return "infrastructure"
+    if kind in MODEL_OUTPUT_KINDS:
+        return "model_output"
+    return "application"
+
+
+def run_validity(rows: list[dict], judge_calls: list[dict], complete: bool = True) -> dict:
+    """Is this run usable as a quality baseline?
+
+    Infrastructure problems (in the system under test, the judge or the harness),
+    including non-fatal ones such as a throttled router falling back, or an
+    incomplete run, make the gate numbers unrepresentative. The run is then
+    reported as invalid, so an outage is never mistaken for a quality regression.
+    """
+    system_infra = {r["id"]: r["system_error_detail"]["kind"] for r in rows
+                    if classify_system_failure(r) == "infrastructure"}
+    degraded = {r["id"]: [e.get("kind") for e in r.get("trace_errors", [])
+                          if not e.get("fatal", True) and e.get("kind") in INFRASTRUCTURE_KINDS]
+                for r in rows}
+    degraded = {k: v for k, v in degraded.items() if v}
+    judge_infra = [c.get("error_kind") for c in judge_calls if not c.get("invoked", True)]
+    harness_infra = sum(r.get("harness_infra_errors", 0) for r in rows)
+    reasons = []
+    if not complete:
+        reasons.append("run incomplete")
+    if system_infra:
+        reasons.append(f"system infrastructure failures in {sorted(system_infra)}")
+    if degraded:
+        reasons.append(f"degraded by non-fatal infrastructure failures in {sorted(degraded)}")
+    if judge_infra:
+        reasons.append(f"{len(judge_infra)} judge call(s) failed to invoke")
+    if harness_infra:
+        reasons.append(f"{harness_infra} harness evidence retrieval failure(s)")
+    return {
+        "valid_for_baseline": not reasons,
+        "reasons": reasons,
+        "system_infrastructure_failures": system_infra,
+        "system_model_output_failures": sorted(r["id"] for r in rows if classify_system_failure(r) == "model_output"),
+        "application_errors": sorted(r["id"] for r in rows if classify_system_failure(r) == "application"),
+        "degraded_cases": degraded,
+        "judge_infrastructure_errors": len(judge_infra),
+        "judge_infrastructure_error_kinds": sorted(set(k for k in judge_infra if k)),
+        "harness_infrastructure_errors": harness_infra,
+    }
+
+
 def _score_or_zero(judgement: dict | None) -> float:
     if not judgement or not isinstance(judgement.get("score"), (int, float)):
         return 0.0
@@ -184,7 +245,9 @@ def _token_summary(rows: list[dict], judge_calls: list[dict]) -> dict:
     judge_out = sum(c.get("output_tokens") or 0 for c in judge_calls)
     return {
         "system_under_test_by_call": by_call,
-        "judge": {"calls": len(judge_calls), "input_tokens": judge_in, "output_tokens": judge_out},
+        "judge": {"calls": len(judge_calls),
+                  "invoked": sum(1 for c in judge_calls if c.get("invoked", True)),
+                  "input_tokens": judge_in, "output_tokens": judge_out},
         "estimated_cost_usd": {
             "note": "Estimate from recorded tokens and assumed list prices (eval/metrics.py "
                     "PRICES_PER_MTOK); not a bill.",
@@ -325,6 +388,7 @@ def summarize_results(rows: list[dict], judge_calls: list[dict]) -> dict:
         "errors": {
             "cases_with_system_errors": [r["id"] for r in rows if r["system_error"] or r["trace_errors"]],
             "judge_errors": sum(r["judge_errors"] for r in rows),
+            "judge_infra_errors": sum(r.get("judge_infra_errors", 0) for r in rows),
         },
         "latency_ms": _latency_summary(rows),
         "tokens": _token_summary(rows, judge_calls),

@@ -25,7 +25,7 @@ from eval.metrics import (
     pass_rate,
     percentile,
 )
-from tests.conftest import converse_text
+from tests.conftest import ACCESS_DENIED_MESSAGE, aws_error, converse_text
 
 
 JPM_SRC = "s3://b/docs/jpmorgan-chase-10k-fy2025.pdf"
@@ -337,13 +337,19 @@ def test_pass_is_computed_from_score_not_the_judges_flag(tmp_path):
 
 def test_judge_parse_error_is_a_failure_and_counted(tmp_path):
     cases = [_case("A", "q")]
-    judge = FakeJudge({"q": {"cr": "not json", "faith": RuntimeError("ThrottlingException")}})
+    throttled = aws_error("ThrottlingException", ACCESS_DENIED_MESSAGE)
+    judge = FakeJudge({"q": {"cr": "not json", "faith": throttled}})
     summary, data, _ = _run(tmp_path, cases, {"q": _qa_result("x", [JPM_SRC])}, judge)
     row = data["results"][0]
     assert row["context_relevance"]["pass"] is False and row["context_relevance"]["judge_error"] is True
-    assert "ThrottlingException" in row["faithfulness"]["reasoning"]
+    assert row["context_relevance"]["judge_infra_error"] is False  # bad output, not an outage
+    assert row["faithfulness"]["reasoning"] == "judge_infra_error:throttled:ThrottlingException"
+    assert row["faithfulness"]["judge_infra_error"] is True
+    assert "123456789012" not in json.dumps(data)  # raw provider message is never stored
     assert summary["errors"]["judge_errors"] == 2
+    assert summary["errors"]["judge_infra_errors"] == 1
     assert summary["overall_pass"] is False
+    assert summary["run_validity"]["valid_for_baseline"] is False
 
 
 def test_summarize_path_is_judged_for_grounding_with_harness_evidence(tmp_path):
@@ -404,7 +410,8 @@ def test_system_error_is_reported_and_fails_correctness(tmp_path):
     summary, data, _ = _run(tmp_path, cases, results, FakeJudge({}))
     row = data["results"][0]
     assert row["system_error"] == "kaboom"
-    assert row["answer_correctness"] == {"score": 0, "pass": False, "reasoning": "empty_answer", "judge_error": False}
+    assert row["answer_correctness"] == {"score": 0, "pass": False, "reasoning": "empty_answer",
+                                         "judge_error": False, "judge_infra_error": False}
     assert row["abstention_appropriate"] is False
     assert summary["errors"]["cases_with_system_errors"] == ["E"]
     assert summary["context_relevance_pass_rate"] == 0.0
@@ -560,3 +567,148 @@ def test_structured_system_errors_are_recorded(tmp_path):
     assert data["results"][0]["system_error"] == "denied"
     assert summary["errors"]["cases_with_system_errors"] == ["A"]
     assert summary["context_relevance_pass_rate"] == 0.0
+
+
+
+# --- Preflight safeguards: validity, cost ceiling, provenance, legacy protection -------------
+
+def _failure_result(kind: str, stage: str = "retrieval.embed") -> dict:
+    return {"error": "e", "error_detail": {"stage": stage, "kind": kind, "code": "X", "retryable": False},
+            "task_type": "unknown", "result": {}}
+
+
+def test_clean_run_is_a_valid_baseline(tmp_path):
+    summary, _, _ = _run(tmp_path, [_case("A", "a")], {"a": _qa_result("x", [JPM_SRC])}, FakeJudge({}))
+    assert summary["run_validity"]["valid_for_baseline"] is True
+    assert summary["run_validity"]["reasons"] == []
+    assert summary["completion"]["complete"] is True
+
+
+@pytest.mark.parametrize("kind, bucket", [
+    ("access_denied", "system_infrastructure_failures"),
+    ("throttled", "system_infrastructure_failures"),
+    ("timeout", "system_infrastructure_failures"),
+    ("configuration", "system_infrastructure_failures"),
+])
+def test_infrastructure_failures_invalidate_the_run(tmp_path, kind, bucket):
+    summary, data, _ = _run(tmp_path, [_case("A", "a")], {"a": _failure_result(kind)}, FakeJudge({}))
+    validity = summary["run_validity"]
+    assert validity["valid_for_baseline"] is False
+    assert validity[bucket] == {"A": kind}
+    assert data["results"][0]["system_error_detail"]["kind"] == kind
+
+
+@pytest.mark.parametrize("kind, bucket", [
+    ("invalid_model_output", "system_model_output_failures"),
+    ("model_error", "system_model_output_failures"),
+    ("internal", "application_errors"),
+])
+def test_model_and_application_failures_are_findings_not_invalidations(tmp_path, kind, bucket):
+    summary, _, _ = _run(tmp_path, [_case("A", "a")], {"a": _failure_result(kind)}, FakeJudge({}))
+    validity = summary["run_validity"]
+    assert validity["valid_for_baseline"] is True
+    assert validity[bucket] == ["A"]
+    assert summary["context_relevance_pass_rate"] == 0.0  # still a metric failure
+
+
+def test_degraded_router_invalidates_the_run(tmp_path):
+    class DegradedOrchestrator(FakeOrchestrator):
+        def process(self, query, trace_id=None):
+            from app.errors import ServiceFailure
+
+            observability.record_failure(ServiceFailure("router", "throttled", "ThrottlingException"), fatal=False)
+            return super().process(query, trace_id)
+
+    path = tmp_path / "r.json"
+    summary = llm_judge.run_evaluation(
+        [_case("A", "a")], orchestrator=DegradedOrchestrator({"a": _qa_result("x", [JPM_SRC])}), client=FakeJudge({}),
+        retrieve_evidence=lambda q, n_results=5: [], results_path=str(path), sleep_seconds=0)
+    assert summary["run_validity"]["degraded_cases"] == {"A": ["throttled"]}
+    assert summary["run_validity"]["valid_for_baseline"] is False
+
+
+def test_harness_evidence_failure_invalidates_the_run(tmp_path):
+    from app.errors import ServiceFailure
+
+    def failing(query, n_results=5):
+        raise ServiceFailure("retrieval.embed", "throttled", "ThrottlingException")
+
+    case = _case("S", "s", expected_route="summarize", reference_answer=None, reference_source=None)
+    summary = llm_judge.run_evaluation([case], orchestrator=FakeOrchestrator({"s": _summary_result()}),
+                                       client=FakeJudge({}), retrieve_evidence=failing,
+                                       results_path=str(tmp_path / "r.json"), sleep_seconds=0)
+    assert summary["run_validity"]["harness_infrastructure_errors"] == 1
+    assert summary["run_validity"]["valid_for_baseline"] is False
+
+
+def test_judge_attempts_are_counted_even_when_invocation_fails(tmp_path):
+    judge = FakeJudge({"q": {"cr": aws_error("ServiceUnavailableException", status=503)}})
+    summary, _, _ = _run(tmp_path, [_case("A", "q")], {"q": _qa_result("x", [JPM_SRC])}, judge)
+    assert summary["tokens"]["judge"]["calls"] == 3  # CR (failed) + faithfulness + assessment
+    assert summary["tokens"]["judge"]["invoked"] == 2
+    assert summary["run_validity"]["judge_infrastructure_error_kinds"] == ["unavailable"]
+
+
+def test_cost_ceiling_stops_the_run_and_invalidates_it(tmp_path):
+    cases = [_case(f"C{i}", f"q{i}") for i in range(4)]
+    results = {c.query: _qa_result("x", [JPM_SRC]) for c in cases}
+    path = tmp_path / "r.json"
+    summary = llm_judge.run_evaluation(cases, orchestrator=FakeOrchestrator(results), client=FakeJudge({}),
+                                       retrieve_evidence=lambda q, n_results=5: [], results_path=str(path),
+                                       sleep_seconds=0, max_cost_usd=0.0001)
+    assert summary["completion"]["evaluated_cases"] == 1
+    assert summary["completion"]["complete"] is False
+    assert "cost ceiling" in summary["completion"]["aborted_reason"]
+    assert summary["run_validity"]["valid_for_baseline"] is False
+    assert len(json.loads(path.read_text(encoding="utf-8"))["results"]) == 1
+
+
+def test_cost_ceiling_defaults_from_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVAL_MAX_COST_USD", "7.5")
+    summary, _, _ = _run(tmp_path, [_case("A", "a")], {"a": _qa_result("x", [JPM_SRC])}, FakeJudge({}))
+    assert summary["completion"]["max_cost_usd"] == 7.5
+
+
+@pytest.mark.parametrize("path", ["eval/results/legacy/new.json", "eval/results/legacy"])
+def test_results_can_never_be_written_into_legacy(path):
+    with pytest.raises(ValueError, match="legacy"):
+        llm_judge.run_evaluation([_case("A", "a")], orchestrator=FakeOrchestrator({}), client=FakeJudge({}),
+                                 retrieve_evidence=lambda q, n_results=5: [], results_path=path, sleep_seconds=0)
+
+
+def test_rows_carry_trace_ids_and_provenance_is_recorded(tmp_path):
+    orch = FakeOrchestrator({"a": _qa_result("x", [JPM_SRC])})
+    path = tmp_path / "r.json"
+    summary = llm_judge.run_evaluation([_case("A", "a")], orchestrator=orch, client=FakeJudge({}),
+                                       retrieve_evidence=lambda q, n_results=5: [], results_path=str(path),
+                                       sleep_seconds=0)
+    row = json.loads(path.read_text(encoding="utf-8"))["results"][0]
+    assert row["trace_id"] == orch.trace_ids[0]
+    prov = summary["provenance"]
+    assert "not the deployed Lambda" in prov["system_under_test"]
+    assert len(prov["code"]["git_sha"]) == 40
+    assert prov["dataset_sha256"] == llm_judge.dataset_fingerprint([_case("A", "a")])
+    assert prov["corpus"] is None  # retriever not loaded with fakes
+
+
+def test_dataset_fingerprint_changes_with_labels():
+    base = llm_judge.dataset_fingerprint(list(EVAL_CASES))
+    assert base == llm_judge.dataset_fingerprint(list(EVAL_CASES))
+    changed = [_case("L01", EVAL_CASES[0].query, expected_behavior="abstain")] + list(EVAL_CASES[1:])
+    assert llm_judge.dataset_fingerprint(changed) != base
+
+
+def test_corpus_fingerprint_matches_serialized_metadata(monkeypatch):
+    import hashlib
+
+    import faiss
+
+    from app.services import retriever
+
+    meta = [{"chunk_id": 0, "source": "s3://b/docs/visa-10k-fy2025.pdf", "text": "t"}]
+    index = faiss.IndexFlatIP(4)
+    monkeypatch.setattr(retriever, "_index", index)
+    monkeypatch.setattr(retriever, "_metadata", meta)
+    fp = llm_judge._corpus_fingerprint()
+    assert fp == {"index_vectors": 0, "metadata_rows": 1,
+                  "metadata_sha256": hashlib.sha256(json.dumps(meta).encode("ascii")).hexdigest()}

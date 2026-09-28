@@ -28,6 +28,20 @@ def _gate(summary: dict, metric: str) -> dict:
 
 
 @pytest.mark.llm
+def test_run_is_valid_for_baseline(eval_results) -> None:
+    """Separates environment problems from quality results.
+
+    If this fails, the gate numbers below are not a quality verdict: the run was
+    affected by infrastructure failures (system, judge or harness) or stopped early.
+    """
+    validity = eval_results["run_validity"]
+    assert validity["valid_for_baseline"], (
+        "Run invalidated by infrastructure or completeness problems (not a quality result): "
+        + "; ".join(validity["reasons"])
+    )
+
+
+@pytest.mark.llm
 @pytest.mark.parametrize("gate", ENFORCED, ids=[g.metric for g in ENFORCED])
 def test_enforced_gate(eval_results, gate) -> None:
     result = _gate(eval_results, gate.metric)
