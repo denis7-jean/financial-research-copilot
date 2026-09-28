@@ -3,3 +3,4 @@ eval/results/baselines/*.json -text
 eval/results/baselines/*.log -text
 eval/results/experiments/**/*.json -text
 eval/results/experiments/**/*.jsonl -text
+eval/results/experiments/**/*.log -text
