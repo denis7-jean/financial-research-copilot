@@ -1,0 +1,3 @@
+# Archived evaluation records are stored byte-for-byte so their SHA-256 manifests stay valid.
+eval/results/baselines/*.json -text
+eval/results/baselines/*.log -text
