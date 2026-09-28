@@ -130,7 +130,7 @@ def test_theoretical_worst_case_total_does_not_block_a_plan_or_a_run():
     plan = build_plan(("haiku", "rules", "jev"), repetitions=10, warmup_calls=3, seed=3)
     theoretical = plan.cost["theoretical_all_worst_case_usd"]
     assert theoretical["typesafe"] > plan.cost_caps["typesafe"]  # 343 x $0.002688 = $0.92 > $0.05
-    assert theoretical["bedrock"] > plan.cost_caps["bedrock"]  # 343 x $0.007 = $2.40 > $0.50
+    assert theoretical["bedrock"] > plan.cost_caps["bedrock"]  # 343 x $0.322 = $110 > $0.60
     assert plan.feasible, plan.problems
     result = run(plan, _routers(plan), pace=False)
     assert result["complete"] and result["executed_calls"] == 1026

@@ -36,7 +36,7 @@ def test_dry_run_writes_a_safe_artifact_and_reads_no_credentials(tmp_path, monke
     assert data["execution"]["downstream"]["clean"]
     for expected in ("strict, qa (24)", "strict, summarize (7)", "(1): L19", "(2): L17 L20",
                      "Planned calls: Bedrock 71, TypeSafe 71, local rules 68",
-                     "Hard ceilings: Bedrock $0.50", "9d4f2da1393b3ddd", "Downstream isolation: CLEAN"):
+                     "Hard ceilings: Bedrock $0.60", "9d4f2da1393b3ddd", "Downstream isolation: CLEAN"):
         assert expected in printed, expected
 
 

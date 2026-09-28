@@ -77,5 +77,6 @@ class FakeTypeSafe:
         return httpx.Response(200, headers={"x-request-id": f"sim-{len(self.requests)}"}, json={
             "model": JEV_MODEL,
             "answers": {"route": {"choice": label, "probabilities": probabilities, "confidence": round(2 * p - 1, 4)}},
-            "usage": {"input_tokens": max(1, len(request.content) // 4), "output_tokens": 1},
+            # Shaped like the verification: TypeSafe reports ~2.4x a bytes/4 estimate (overhead).
+            "usage": {"input_tokens": max(1, len(request.content) // 4) + 240, "output_tokens": 35},
         })

@@ -9,7 +9,11 @@ JEV_CONNECT_TIMEOUT_S = 2.0
 JEV_READ_TIMEOUT_S = 5.0
 JEV_PRICE_PER_MTOK_INPUT = 0.042  # documented; output documented as free
 JEV_MAX_TOKENS_PER_REQUEST = 64_000  # documented request limit: the worst-case reservation
-JEV_EXPECTED_INPUT_TOKENS = 250  # ASSUMPTION (150-250); checked by the verification calls
+# Calibrated from the live verification (eval/results/experiments/2026-09-28-jev-verification/):
+# reported input tokens were 410 (L01) and 408 (L12), ~2.4x a bytes/4 estimate of the request, so
+# TypeSafe adds its own overhead. Output tokens were reported (33, 35) but are documented as free.
+JEV_EXPECTED_INPUT_TOKENS = 410  # the larger observed value
+JEV_OBSERVED_OUTPUT_TOKENS = 35  # reported, not priced (documented free; not verified against a bill)
 JEV_MIN_SECONDS_BETWEEN_CALLS = 1.0  # at most 60 requests/min (documented limit 1,200/min)
 
 # Haiku 4.5 router on Bedrock (RouterAgent, unchanged).
@@ -49,7 +53,10 @@ CONSECUTIVE_INFRA_ERROR_LIMIT = 3
 INFRA_ERROR_RATE_LIMIT = 0.01
 
 # Hard ceilings (USD, estimated from recorded usage; worst case when usage is unknown).
-DEFAULT_COST_CAPS = {"bedrock": 0.50, "typesafe": 0.05, "total": 1.00}
+# Bedrock $0.60 is PROPOSED (2026-09-28) for strict mode, which reserves $0.322 per Haiku call:
+# at $0.50 the headroom was only $0.0154. It is pending final approval. TypeSafe and total unchanged.
+DEFAULT_COST_CAPS = {"bedrock": 0.60, "typesafe": 0.05, "total": 1.00}
+COST_CAPS_STATUS = "Bedrock $0.60 proposed 2026-09-28, pending final approval; TypeSafe $0.05 and total $1.00 unchanged"
 
 # Which provider each router calls (None: local, free).
 ROUTER_PROVIDERS = {"haiku": "bedrock", "rules": None, "jev": "typesafe"}

@@ -7,6 +7,7 @@ from eval.routing_datasets import PINNED_SHA256, routing_dataset
 from experiments.router_bench.config import (
     CONSECUTIVE_INFRA_ERROR_LIMIT,
     DATASET_VERSION,
+    COST_CAPS_STATUS,
     DEFAULT_COST_CAPS,
     DEFAULT_HAIKU_RESERVATION,
     HAIKU_MAX_OUTPUT_TOKENS,
@@ -132,7 +133,9 @@ def _finish(plan: Plan) -> Plan:
                                                    "temporarily and is reconciled to recorded usage"},
         "hard_caps_usd": dict(plan.cost_caps),
         "basis": "Haiku 214 in / 52 out tokens per call (measured, baseline 6a13ffb1) at $1/$5 per 1M; "
-                 f"Jev {JEV_EXPECTED_INPUT_TOKENS} input tokens per call (assumed) at $0.042 per 1M",
+                 f"Jev {JEV_EXPECTED_INPUT_TOKENS} input tokens per call (measured, verification 2026-09-28) "
+                 "at $0.042 per 1M; Jev output tokens reported but documented free",
+        "cap_status": COST_CAPS_STATUS if plan.cost_caps == DEFAULT_COST_CAPS else "custom ceilings for this run",
     }
     for provider in ("bedrock", "typesafe"):
         if per_provider[provider] == 0:

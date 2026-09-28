@@ -123,7 +123,7 @@ def test_default_plan_is_a_hard_cap_and_reports_its_headroom():
     for provider in ("bedrock", "typesafe"):
         g = plan.cost["budget_guarantee"][provider]
         assert g["hard_cap"] is True and g["max_overshoot_usd"] == 0.0
-    assert plan.cost["budget_guarantee"]["bedrock"]["headroom_usd"] == pytest.approx(0.5 - 0.162582 - 0.322, abs=1e-5)
+    assert plan.cost["budget_guarantee"]["bedrock"]["headroom_usd"] == pytest.approx(0.6 - 0.162582 - 0.322, abs=1e-5)
 
 
 def test_a_cap_too_tight_to_finish_is_refused_up_front():
@@ -161,3 +161,33 @@ def test_a_runaway_call_under_strict_reservation_is_still_detected():
         converse_text('{"task_type": "qa", "confidence": 0.9, "reasoning": "r"}', 200, 70_000)])
     result = run(plan, {"haiku": HaikuRouter(bedrock_client=runaway)}, pace=False)
     assert "cost more than its worst-case reservation" in result["invalid_reasons"][0]
+
+
+# --- Calibration from the archived Jev verification and the proposed ceilings ------------------------
+
+def test_jev_token_estimate_is_calibrated_from_the_archived_verification():
+    import json
+    from pathlib import Path
+
+    from experiments.router_bench.config import JEV_EXPECTED_INPUT_TOKENS
+
+    archive = Path(__file__).resolve().parents[1] / "eval/results/experiments/2026-09-28-jev-verification"
+    artifact = json.loads((archive / "jev-verification-20260928T204426Z.json").read_text(encoding="utf-8"))
+    observed = [r["input_tokens"] for r in artifact["records"]]
+    assert observed == [410, 408]
+    assert JEV_EXPECTED_INPUT_TOKENS == max(observed)
+
+
+def test_default_ceilings_are_the_proposal_and_strict_mode_fits():
+    from experiments.router_bench.config import COST_CAPS_STATUS, DEFAULT_COST_CAPS, DEFAULT_HAIKU_RESERVATION
+
+    assert DEFAULT_COST_CAPS == {"bedrock": 0.60, "typesafe": 0.05, "total": 1.00}
+    assert DEFAULT_HAIKU_RESERVATION == "strict" and "pending final approval" in COST_CAPS_STATUS
+    plan = build_plan(("haiku", "rules", "jev"), 10, 3, 20260928)
+    assert plan.feasible and plan.cost["cap_status"] == COST_CAPS_STATUS
+    assert plan.cost["expected_usd"]["typesafe"] == pytest.approx(343 * 410 * 0.042e-6, abs=1e-6)
+    g = plan.cost["budget_guarantee"]
+    assert g["bedrock"]["hard_cap"] and g["typesafe"]["hard_cap"]
+    assert g["bedrock"]["headroom_usd"] > 0.1  # was $0.0154 at $0.50
+    custom = build_plan(("haiku",), 10, 3, 1, cost_caps={"bedrock": 0.7, "typesafe": 0.05, "total": 1.0})
+    assert custom.cost["cap_status"] == "custom ceilings for this run"

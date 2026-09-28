@@ -314,8 +314,13 @@ def _print_plan(plan, mode: str) -> None:
     banner = ("DRY RUN: offline, simulated clients, no credentials read, no network"
               if mode != "live" else "LIVE RUN: billable calls to " + ", ".join(sorted(
                   {p for p in ("bedrock", "typesafe") if plan.planned_calls.get(p)})))
+    from experiments.router_bench.config import HAIKU_MODEL_ID, JEV_MODEL
+
     title = "ROUTER BENCHMARK" if plan.kind == "benchmark" else "JEV API VERIFICATION"
     print(f"{title} - {banner}")
+    models = ([f"Bedrock {HAIKU_MODEL_ID}"] if plan.planned_calls.get("bedrock") else []) + (
+        [f"TypeSafe {JEV_MODEL}"] if plan.planned_calls.get("typesafe") else [])
+    print(f"Models (pinned; a run refuses any other): {'; '.join(models) or 'none'}")
     fp = plan.fingerprints
     print(f"\nFrozen fingerprints\n  routing dataset {fp['routing_dataset']['version']}: {fp['routing_dataset']['sha256']}"
           f"\n  Jev payload template: {fp['jev_payload_template_sha256']}\n  rules router: {fp['rules_sha256']}")
@@ -339,6 +344,7 @@ def _print_plan(plan, mode: str) -> None:
     print(f"Worst-case reservation per call: Bedrock ${wc['bedrock']:.6f}, TypeSafe ${wc['typesafe']:.6f} "
           f"(if every call hit it: ${th['bedrock']:.2f} / ${th['typesafe']:.2f}; informational only, "
           "reservations are reconciled to recorded usage after each call)")
+    print(f"Ceiling status: {cost['cap_status']}")
     print(f"Cost basis: {cost['basis']}")
     for provider in ("bedrock", "typesafe"):
         if not plan.planned_calls.get(provider):
