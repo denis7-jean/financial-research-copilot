@@ -1120,3 +1120,11 @@ def test_cli_exits_one_when_the_run_stops_early(monkeypatch, tmp_path):
 
     monkeypatch.setattr(llm_judge, "run_evaluation", ceiling_hit)
     assert llm_judge.main(["--live"]) == 1
+
+
+def test_validity_verdicts_carry_their_rules_version(tmp_path):
+    """Definition changes are never silent: every verdict names the rules it was judged by."""
+    summary, _, _ = _run(tmp_path, [_case("A", "a")], {"a": _qa_result("x", [JPM_SRC])}, FakeJudge({}))
+    assert summary["run_validity"]["rules_version"] == 2
+    baseline = json.loads(open("eval/results/baselines/2026-09-phase0-baseline.json", encoding="utf-8").read())
+    assert "rules_version" not in baseline["summary"]["run_validity"]  # recorded under rules 1, unchanged

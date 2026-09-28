@@ -196,7 +196,64 @@ do **not** invalidate the run:
 - model-output failures: unusable output or model errors;
 - sporadic application errors (at most 20% of cases).
 
-An invalid run is not a quality verdict.
+An invalid run is not a quality verdict. Each verdict records `rules_version` (currently 2).
+Archived results keep the verdict recorded when they ran.
+
+### The 20% application-error threshold (rules version 2)
+
+Unexpected application errors are failures classified as kind `internal`: an exception the app
+did not classify as infrastructure or model output.
+
+**Why a threshold at all.** The old rules counted every such error as a quality finding. A run
+where nothing worked could therefore pass the validity gate (run `c7aba364`: 34/34 cases
+errored, zero model calls, marked valid). The threshold separates two situations:
+- **Sporadic defect:** a real finding. It counts against the metrics.
+- **Systemic breakage:** the run did not measure quality. It is invalid.
+
+**Why 20%.** It mirrors the tolerance of the enforced gates, which require at least 80%. Once
+more than a fifth of cases fail with unexpected errors, the gate outcome can be decided by the
+breakage rather than by retrieval quality. The value was set before any run was judged by it.
+Existing data sit far from it: the baseline had 0% application errors and the incident run
+100%.
+
+**Limitations:**
+- **Not empirically calibrated.** Only one valid run exists. Treat 20% as provisional.
+- **Coarse steps.** With 34 cases, 6 errors (17.6%) leave the run valid and 7 (20.6%) make it
+  invalid. With very small custom sets, a single error can cross it. A run where every case
+  errors is invalid regardless, through "no usable results".
+- **Counts cases, not causes.** One bug that breaks a whole path makes the run invalid instead
+  of scoring it as a quality regression. For example, all 11 summarize-routed cases is 32%.
+  CI still fails (the validity test runs first), but that run's metric numbers must not be
+  compared with valid runs.
+- **A contained bug stays a finding.** A real bug affecting 20% of cases or fewer is a finding.
+  If it spares the 19 gated cases, the enforced gates can still pass. It stays visible under
+  `run_validity.application_errors`.
+- **`internal` mixes causes.** It covers application bugs and environmental exceptions the app
+  does not classify. Examples are a non-botocore network error or a local file problem. Only the
+  offline guard's `NetworkBlockedError` is recognized as environmental, by its code.
+- **Fatal errors only.** Only the error that ended a case is counted. Non-fatal `internal`
+  errors in traces are not.
+
+**Alternatives considered:**
+- a per-route share;
+- clustering by error code (the same code in 3 or more cases means systemic);
+- zero tolerance (any `internal` error invalidates the run).
+
+Revisit the threshold once there are at least 3 valid runs.
+
+### Measurement definition history
+
+Recorded results are never rewritten. A definition change applies to new runs. Where it
+matters, the archived baseline is re-scored in a separate, read-only view. The enforced gates
+(metrics, thresholds and the 19-case population) have not changed since Phase 0.
+
+| Commit | Definition | Change | Archived baseline `6a13ffb1`: recorded → re-scored |
+|---|---|---|---|
+| `26511e1` | Summary grounding | A refusal can no longer pass (`refusal: true`, score 0); substantive rate reported | 2/11 → 0/11 (3 refusals; 0/8 substantive) |
+| `da0c3d3` | Evidence markers | Alternative phrasings for L06 and N06 (dataset SHA-256 `f1d0da26…` → `734f6e1c…`; labels unchanged) | Evidence found 13/19 → 15/19 |
+| `0ee6b19` | Retrieval reporting | Report-only `answer_evidence` and context-relevance score distribution; judge tokens by kind | New fields only |
+| `a9f105c` | Run validity, rules version 2 | See above | Valid → still valid (34/34 usable) |
+| `9d6f98e` | Routing labels, routing benchmark only | `eval/routing_datasets.py` v2: L13 → clear `qa`; L19 scored by the experimental "unclear → qa" policy. The harness keeps v1 labels | Routing 30/30 (v1) → 30/31 under v2 (L13 routed `summarize`); L19 policy compliance 0/1 |
 
 **Provenance.** `summary.provenance` records:
 - the git SHA, and whether tracked files had uncommitted changes;

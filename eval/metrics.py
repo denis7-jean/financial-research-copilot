@@ -230,6 +230,13 @@ NETWORK_BLOCKED_CODES = frozenset({"NetworkBlockedError"})
 # are sporadic. Above this share of evaluated cases the run is treated as broken
 # (an application or harness fault), not as a measurement of quality.
 MAX_APPLICATION_ERROR_SHARE = 0.2
+# Version of the run-validity rules, recorded in every run_validity block. Archived
+# results keep the verdict recorded under the rules in force when they ran (they carry
+# no version field: rules 1). See eval/README.md "Measurement definition history".
+#   1: Phase 0 (baseline 6a13ffb1).
+#   2: 2026-09-28 (a9f105c): no-usable-results, network-blocked, systemic
+#      application-error and harness-exception rules.
+VALIDITY_RULES_VERSION = 2
 
 
 def classify_system_failure(row: dict) -> str | None:
@@ -315,6 +322,7 @@ def run_validity(rows: list[dict], judge_calls: list[dict], complete: bool = Tru
                        f"unexpected application errors (limit {MAX_APPLICATION_ERROR_SHARE:.0%})")
     return {
         "valid_for_baseline": not reasons,
+        "rules_version": VALIDITY_RULES_VERSION,
         "reasons": reasons,
         "evaluated_cases": len(rows),
         "usable_cases": usable,
