@@ -142,21 +142,32 @@ def evaluate_gates(values: dict[str, float | None], gates: tuple[Gate, ...] = GA
 _PAGE_REFERENCE = re.compile(r"\b(?:pages?|pp?\.)\s*\d+(?:\s*[-–]\s*\d+)?", re.IGNORECASE)
 
 
+def marker_alternatives(markers) -> list[tuple[str, ...]]:
+    """Normalize ("a", "b") -> [("a", "b")] and (("a",), ("b", "c")) -> [("a",), ("b", "c")]."""
+    if markers and isinstance(markers[0], (tuple, list)):
+        return [tuple(alt) for alt in markers]
+    return [tuple(markers)]
+
+
 def evidence_ranks(retrieved: list[dict], evidence) -> dict | None:
     """Report-only: where does the answer-bearing chunk rank in the retrieved list?
 
     For each (ticker, markers) group, the 1-based rank of the first retrieved
-    chunk from that company's filing whose text contains every marker, or None
-    if no retrieved chunk matches. Chunks from other companies never match.
+    chunk from that company's filing whose text contains every marker of at
+    least one alternative, or None if no retrieved chunk matches. `markers` is
+    either one tuple of strings (all required) or a tuple of such tuples
+    (alternative phrasings of the same fact). Chunks from other companies never
+    match.
     """
     if not evidence:
         return None
     groups = []
     for ticker, markers in evidence:
+        alternatives = marker_alternatives(markers)
         rank = next((i + 1 for i, chunk in enumerate(retrieved)
                      if company_for_source(chunk.get("source", "")) == ticker
-                     and all(marker in chunk.get("text", "") for marker in markers)), None)
-        groups.append({"company": ticker, "markers": list(markers), "rank": rank})
+                     and any(all(m in chunk.get("text", "") for m in alt) for alt in alternatives)), None)
+        groups.append({"company": ticker, "markers": [list(alt) for alt in alternatives], "rank": rank})
     ranks = [g["rank"] for g in groups]
     return {
         "groups": groups,

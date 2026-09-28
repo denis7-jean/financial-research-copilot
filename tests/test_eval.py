@@ -841,3 +841,50 @@ def test_apply_refusal_rule(abstained, expected_pass):
     judged = {"score": 5, "pass": True, "reasoning": "r", "judge_error": False, "judge_infra_error": False}
     assert llm_judge.apply_refusal_rule(judged, abstained)["pass"] is expected_pass
     assert llm_judge.apply_refusal_rule(None, True) is None
+
+
+# Chunk texts copied from the indexed metadata (rows noted), trimmed around the evidence.
+JPM_ROE_SEGMENT_TABLE = ("Net income 4,520 10,601 2,821 57,048 58,471 49,552 "
+                         "Return on equity (“ROE”) NM NM NM 17 % 18 % 17 %")  # row 1620
+JPM_ROE_NARRATIVE = "reported net income of $57.0 billion for 2025, down 2%, earnings per share of $20.02, ROE of 17%"  # 1603
+GS_ROE_TABLE = "Diluted EPS $ 51.32 $ 40.54 $ 22.87 ROE 15.0% 12.7% 7.5% ROTE 16.0% 13.5% 8.1%"  # row 794
+GS_ROE_SEGMENT = "Average common equity $ 108,726 $ 106,774 Return on average common equity 15.0% 12.7% 7.5%"  # 803
+
+
+@pytest.mark.parametrize("case_id, text, source", [
+    ("L06", JPM_ROE_SEGMENT_TABLE, JPM_SRC),
+    ("L06", JPM_ROE_NARRATIVE, JPM_SRC),
+    ("L06", "Return on common equity (“ROE”) 17 % 18 % 17 %", JPM_SRC),
+    ("N06", GS_ROE_TABLE, GS_SRC),
+    ("N06", GS_ROE_SEGMENT, GS_SRC),
+    ("N06", "ROE was 15.0% for 2025, compared with 12.7% for 2024.", GS_SRC),
+])
+def test_roe_evidence_alternatives_match_genuine_phrasings(case_id, text, source):
+    from eval.metrics import evidence_ranks
+
+    result = evidence_ranks([{"text": "boilerplate", "source": source}, {"text": text, "source": source}],
+                            CASES_BY_ID[case_id].evidence)
+    assert result["all_found"] is True and result["worst_rank"] == 2
+
+
+@pytest.mark.parametrize("case_id, text, source", [
+    ("L06", "Return on equity (“ROE”) 32 % 32 % 38 % 18 % 18 % 14 %", JPM_SRC),  # segment ROEs, not firm
+    ("L06", "Return on equity 18 % 17 %", JPM_SRC),  # 17% is the 2024 value in 2025/2024 order
+    ("L06", "ROE of 17%", GS_SRC),  # right phrase, wrong company
+    ("N06", "ROE 12.7% 15.0%", GS_SRC),  # wrong year order
+    ("N06", "Return on average common equity 16.0%", GS_SRC),
+    ("N06", "ROE was 15.0%", JPM_SRC),  # wrong company
+])
+def test_roe_evidence_is_not_weakened(case_id, text, source):
+    from eval.metrics import evidence_ranks
+
+    assert evidence_ranks([{"text": text, "source": source}], CASES_BY_ID[case_id].evidence)["all_found"] is False
+
+
+def test_single_alternative_markers_still_require_every_string():
+    from eval.metrics import evidence_ranks, marker_alternatives
+
+    assert marker_alternatives(("a", "b")) == [("a", "b")]
+    assert marker_alternatives((("a",), ("b", "c"))) == [("a",), ("b", "c")]
+    evidence = (("JPM", ("Return on common equity", "17 %")),)
+    assert evidence_ranks([{"text": "Return on common equity 18 %", "source": JPM_SRC}], evidence)["all_found"] is False

@@ -20,9 +20,9 @@ router happened to do:
 - replaces: id of the historical case this one superseded, if any.
 - evidence: (ticker, markers) groups identifying the chunk(s) that contain the
   answer. A retrieved chunk matches a group if it comes from that company's
-  filing and contains every marker. Markers were checked against the indexed
-  chunk text (metadata SHA-256 f771ba6c...). Used only for the report-only
-  evidence-rank metric; never gated.
+  filing and contains every marker (of at least one alternative phrasing).
+  Markers were checked against the indexed chunk text (metadata SHA-256
+  f771ba6c...). Used only for the report-only evidence-rank metric; never gated.
 
 CORPUS (2026-09-27): the fifth company is Visa Inc. Its FY2025 10-K (EDGAR
 accession 0001403161-25-000089, fiscal year ended September 30, 2025) was
@@ -59,7 +59,9 @@ class EvalCase:
     tags: tuple[str, ...] = field(default_factory=tuple)
     forbidden_facts: tuple[str, ...] = ()
     replaces: str | None = None
-    evidence: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    # (ticker, markers): markers is a tuple of strings (all required in one chunk) or a
+    # tuple of such tuples (alternative phrasings; any one must match in full).
+    evidence: tuple = ()
 
     @property
     def gated_for_retrieval(self) -> bool:
@@ -112,7 +114,11 @@ EVAL_CASES: list[EvalCase] = [
              "metric_qa", "qa", "clear", "answer", ("JPM",),
              "Return on common equity (ROE) was 17% for 2025.",
              f"{JPM} p46, p49", legacy=True,
-             evidence=(("JPM", ('Return on common equity', '17 %')),)),
+             # Alternatives: consolidated highlights table; firm-total column of the
+             # segment table ("NM" is Corporate, then 2025/2024 totals); overview narrative.
+             evidence=(("JPM", (("Return on common equity", "17 %"),
+                                ("Return on equity", "17 % 18 %"),
+                                ("ROE of 17%",))),)),
     EvalCase("L07", "How many employees did JPMorgan Chase have in 2025?",
              "metric_qa", "qa", "clear", "answer", ("JPM",),
              "318,512 employees as of December 31, 2025.",
@@ -191,7 +197,11 @@ EVAL_CASES: list[EvalCase] = [
     EvalCase("N06", "What was Goldman Sachs' return on equity for 2025?",
              "metric_qa", "qa", "clear", "answer", ("GS",),
              "ROE was 15.0% for 2025.", f"{GS} p67",
-             evidence=(("GS", ('ROE was 15.0%',)),)),
+             # Alternatives: executive overview narrative; results table (2025 then 2024);
+             # segment-reporting table.
+             evidence=(("GS", (("ROE was 15.0%",),
+                               ("ROE 15.0% 12.7%",),
+                               ("Return on average common equity 15.0% 12.7%",))),)),
     EvalCase("N07", "What were Goldman Sachs' net revenues in 2025?",
              "numeric_qa", "qa", "clear", "answer", ("GS",),
              "Net revenues were $58.28 billion for 2025.", f"{GS} p67",
