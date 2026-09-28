@@ -363,10 +363,18 @@ def summarize_results(rows: list[dict], judge_calls: list[dict]) -> dict:
     }
 
     grounding_rows = [r for r in rows if r["agent_used"] == "summarize"]
+    refusals = [r["id"] for r in grounding_rows if (r["summary_grounding"] or {}).get("refusal")]
+    substantive = [r for r in grounding_rows if r["id"] not in refusals]
     summary_grounding = {
         **pass_rate([(r["summary_grounding"] or {}).get("pass") for r in grounding_rows]),
         "mean_score": _mean([_score_or_zero(r["summary_grounding"]) for r in grounding_rows]),
         "failures": [r["id"] for r in grounding_rows if not (r["summary_grounding"] or {}).get("pass")],
+        "refusals": refusals,
+        "substantive": {
+            "n": len(substantive),
+            "grounded_rate": pass_rate([(r["summary_grounding"] or {}).get("pass") for r in substantive])["pass_rate"],
+        },
+        "rule": "Refusals (answer assessment abstained=True) count as failures, never as grounded summaries.",
         "caveat": "Summaries are generated without documents; they are judged against evidence the "
                   "harness retrieves afterwards (top-5 chunks), so true claims absent from those "
                   "chunks count as unsupported.",

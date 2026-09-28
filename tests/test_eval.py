@@ -808,3 +808,36 @@ def test_cli_main_prints_gates_and_exits_zero(monkeypatch, capsys, tmp_path):
     out = capsys.readouterr().out
     assert "Enforced gates: ['context_relevance_pass_rate', 'faithfulness_pass_rate']" in out
     assert "Valid for baseline: True" in out
+
+
+def test_refusal_cannot_count_as_grounded_summary(tmp_path):
+    """Regression: L19 and N14 scored 5 for grounding while refusing to summarize."""
+    refusing = _case("R", "overview please", category="summarize", expected_route="summarize",
+                     reference_answer=None, reference_source=None)
+    grounded = _case("G", "summarize risks", category="summarize", expected_route="summarize",
+                     reference_answer=None, reference_source=None)
+    judge = FakeJudge({
+        "overview please": {"grounding": {"score": 5, "reasoning": "no claims to contradict"},
+                            "assess": {"abstained": True, "correctness_score": None, "reasoning": "declined"}},
+        "summarize risks": {"grounding": {"score": 4, "reasoning": "supported"},
+                            "assess": {"abstained": False, "correctness_score": None, "reasoning": "ok"}},
+    })
+    results = {"overview please": _summary_result("I don't have access to the filing"),
+               "summarize risks": _summary_result("Risks include credit and market risk")}
+    summary, data, _ = _run(tmp_path, [refusing, grounded], results, judge)
+    rows = {r["id"]: r for r in data["results"]}
+    assert rows["R"]["summary_grounding"]["pass"] is False
+    assert rows["R"]["summary_grounding"]["refusal"] is True
+    assert rows["R"]["summary_grounding"]["judge_score"] == 5 and rows["R"]["summary_grounding"]["score"] == 0
+    assert rows["G"]["summary_grounding"]["pass"] is True and rows["G"]["summary_grounding"]["refusal"] is False
+    grounding = summary["summary_grounding"]
+    assert grounding["pass_rate"] == 0.5
+    assert grounding["refusals"] == ["R"]
+    assert grounding["substantive"] == {"n": 1, "grounded_rate": 1.0}
+
+
+@pytest.mark.parametrize("abstained, expected_pass", [(True, False), (False, True), (None, True)])
+def test_apply_refusal_rule(abstained, expected_pass):
+    judged = {"score": 5, "pass": True, "reasoning": "r", "judge_error": False, "judge_infra_error": False}
+    assert llm_judge.apply_refusal_rule(judged, abstained)["pass"] is expected_pass
+    assert llm_judge.apply_refusal_rule(None, True) is None

@@ -263,6 +263,29 @@ def judge_response(query: str, retrieved_context: list[dict], answer: str, clien
     }
 
 
+def apply_refusal_rule(summary_grounding: dict | None, abstained: bool | None) -> dict | None:
+    """A refusal is not a grounded summary.
+
+    The grounding judge scores claims against evidence, so a summary that makes
+    no claims (e.g. "no document was provided") scores 5. When the answer
+    assessment says the response abstained, grounding fails; the judge's score
+    is kept as judge_score for transparency.
+    """
+    if summary_grounding is None:
+        return None
+    if abstained is not True:
+        return {**summary_grounding, "refusal": False}
+    return {
+        **summary_grounding,
+        "judge_score": summary_grounding.get("score"),
+        "score": 0,
+        "pass": False,
+        "refusal": True,
+        "reasoning": "refusal: not a substantive grounded summary "
+                     f"(judge scored {summary_grounding.get('score')}: {summary_grounding.get('reasoning', '')})",
+    }
+
+
 def answer_text_from_result(result: dict) -> str:
     """Text the user actually received, for either agent's response shape."""
     if "answer" in result:
@@ -335,6 +358,8 @@ def evaluate_case(case: EvalCase, orchestrator, client, retrieve_evidence, judge
     else:
         abstained = None
         correctness = _failed("empty_answer") if case.reference_answer else None
+
+    summary_grounding = apply_refusal_rule(summary_grounding, abstained)
 
     answer_lower = answer.lower()
     forbidden_hits = [fact for fact in case.forbidden_facts if fact.lower() in answer_lower]
