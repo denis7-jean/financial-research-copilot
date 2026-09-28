@@ -119,34 +119,98 @@ retrieval ranking, prompts and generation are deliberately unchanged in Phase 0.
 
 ## Running
 
+**Before any paid run**, run the offline preflight. It makes no AWS or model calls: a network
+guard turns any attempt into a blocker.
+
+```bash
+python -m eval.preflight --results-path eval/results/baselines/2026-09-phase0-baseline.json
+```
+
+The preflight checks:
+- **Dataset:** 34 cases, 19 gated. Labels, references, evidence markers and the Mastercard/Visa
+  rules are all valid.
+- **Contamination mapping and gates:** source-to-company mapping is correct, and the enforced
+  thresholds are unchanged.
+- **Results path:** not the legacy directory, and no silent overwrite.
+- **Code:** the code under test is the local package and is committed.
+- **Configuration:** model IDs are as expected and AWS credentials are present (values never
+  shown).
+- **Cost ceiling:** above the high estimate.
+
+It exits 1 if anything blocks.
+
+Then:
+
 ```bash
 python -m eval.llm_judge
 pytest eval/test_llm_judge.py -m llm -v
-pytest tests/test_eval.py -v
+pytest tests/test_eval.py tests/test_preflight.py -v
 ```
 
 - `python -m eval.llm_judge`: live, billable.
 - `pytest eval/test_llm_judge.py -m llm -v`: live, billable. This is what the CI eval gate runs.
-- `pytest tests/test_eval.py -v`: offline unit tests for the evaluation logic.
+  It checks `run_validity` first, then the enforced gates.
+- `pytest tests/test_eval.py tests/test_preflight.py -v`: offline unit tests.
 
-`EVAL_SLEEP_SECONDS` (default 2) sets the pause between cases.
+**Environment variables**
+
+| Variable | Default | Effect |
+|---|---|---|
+| `EVAL_RESULTS_PATH` | `eval/results/latest.json` | Where results are written. Writes into `eval/results/legacy/` are refused |
+| `EVAL_MAX_COST_USD` | 5.0 | Cost ceiling. If the estimated spend exceeds it, the run stops and is marked incomplete and invalid |
+| `EVAL_SLEEP_SECONDS` | 2 | Pause between cases |
+
+**The run always uses the local code.** The harness imports `CopilotOrchestrator` in-process and
+never calls the deployed Lambda, which still runs the June 2026 build.
+
+## Run validity and provenance
+
+**Validity.** `summary.run_validity.valid_for_baseline` is false if any of these happened:
+- the system under test hit an infrastructure failure;
+- a router fell back because of one;
+- a judge call failed to invoke;
+- the harness's evidence retrieval failed;
+- the run stopped early.
+
+"Infrastructure" means access denied, throttling, unavailable, timeout or misconfiguration.
+
+Failures that are findings about the system, not the environment, count against the metrics and
+do **not** invalidate the run:
+- model-output failures: unusable output or model errors;
+- application errors.
+
+An invalid run is not a quality verdict.
+
+**Provenance.** `summary.provenance` records:
+- the git SHA, and whether tracked files had uncommitted changes;
+- the dataset SHA-256;
+- the corpus actually loaded: vector count, metadata rows and metadata SHA-256. The expected
+  metadata SHA-256 is `f771ba6c…`, the post-migration S3 object.
+
+Every result row carries the case's `trace_id`.
 
 ## Cost
 
-**Estimated, not measured.** Assumptions:
-- Anthropic list prices: Haiku 4.5 at $1 / $5 per MTok, Sonnet 4.6 at $3 / $15 per MTok.
-- About 4–5k tokens of context per QA call and per judge call over retrieved context.
+**Estimated, not measured.** The estimate comes from `python -m eval.preflight`.
 
-Expected judge calls per run, about 90:
-- Up to 3 per QA-path case (context relevance, faithfulness, answer assessment).
-- 2 per summarize-path case (grounding, answer assessment).
+It assumes:
+- per-call token counts from `TOKEN_ASSUMPTIONS` in `eval/preflight.py`;
+- Anthropic list prices from `eval/metrics.py`;
+- routing that matches the labels (26 cases on the QA path, 8 on the summarize path).
 
-| Component | Estimate per run |
+| Paid requests per run | Count |
 |---|---|
-| Judge (Sonnet 4.6) | ~$0.9–1.3 |
-| System under test (Haiku 4.5 router, generation, summarizer; Titan) | ~$0.2–0.3 |
-| **Total** | **~$1.1–1.6** |
+| Haiku 4.5: router, QA generation, summarizer | 68 |
+| Titan V2 embeddings (QA retrieval plus harness evidence for summaries) | 34 |
+| Sonnet 4.6 judge (3 per QA case, 2 per summary) | 94 |
+| **Total** | **196** |
 
-Bedrock geographic (`us.*`) inference profiles may cost about 10% more; this is unverified. Each
-run writes its own token counts and a price-based estimate to `tokens.estimated_cost_usd`. Real
-spend comes from AWS billing.
+| Component | Estimate |
+|---|---|
+| Judge (Sonnet 4.6) | ~$1.05 |
+| System under test (Haiku 4.5, Titan) | ~$0.19 |
+| **Total** | **~$1.24** (range ~$0.93–$2.05, including a possible, unverified 10% premium for `us.*` profiles) |
+
+Each run records its actual token counts and a price-based estimate in
+`tokens.estimated_cost_usd`. Real spend comes from AWS billing. Replace the assumptions with
+measured values after the first run.
