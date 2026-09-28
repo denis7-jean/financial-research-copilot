@@ -149,7 +149,8 @@ def _parse_judge_response(text: str) -> dict:
         return {"score": 0, "pass": False, "reasoning": "parse_error"}
 
 
-def _call_judge(client, system_prompt: str, user_text: str, judge_calls: list[dict]) -> tuple[dict, str | None]:
+def _call_judge(client, system_prompt: str, user_text: str, judge_calls: list[dict],
+                kind: str = "unknown") -> tuple[dict, str | None]:
     """One judge call. Returns (parsed_json, error).
 
     Every attempt is appended to judge_calls, including failed ones, so call
@@ -157,8 +158,8 @@ def _call_judge(client, system_prompt: str, user_text: str, judge_calls: list[di
     JUDGE_INFRA_ERROR_PREFIX (classified and sanitized, never the raw message);
     unusable output returns "parse_error" or "malformed_response".
     """
-    attempt = {"name": "judge", "model_id": JUDGE_MODEL_ID, "input_tokens": None, "output_tokens": None,
-               "invoked": False}
+    attempt = {"name": "judge", "kind": kind, "model_id": JUDGE_MODEL_ID, "input_tokens": None,
+               "output_tokens": None, "invoked": False}
     judge_calls.append(attempt)
     try:
         response = client.converse(
@@ -208,14 +209,16 @@ def _context_string(chunks: list[dict], text_key: str) -> str:
 def judge_context_relevance(client, query: str, chunks: list[dict], judge_calls: list[dict]) -> dict:
     parsed, error = _call_judge(
         client, CONTEXT_RELEVANCE_PROMPT,
-        f"User Query: {query}\n\nRetrieved Chunks:\n{_context_string(chunks, 'text')}", judge_calls)
+        f"User Query: {query}\n\nRetrieved Chunks:\n{_context_string(chunks, 'text')}", judge_calls,
+        kind="context_relevance")
     return _scored(parsed, error, CONTEXT_RELEVANCE_PASS_MIN)
 
 
 def judge_faithfulness(client, chunks: list[dict], answer: str, judge_calls: list[dict]) -> dict:
     parsed, error = _call_judge(
         client, FAITHFULNESS_PROMPT,
-        f"Retrieved Context:\n{_context_string(chunks, 'text')}\n\nGenerated Answer:\n{answer}", judge_calls)
+        f"Retrieved Context:\n{_context_string(chunks, 'text')}\n\nGenerated Answer:\n{answer}", judge_calls,
+        kind="faithfulness")
     return _scored(parsed, error, FAITHFULNESS_PASS_MIN)
 
 
@@ -224,7 +227,7 @@ def judge_summary_grounding(client, query: str, evidence: list[dict], summary_te
     parsed, error = _call_judge(
         client, SUMMARY_GROUNDING_PROMPT,
         f"User Query: {query}\n\nEvidence Excerpts:\n{_context_string(evidence, 'content')}"
-        f"\n\nSummary:\n{summary_text}", judge_calls)
+        f"\n\nSummary:\n{summary_text}", judge_calls, kind="summary_grounding")
     return _scored(parsed, error, GROUNDING_PASS_MIN)
 
 
@@ -234,7 +237,7 @@ def assess_answer(client, case: EvalCase, answer: str,
     parsed, error = _call_judge(
         client, ANSWER_ASSESSMENT_PROMPT,
         f"User Query: {case.query}\n\nReference Answer: {case.reference_answer or 'None provided'}"
-        f"\n\nSystem Answer:\n{answer}", judge_calls)
+        f"\n\nSystem Answer:\n{answer}", judge_calls, kind="answer_assessment")
     infra = _is_judge_infra_error(error)
     abstained = parsed.get("abstained") if isinstance(parsed.get("abstained"), bool) else None
     judge_error = bool(error) or abstained is None
@@ -403,6 +406,9 @@ def evaluate_case(case: EvalCase, orchestrator, client, retrieve_evidence, judge
             "contaminated": is_contaminated(raw_sources, case.companies),
         },
         "evidence": evidence_ranks(retrieved, case.evidence),
+        # Full retrieved text, so evidence markers can be re-scored later without re-running.
+        "retrieved_chunks": [{"source": c.get("source", ""), "score": c.get("score"), "text": c.get("text", "")}
+                             for c in retrieved],
         "page_references": page_references(answer),
         "context_relevance": context_relevance,
         "faithfulness": faithfulness,

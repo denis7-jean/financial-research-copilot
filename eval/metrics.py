@@ -182,6 +182,24 @@ def page_references(answer: str) -> list[str]:
     return [m.group(0) for m in _PAGE_REFERENCE.finditer(answer or "")]
 
 
+def _answer_evidence(gated: list[dict]) -> dict:
+    """Report-only: did retrieval return the answer-bearing chunk (deterministic markers)?"""
+    found = [(r.get("evidence") or {}).get("all_found") for r in gated]
+    cr_direct = {r["id"] for r in gated if (r["context_relevance"] or {}).get("score") == 5}
+    evidence_found = {r["id"] for r, f in zip(gated, found) if f}
+    return {
+        "measures": "Answer-bearing coverage: a retrieved chunk from the expected company contains the "
+                    "evidence markers for the answer. Report-only; not gated.",
+        **pass_rate(found),
+        "missing": sorted(r["id"] for r, f in zip(gated, found) if not f),
+        "agreement_with_context_relevance_score_5": {
+            "both": len(cr_direct & evidence_found),
+            "judge_direct_only": sorted(cr_direct - evidence_found),
+            "markers_only": sorted(evidence_found - cr_direct),
+        },
+    }
+
+
 def _retrieval_quality_tracking(rows: list[dict]) -> dict:
     tracked = [r for r in rows if r.get("evidence") is not None]
     return {
@@ -303,11 +321,17 @@ def _token_summary(rows: list[dict], judge_calls: list[dict]) -> dict:
         agg["output_tokens"] += call.get("output_tokens") or 0
     judge_in = sum(c.get("input_tokens") or 0 for c in judge_calls)
     judge_out = sum(c.get("output_tokens") or 0 for c in judge_calls)
+    judge_by_kind: dict[str, dict] = {}
+    for call in judge_calls:
+        agg = judge_by_kind.setdefault(call.get("kind", "unknown"), {"calls": 0, "input_tokens": 0, "output_tokens": 0})
+        agg["calls"] += 1
+        agg["input_tokens"] += call.get("input_tokens") or 0
+        agg["output_tokens"] += call.get("output_tokens") or 0
     return {
         "system_under_test_by_call": by_call,
         "judge": {"calls": len(judge_calls),
                   "invoked": sum(1 for c in judge_calls if c.get("invoked", True)),
-                  "input_tokens": judge_in, "output_tokens": judge_out},
+                  "input_tokens": judge_in, "output_tokens": judge_out, "by_kind": judge_by_kind},
         "estimated_cost_usd": {
             "note": "Estimate from recorded tokens and assumed list prices (eval/metrics.py "
                     "PRICES_PER_MTOK); not a bill.",
@@ -352,12 +376,18 @@ def summarize_results(rows: list[dict], judge_calls: list[dict]) -> dict:
     }
 
     gated = [r for r in rows if r["gated_for_retrieval"]]
+    cr_scores = [(r["context_relevance"] or {}).get("score") for r in gated]
     context_relevance = {
         **pass_rate([(r["context_relevance"] or {}).get("pass") for r in gated]),
         "mean_score": _mean([_score_or_zero(r["context_relevance"]) for r in gated]),
         "failures": [r["id"] for r in gated if not (r["context_relevance"] or {}).get("pass")],
         "population": GATED_QA_POPULATION,
+        "measures": "Topical relevance: pass is score >= 3 ('topically related but require inference'). "
+                    "It does not require the answer to be in the retrieved chunks; see answer_evidence.",
+        "score_distribution": {str(k): cr_scores.count(k) for k in sorted({s for s in cr_scores if s is not None})},
+        "direct_answer_rate": (sum(1 for s in cr_scores if s == 5) / len(gated)) if gated else None,
     }
+    answer_evidence = _answer_evidence(gated)
     faithfulness = {
         **pass_rate([(r["faithfulness"] or {}).get("pass") for r in gated]),
         "mean_score": _mean([_score_or_zero(r["faithfulness"]) for r in gated]),
@@ -440,7 +470,8 @@ def summarize_results(rows: list[dict], judge_calls: list[dict]) -> dict:
         "overall_pass": overall,
         "gates": gates,
         "routing": routing,
-        "retrieval": {"context_relevance": context_relevance, "companies": retrieval_companies},
+        "retrieval": {"context_relevance": context_relevance, "answer_evidence": answer_evidence,
+                      "companies": retrieval_companies},
         "faithfulness": faithfulness,
         "summary_grounding": summary_grounding,
         "answer_correctness": answer_correctness,

@@ -888,3 +888,43 @@ def test_single_alternative_markers_still_require_every_string():
     assert marker_alternatives((("a",), ("b", "c"))) == [("a",), ("b", "c")]
     evidence = (("JPM", ("Return on common equity", "17 %")),)
     assert evidence_ranks([{"text": "Return on common equity 18 %", "source": JPM_SRC}], evidence)["all_found"] is False
+
+
+def _gated_row(case_id, cr_score, evidence_found):
+    return {"id": case_id, "context_relevance": {"score": cr_score, "pass": cr_score >= 3},
+            "evidence": {"all_found": evidence_found}}
+
+
+def test_answer_evidence_separates_topical_relevance_from_answer_coverage():
+    """Baseline pattern: context relevance passed 19/19 while L02/L09/L10/N07 lacked the answer chunk."""
+    from eval.metrics import _answer_evidence
+
+    gated = [_gated_row("L01", 5, True), _gated_row("L02", 3, False), _gated_row("L09", 4, False),
+             _gated_row("N06", 5, True), _gated_row("X", 5, False)]
+    result = _answer_evidence(gated)
+    assert result["pass_rate"] == 0.4
+    assert result["missing"] == ["L02", "L09", "X"]
+    assert result["agreement_with_context_relevance_score_5"] == {
+        "both": 2, "judge_direct_only": ["X"], "markers_only": []}
+
+
+def test_context_relevance_reports_distribution_and_direct_answer_rate(tmp_path):
+    cases = [_case("A", "a"), _case("B", "b")]
+    judge = FakeJudge({"a": {"cr": {"score": 5, "reasoning": "r"}}, "b": {"cr": {"score": 3, "reasoning": "r"}}})
+    results = {"a": _qa_result("x", [JPM_SRC]), "b": _qa_result("y", [JPM_SRC])}
+    summary, _, _ = _run(tmp_path, cases, results, judge)
+    cr = summary["retrieval"]["context_relevance"]
+    assert cr["pass_rate"] == 1.0  # the enforced gate is unchanged
+    assert cr["score_distribution"] == {"3": 1, "5": 1}
+    assert cr["direct_answer_rate"] == 0.5
+    assert "Topical relevance" in cr["measures"]
+    assert "answer_evidence" in summary["retrieval"]
+
+
+def test_judge_calls_record_their_kind_and_rows_keep_retrieved_text(tmp_path):
+    summary, data, _ = _run(tmp_path, [_case("A", "a")], {"a": _qa_result("x", [JPM_SRC])}, FakeJudge({}))
+    by_kind = summary["tokens"]["judge"]["by_kind"]
+    assert {k: v["calls"] for k, v in by_kind.items()} == {
+        "context_relevance": 1, "faithfulness": 1, "answer_assessment": 1}
+    chunks = data["results"][0]["retrieved_chunks"]
+    assert chunks == [{"source": JPM_SRC, "score": 0.5, "text": "chunk 0"}]
