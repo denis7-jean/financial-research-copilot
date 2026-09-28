@@ -1,0 +1,4213 @@
+{
+  "summary": {
+    "schema_version": 2,
+    "run_id": "6a13ffb1634e40258f283838935ff339",
+    "started_at": "2026-09-28T02:32:03.774389+00:00",
+    "finished_at": "2026-09-28T02:37:46.979719+00:00",
+    "git_sha": null,
+    "provenance": {
+      "system_under_test": "local working tree, in-process CopilotOrchestrator (not the deployed Lambda)",
+      "code": {
+        "git_sha": "a9906097e97fe7279c8b612bd691e909707af5ae",
+        "tracked_changes_uncommitted": false
+      },
+      "dataset_sha256": "f1d0da26f767b4025dd15a511e8aff1eefafae433ed0c438e4f542d46a554d9d",
+      "corpus": {
+        "index_vectors": 2220,
+        "metadata_rows": 2220,
+        "metadata_sha256": "f771ba6ce75759ba88e4ad376c642746327592afb991e107bd63c09029317429"
+      }
+    },
+    "completion": {
+      "planned_cases": 34,
+      "evaluated_cases": 34,
+      "complete": true,
+      "aborted_reason": null,
+      "max_cost_usd": 5.0
+    },
+    "system_model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "judge_model_id": "us.anthropic.claude-sonnet-4-6",
+    "judge_inference_config": {
+      "temperature": 0.0,
+      "maxTokens": 400
+    },
+    "total_queries": 34,
+    "judged_queries": 19,
+    "context_relevance_pass_rate": 1.0,
+    "faithfulness_pass_rate": 0.9473684210526315,
+    "mean_context_relevance": 4.7368421052631575,
+    "mean_faithfulness": 4.7894736842105265,
+    "overall_pass": true,
+    "gates": [
+      {
+        "metric": "context_relevance_pass_rate",
+        "threshold": 0.8,
+        "enforced": true,
+        "population": "cases with expected_route=qa, expected_behavior=answer, clear route label",
+        "value": 1.0,
+        "passed": true
+      },
+      {
+        "metric": "faithfulness_pass_rate",
+        "threshold": 0.8,
+        "enforced": true,
+        "population": "cases with expected_route=qa, expected_behavior=answer, clear route label",
+        "value": 0.9473684210526315,
+        "passed": true
+      },
+      {
+        "metric": "routing_accuracy_clear",
+        "threshold": 0.9,
+        "enforced": false,
+        "population": "cases with a clear route label",
+        "value": 1.0,
+        "passed": true
+      },
+      {
+        "metric": "answer_correctness_pass_rate",
+        "threshold": 0.8,
+        "enforced": false,
+        "population": "cases with a reference answer",
+        "value": 0.7619047619047619,
+        "passed": false
+      },
+      {
+        "metric": "abstention_appropriate_rate",
+        "threshold": 0.8,
+        "enforced": false,
+        "population": "cases with expected_behavior answer or abstain",
+        "value": 0.90625,
+        "passed": true
+      },
+      {
+        "metric": "summary_grounding_pass_rate",
+        "threshold": 0.8,
+        "enforced": false,
+        "population": "cases answered by the summarize path",
+        "value": 0.18181818181818182,
+        "passed": false
+      }
+    ],
+    "routing": {
+      "accuracy_clear": {
+        "pass_rate": 1.0,
+        "passed": 30,
+        "n": 30
+      },
+      "accuracy_all": {
+        "pass_rate": 0.9117647058823529,
+        "passed": 31,
+        "n": 34
+      },
+      "confusion_expected_to_predicted": {
+        "qa->qa": 23,
+        "summarize->summarize": 8,
+        "qa->summarize": 3
+      },
+      "router_outcomes": {
+        "model": 34
+      },
+      "mismatches": [
+        "L17",
+        "L19",
+        "L20"
+      ],
+      "needs_review_labels": [
+        "L13",
+        "L17",
+        "L19",
+        "L20"
+      ]
+    },
+    "retrieval": {
+      "context_relevance": {
+        "pass_rate": 1.0,
+        "passed": 19,
+        "n": 19,
+        "mean_score": 4.7368421052631575,
+        "failures": [],
+        "population": "cases with expected_route=qa, expected_behavior=answer, clear route label"
+      },
+      "companies": {
+        "mean_company_precision": 1.0,
+        "n": 19,
+        "contaminated_cases": [],
+        "unknown_source_chunks": 0
+      }
+    },
+    "faithfulness": {
+      "pass_rate": 0.9473684210526315,
+      "passed": 18,
+      "n": 19,
+      "mean_score": 4.7894736842105265,
+      "failures": [
+        "N07"
+      ],
+      "population": "cases with expected_route=qa, expected_behavior=answer, clear route label"
+    },
+    "summary_grounding": {
+      "pass_rate": 0.18181818181818182,
+      "passed": 2,
+      "n": 11,
+      "mean_score": 2.8181818181818183,
+      "failures": [
+        "L12",
+        "L13",
+        "L14",
+        "L15",
+        "L17",
+        "L20",
+        "N13",
+        "V01",
+        "V02"
+      ],
+      "caveat": "Summaries are generated without documents; they are judged against evidence the harness retrieves afterwards (top-5 chunks), so true claims absent from those chunks count as unsupported."
+    },
+    "answer_correctness": {
+      "pass_rate": 0.7619047619047619,
+      "passed": 16,
+      "n": 21,
+      "mean_score": 4.285714285714286,
+      "failures": [
+        "L02",
+        "L09",
+        "L10",
+        "L13",
+        "L20"
+      ]
+    },
+    "abstention": {
+      "pass_rate": 0.90625,
+      "passed": 29,
+      "n": 32,
+      "false_abstentions": [
+        "L02",
+        "L14",
+        "N14"
+      ],
+      "missed_abstentions": [],
+      "undetermined": []
+    },
+    "boundary_and_out_of_corpus": [
+      {
+        "id": "L03",
+        "category": "out_of_corpus",
+        "expected_route": "qa",
+        "predicted_route": "qa",
+        "expected_behavior": "abstain",
+        "abstained": true,
+        "abstention_appropriate": true,
+        "answer_preview": "I cannot answer this question based on the provided context. The documents included are:\n\n1. JPMorgan Chase 10-K for fiscal year 2025\n2. Goldman Sachs 10-K for ",
+        "notes": "Mastercard is not in the corpus (Visa is the fifth company). Retrieval will likely return Visa chunks; answering with Visa's figures is a failure."
+      },
+      {
+        "id": "L08",
+        "category": "out_of_corpus",
+        "expected_route": "qa",
+        "predicted_route": "qa",
+        "expected_behavior": "abstain",
+        "abstained": true,
+        "abstention_appropriate": true,
+        "answer_preview": "I cannot answer this question based on the provided context. The documents provided contain financial information from JPMorgan Chase and Goldman Sachs' 2025 Fo",
+        "notes": "Mastercard is not in the corpus (Visa is the fifth company). Retrieval will likely return Visa chunks; answering with Visa's figures is a failure."
+      },
+      {
+        "id": "L17",
+        "category": "boundary",
+        "expected_route": "qa",
+        "predicted_route": "summarize",
+        "expected_behavior": "either",
+        "abstained": false,
+        "abstention_appropriate": null,
+        "answer_preview": "Summary: A financial statement is a formal record of the financial activities and position of a business, individual, or organization. It provides a snapshot of",
+        "notes": "General-knowledge question outside the filings. Is a generic definition acceptable, or should the system decline?"
+      },
+      {
+        "id": "L18",
+        "category": "out_of_corpus",
+        "expected_route": "qa",
+        "predicted_route": "qa",
+        "expected_behavior": "abstain",
+        "abstained": true,
+        "abstention_appropriate": true,
+        "answer_preview": "I cannot answer this question based on the provided context. The documents provided are 10-K filings from Goldman Sachs and JPMorgan Chase for fiscal year 2025,",
+        "notes": ""
+      },
+      {
+        "id": "L19",
+        "category": "boundary",
+        "expected_route": "qa",
+        "predicted_route": "summarize",
+        "expected_behavior": "either",
+        "abstained": true,
+        "abstention_appropriate": null,
+        "answer_preview": "Summary: Unable to provide analysis - no financial document content was provided. 'Goldman Sachs 2025' appears to be a reference label only, not actual financia",
+        "notes": "Underspecified. Labeled qa because qa is the grounded fallback."
+      },
+      {
+        "id": "L20",
+        "category": "boundary",
+        "expected_route": "qa",
+        "predicted_route": "summarize",
+        "expected_behavior": "answer",
+        "abstained": false,
+        "abstention_appropriate": true,
+        "answer_preview": "Summary: JPMorgan Chase is one of the largest financial institutions globally. As of recent fiscal year reporting, the company generated total revenue exceeding",
+        "notes": "Multi-intent. Only one route is possible today."
+      },
+      {
+        "id": "N11",
+        "category": "out_of_corpus",
+        "expected_route": "qa",
+        "predicted_route": "qa",
+        "expected_behavior": "abstain",
+        "abstained": true,
+        "abstention_appropriate": true,
+        "answer_preview": "I cannot answer this question based on the provided context. The documents included are from Goldman Sachs' 2025 Form 10-K and JPMorgan Chase's 2025 Form 10-K, ",
+        "notes": ""
+      }
+    ],
+    "forbidden_fact_leaks": {
+      "note": "Deterministic: answers containing a fact that belongs to a different company (e.g. Visa figures in a Mastercard answer).",
+      "cases_checked": [
+        "L03",
+        "L08"
+      ],
+      "leaks": {}
+    },
+    "errors": {
+      "cases_with_system_errors": [],
+      "judge_errors": 0,
+      "judge_infra_errors": 0
+    },
+    "latency_ms": {
+      "note": "Measured in-process by the harness (orchestrator.process); excludes Lambda, network to the Function URL and response serialization.",
+      "total_ms": {
+        "p50": 3032.6,
+        "p95": 5167.0,
+        "n": 34
+      },
+      "by_path": {
+        "qa": {
+          "p50": 2530.2,
+          "p95": 3765.3,
+          "n": 23
+        },
+        "summarize": {
+          "p50": 4024.1,
+          "p95": 5348.6,
+          "n": 11
+        }
+      },
+      "stages_ms": {
+        "agent": {
+          "p50": 1953.3,
+          "p95": 4094.2,
+          "n": 34
+        },
+        "llm.qa_generate": {
+          "p50": 1388.7,
+          "p95": 2248.8,
+          "n": 23
+        },
+        "llm.summarize": {
+          "p50": 3045.7,
+          "p95": 4490.9,
+          "n": 11
+        },
+        "qa.build_context": {
+          "p50": 0.0,
+          "p95": 0.0,
+          "n": 23
+        },
+        "retrieval.embed": {
+          "p50": 124.9,
+          "p95": 218.1,
+          "n": 23
+        },
+        "retrieval.index_load": {
+          "p50": 582.6,
+          "p95": 582.6,
+          "n": 1
+        },
+        "retrieval.search": {
+          "p50": 0.2,
+          "p95": 0.3,
+          "n": 23
+        },
+        "route": {
+          "p50": 870.5,
+          "p95": 1170.9,
+          "n": 34
+        }
+      },
+      "cold_start_cases": [
+        "L01"
+      ]
+    },
+    "tokens": {
+      "system_under_test_by_call": {
+        "router": {
+          "calls": 34,
+          "input_tokens": 7291,
+          "output_tokens": 1782
+        },
+        "embed_query": {
+          "calls": 23,
+          "input_tokens": 358,
+          "output_tokens": 0
+        },
+        "qa_generate": {
+          "calls": 23,
+          "input_tokens": 105831,
+          "output_tokens": 3149
+        },
+        "summarize": {
+          "calls": 11,
+          "input_tokens": 731,
+          "output_tokens": 3664
+        }
+      },
+      "judge": {
+        "calls": 91,
+        "invoked": 91,
+        "input_tokens": 287315,
+        "output_tokens": 6203
+      },
+      "estimated_cost_usd": {
+        "note": "Estimate from recorded tokens and assumed list prices (eval/metrics.py PRICES_PER_MTOK); not a bill.",
+        "system_under_test": {
+          "usd": 0.156835,
+          "unpriced_calls": 0
+        },
+        "judge": {
+          "usd": 0.95499,
+          "unpriced_calls": 0
+        }
+      }
+    },
+    "legacy_comparable": {
+      "note": "Pre-Phase-0 population: legacy queries routed to qa, boundary excluded. Depends on router output; for continuity only, not gated.",
+      "context_relevance_pass_rate": 0.8,
+      "faithfulness_pass_rate": 1.0,
+      "n": 10
+    },
+    "retrieval_quality_tracking": {
+      "note": "Report-only; not gated. See eval/README.md, Tracked retrieval-quality issues.",
+      "evidence_rank": {
+        "cases": 20,
+        "found_rate": 0.65,
+        "mean_reciprocal_rank": 0.5791666666666667,
+        "evidence_not_top_ranked": {
+          "L04": 3,
+          "L07": 2,
+          "N01": 2
+        },
+        "evidence_not_retrieved": [
+          "L02",
+          "L06",
+          "L09",
+          "L10",
+          "L20",
+          "N06",
+          "N07"
+        ]
+      },
+      "unverified_page_references": {
+        "L06": [
+          "page 309",
+          "page 49"
+        ],
+        "N04": [
+          "page 27",
+          "page 32"
+        ]
+      }
+    },
+    "results_path": "eval/results/baselines/2026-09-phase0-baseline.json",
+    "run_validity": {
+      "valid_for_baseline": true,
+      "reasons": [],
+      "system_infrastructure_failures": {},
+      "system_model_output_failures": [],
+      "application_errors": [],
+      "degraded_cases": {},
+      "judge_infrastructure_errors": 0,
+      "judge_infrastructure_error_kinds": [],
+      "harness_infrastructure_errors": 0
+    }
+  },
+  "results": [
+    {
+      "id": "L01",
+      "trace_id": "197f44d9-571b-4aaf-af94-4e976ff24c2a",
+      "query": "What was JPMorgan Chase's total net revenue for fiscal year 2025?",
+      "category": "numeric_qa",
+      "legacy": true,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "Total net revenue was $182,447 million (about $182.4 billion) for 2025.",
+      "reference_source": "jpmorgan-chase-10k-fy2025.pdf p46, p49",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "According to JPMorgan Chase's 2025 Form 10-K, **total net revenue for fiscal year 2025 was $182.447 billion**.\n\nThis comprised:\n- Noninterest revenue: $87.004 billion\n- Net interest income: $95.443 billion\n\n**Source:** JPMorgan Chase & Co./2025 Form 10-K, Consolidated Results of Operations revenue t",
+      "answer_chars": 304,
+      "retrieval": {
+        "sources": [
+          "JPM",
+          "JPM",
+          "JPM",
+          "JPM",
+          "JPM"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "JPM",
+            "markers": [
+              "182,447"
+            ],
+            "rank": 1
+          }
+        ],
+        "all_found": true,
+        "worst_rank": 1,
+        "reciprocal_rank": 1.0
+      },
+      "page_references": [],
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The first retrieved chunk explicitly states JPMorgan Chase's total net revenue for fiscal year 2025 as $182,447 million in the Consolidated Results of Operations table.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "All figures cited in the answer (total net revenue of $182.447 billion, noninterest revenue of $87.004 billion, and net interest income of $95.443 billion) are explicitly present in the retrieved context's revenue table.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The answer correctly states total net revenue of $182.447 billion, matching the reference answer of $182,447 million, with additional correct breakdown details.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 3112.3,
+        "stages_ms": {
+          "route": 909.2,
+          "retrieval.index_load": 582.6,
+          "retrieval.embed": 230.2,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 1388.7,
+          "agent": 2203.0
+        },
+        "cold_start": true
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 217,
+          "output_tokens": 52,
+          "latency_ms": 811
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 18,
+          "output_tokens": 0,
+          "latency_ms": 230.3
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 4708,
+          "output_tokens": 98,
+          "latency_ms": 1286
+        }
+      ],
+      "tokens": {
+        "input_tokens": 4943,
+        "output_tokens": 150
+      }
+    },
+    {
+      "id": "L02",
+      "trace_id": "45798e8a-75a5-4e3c-a585-4fbafd136c6f",
+      "query": "What was Goldman Sachs net earnings for fiscal year 2025?",
+      "category": "numeric_qa",
+      "legacy": true,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "Net earnings were $17.18 billion for 2025 (vs $14.28 billion in 2024).",
+      "reference_source": "goldman-sachs-10k-fy2025.pdf p67",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "The provided context does not contain Goldman Sachs' net earnings figure for fiscal year 2025. \n\nThe documents include pre-tax earnings of $17.57 billion for 2025 and an effective tax rate of 21.4%, but the actual net earnings (after-tax) amount is not stated in the excerpts provided.\n\nTo find this ",
+      "answer_chars": 431,
+      "retrieval": {
+        "sources": [
+          "GS",
+          "GS",
+          "GS",
+          "GS",
+          "GS"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "GS",
+            "markers": [
+              "net earnings of $17.18 billion"
+            ],
+            "rank": null
+          }
+        ],
+        "all_found": false,
+        "worst_rank": null,
+        "reciprocal_rank": 0.0
+      },
+      "page_references": [],
+      "context_relevance": {
+        "score": 3,
+        "pass": true,
+        "reasoning": "The chunks contain extensive financial details about Goldman Sachs FY2025 including revenues, operating expenses, efficiency ratio, and pre-tax earnings, but do not explicitly state the net earnings (net income) figure for fiscal year 2025.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "Every claim in the answer is explicitly supported by the context: pre-tax earnings of $17.57 billion for 2025 and effective tax rate of 21.4% are both directly stated in the retrieved documents, and the answer correctly notes that net earnings are not provided in the excerpts.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 1,
+        "pass": false,
+        "reasoning": "The system declined to provide a net earnings figure despite the reference answer being $17.18 billion, and incorrectly claimed the net earnings amount was not available in the documents.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": true,
+      "abstention_appropriate": false,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 2578.2,
+        "stages_ms": {
+          "route": 862.6,
+          "retrieval.embed": 148.4,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 1566.8,
+          "agent": 1715.6
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 214,
+          "output_tokens": 51,
+          "latency_ms": 835
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 14,
+          "output_tokens": 0,
+          "latency_ms": 148.4
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 3805,
+          "output_tokens": 111,
+          "latency_ms": 1540
+        }
+      ],
+      "tokens": {
+        "input_tokens": 4033,
+        "output_tokens": 162
+      }
+    },
+    {
+      "id": "L03",
+      "trace_id": "de368d92-df8a-4d20-9678-2e053284c8af",
+      "query": "What is Mastercard's total net revenue for fiscal year 2025?",
+      "category": "out_of_corpus",
+      "legacy": true,
+      "notes": "Mastercard is not in the corpus (Visa is the fifth company). Retrieval will likely return Visa chunks; answering with Visa's figures is a failure.",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "abstain",
+      "gated_for_retrieval": false,
+      "has_reference": false,
+      "reference_answer": null,
+      "reference_source": null,
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "I cannot answer this question based on the provided context. The documents included are:\n\n1. JPMorgan Chase 10-K for fiscal year 2025\n2. Goldman Sachs 10-K for fiscal year 2025\n\nNeither of these documents contains information about Mastercard's financial results. To find Mastercard's total net reven",
+      "answer_chars": 393,
+      "retrieval": {
+        "sources": [
+          "JPM",
+          "JPM",
+          "GS",
+          "JPM",
+          "GS"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf"
+        ],
+        "company_precision": null,
+        "contaminated": null
+      },
+      "evidence": null,
+      "page_references": [],
+      "context_relevance": {
+        "score": 1,
+        "pass": false,
+        "reasoning": "The retrieved chunks contain financial data for JPMorgan Chase and Goldman Sachs for FY2025, but no information about Mastercard's total net revenue.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The answer makes no factual claims about any financial data; it simply states that the provided context does not contain Mastercard information, which is accurate based on the retrieved documents.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": null,
+      "abstained": true,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": true,
+      "forbidden_fact_hits": [],
+      "tags": [
+        "mastercard"
+      ],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 2215.6,
+        "stages_ms": {
+          "route": 815.9,
+          "retrieval.embed": 120.9,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 1278.3,
+          "agent": 1399.6
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 215,
+          "output_tokens": 52,
+          "latency_ms": 790
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 16,
+          "output_tokens": 0,
+          "latency_ms": 120.9
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 4021,
+          "output_tokens": 104,
+          "latency_ms": 1251
+        }
+      ],
+      "tokens": {
+        "input_tokens": 4252,
+        "output_tokens": 156
+      }
+    },
+    {
+      "id": "L04",
+      "trace_id": "beb50a8d-cc35-44f8-98fb-840479ec1641",
+      "query": "What was BlackRock's total assets under management in 2025?",
+      "category": "numeric_qa",
+      "legacy": true,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "AUM was $14,041,518 million (about $14.04 trillion) at December 31, 2025.",
+      "reference_source": "blackrock-10k-fy2025.pdf p4, p43",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "# BlackRock's Total Assets Under Management in 2025\n\nAccording to BlackRock's FY2025 10-K filing, **total AUM at the end of 2025 was $14.04 trillion** (or $14,041,518 million to be precise).\n\nThis represents an increase from $11.55 trillion at the end of 2024, driven by:\n- **$698.3 billion in net in",
+      "answer_chars": 671,
+      "retrieval": {
+        "sources": [
+          "BLK",
+          "BLK",
+          "BLK",
+          "BLK",
+          "BLK"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/blackrock-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/blackrock-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/blackrock-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/blackrock-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/blackrock-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "BLK",
+            "markers": [
+              "14,041,518"
+            ],
+            "rank": 3
+          }
+        ],
+        "all_found": true,
+        "worst_rank": 3,
+        "reciprocal_rank": 0.3333333333333333
+      },
+      "page_references": [],
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The retrieved chunks explicitly state BlackRock's total AUM at December 31, 2025 was $14,041,518 million (~$14.0 trillion), directly answering the query.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "Every claim in the answer is explicitly supported by the retrieved context, including the total AUM figures for 2025 and 2024, net inflows, market change, FX impact, acquisitions, and realizations.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The system answer correctly states the total AUM of $14.04 trillion ($14,041,518 million) at December 31, 2025, matching the reference answer exactly.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 3273.3,
+        "stages_ms": {
+          "route": 889.7,
+          "retrieval.embed": 134.5,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 2248.8,
+          "agent": 2383.6
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 214,
+          "output_tokens": 57,
+          "latency_ms": 863
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 15,
+          "output_tokens": 0,
+          "latency_ms": 134.5
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 4858,
+          "output_tokens": 207,
+          "latency_ms": 2222
+        }
+      ],
+      "tokens": {
+        "input_tokens": 5087,
+        "output_tokens": 264
+      }
+    },
+    {
+      "id": "L05",
+      "trace_id": "0e56f82b-e634-4c3d-a5a0-d4eae1c96e1c",
+      "query": "What was Bank of America's net income for fiscal year 2025?",
+      "category": "numeric_qa",
+      "legacy": true,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "Net income was $30,509 million (about $30.5 billion) in 2025.",
+      "reference_source": "bank-of-america-10k-fy2025.pdf p29",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "According to Bank of America's 2025 Form 10-K, the corporation's **net income for fiscal year 2025 was $30.509 billion** (or $30,509 million).\n\nThis represented an increase from net income of $26.973 billion in fiscal year 2024. The net income for 2025 included preferred stock dividends of $1.454 bi",
+      "answer_chars": 585,
+      "retrieval": {
+        "sources": [
+          "BAC",
+          "BAC",
+          "BAC",
+          "BAC",
+          "BAC"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "BAC",
+            "markers": [
+              "30,509"
+            ],
+            "rank": 1
+          }
+        ],
+        "all_found": true,
+        "worst_rank": 1,
+        "reciprocal_rank": 1.0
+      },
+      "page_references": [],
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The retrieved chunks directly state Bank of America's net income for fiscal year 2025 as $30,509 million ($30.5 billion) in multiple places including the Summary Income Statement, Consolidated Statement of Income, and Consolidated Statement of Cash Flows.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "Every factual claim in the answer\u2014net income of $30,509 million, prior year net income of $26,973 million, preferred stock dividends of $1,454 million, net income applicable to common shareholders of $29,055 million, and diluted EPS of $3.81\u2014is explicitly supported by the retrieved context.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The system answer correctly states net income of $30,509 million ($30.509 billion) for fiscal year 2025, matching the reference answer exactly.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 2728.7,
+        "stages_ms": {
+          "route": 775.3,
+          "retrieval.embed": 133.5,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 1819.4,
+          "agent": 1953.3
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 214,
+          "output_tokens": 52,
+          "latency_ms": 749
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 16,
+          "output_tokens": 0,
+          "latency_ms": 133.5
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 5443,
+          "output_tokens": 157,
+          "latency_ms": 1794
+        }
+      ],
+      "tokens": {
+        "input_tokens": 5673,
+        "output_tokens": 209
+      }
+    },
+    {
+      "id": "L06",
+      "trace_id": "14e5d6e7-93bf-479a-907e-5cd6f795c636",
+      "query": "What was JPMorgan Chase's return on equity in 2025?",
+      "category": "metric_qa",
+      "legacy": true,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "Return on common equity (ROE) was 17% for 2025.",
+      "reference_source": "jpmorgan-chase-10k-fy2025.pdf p46, p49",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "# JPMorgan Chase's Return on Equity in 2025\n\nAccording to the JPMorgan Chase 2025 Form 10-K, the firm's overall **return on equity (ROE) was 17%** for the year ended December 31, 2025.\n\nHowever, returns varied by business segment:\n- **CCB (Consumer & Community Banking)**: 32% ROE\n- **CIB (Corporate ",
+      "answer_chars": 520,
+      "retrieval": {
+        "sources": [
+          "JPM",
+          "JPM",
+          "JPM",
+          "JPM",
+          "JPM"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "JPM",
+            "markers": [
+              "Return on common equity",
+              "17 %"
+            ],
+            "rank": null
+          }
+        ],
+        "all_found": false,
+        "worst_rank": null,
+        "reciprocal_rank": 0.0
+      },
+      "page_references": [
+        "page 309",
+        "page 49"
+      ],
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The retrieved chunks explicitly state JPMorgan Chase's return on equity for 2025 as 17% in the consolidated results table showing ROE of 17% for 2025, 18% for 2024, and 17% for 2023.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "All claims are directly supported by the retrieved context: the firm-wide ROE of 17% for 2025 is shown in the consolidated results table, and the segment ROEs (CCB 32%, CIB 18%, AWM 40%) are explicitly stated in the business segment highlights section.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The system answer correctly states the overall ROE was 17% for 2025, matching the reference answer exactly.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 3032.6,
+        "stages_ms": {
+          "route": 885.9,
+          "retrieval.embed": 92.6,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 2053.7,
+          "agent": 2146.6
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 215,
+          "output_tokens": 48,
+          "latency_ms": 859
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 16,
+          "output_tokens": 0,
+          "latency_ms": 92.6
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 4782,
+          "output_tokens": 171,
+          "latency_ms": 2029
+        }
+      ],
+      "tokens": {
+        "input_tokens": 5013,
+        "output_tokens": 219
+      }
+    },
+    {
+      "id": "L07",
+      "trace_id": "38cc5304-ac65-446e-820d-12676b7ec38d",
+      "query": "How many employees did JPMorgan Chase have in 2025?",
+      "category": "metric_qa",
+      "legacy": true,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "318,512 employees as of December 31, 2025.",
+      "reference_source": "jpmorgan-chase-10k-fy2025.pdf p9, p46",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "According to JPMorgan Chase's 2025 Form 10-K, the firm had **318,512 employees globally** as of December 31, 2025.\n\nThe document also notes that 58% of these employees were located in the U.S., with the remaining employees distributed across 66 countries.",
+      "answer_chars": 255,
+      "retrieval": {
+        "sources": [
+          "JPM",
+          "JPM",
+          "JPM",
+          "JPM",
+          "JPM"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "JPM",
+            "markers": [
+              "318,512"
+            ],
+            "rank": 2
+          }
+        ],
+        "all_found": true,
+        "worst_rank": 2,
+        "reciprocal_rank": 0.5
+      },
+      "page_references": [],
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The retrieved chunks explicitly state that as of December 31, 2025, JPMorganChase had 318,512 employees globally, with a detailed breakdown by region and line of business.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "Both claims\u2014318,512 global employees and 58% located in the U.S. across 66 countries\u2014are explicitly stated in the retrieved context.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The answer correctly states 318,512 employees as of December 31, 2025, matching the reference answer exactly.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 2146.1,
+        "stages_ms": {
+          "route": 870.5,
+          "retrieval.embed": 125.8,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 1149.4,
+          "agent": 1275.5
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 214,
+          "output_tokens": 47,
+          "latency_ms": 845
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 15,
+          "output_tokens": 0,
+          "latency_ms": 125.8
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 4807,
+          "output_tokens": 73,
+          "latency_ms": 1123
+        }
+      ],
+      "tokens": {
+        "input_tokens": 5036,
+        "output_tokens": 120
+      }
+    },
+    {
+      "id": "L08",
+      "trace_id": "c375f782-5925-483a-8fcb-a0309744697c",
+      "query": "What was Mastercard's net income margin in 2025?",
+      "category": "out_of_corpus",
+      "legacy": true,
+      "notes": "Mastercard is not in the corpus (Visa is the fifth company). Retrieval will likely return Visa chunks; answering with Visa's figures is a failure.",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "abstain",
+      "gated_for_retrieval": false,
+      "has_reference": false,
+      "reference_answer": null,
+      "reference_source": null,
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "I cannot answer this question based on the provided context. The documents provided contain financial information from JPMorgan Chase and Goldman Sachs' 2025 Form 10-K filings, but do not include any information about Mastercard's financial performance or net income margin for 2025.\n\nTo find Masterc",
+      "answer_chars": 428,
+      "retrieval": {
+        "sources": [
+          "JPM",
+          "GS",
+          "JPM",
+          "JPM",
+          "JPM"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf"
+        ],
+        "company_precision": null,
+        "contaminated": null
+      },
+      "evidence": null,
+      "page_references": [],
+      "context_relevance": {
+        "score": 1,
+        "pass": false,
+        "reasoning": "The retrieved chunks contain no information about Mastercard; they are entirely about JPMorgan Chase and Goldman Sachs financial data.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The answer makes no factual claims about any financial data; it simply states that the context does not contain Mastercard information, which is accurate based on the retrieved context.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": null,
+      "abstained": true,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": true,
+      "forbidden_fact_hits": [],
+      "tags": [
+        "mastercard"
+      ],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 2102.3,
+        "stages_ms": {
+          "route": 796.6,
+          "retrieval.embed": 116.4,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 1188.9,
+          "agent": 1305.6
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 213,
+          "output_tokens": 48,
+          "latency_ms": 771
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 14,
+          "output_tokens": 0,
+          "latency_ms": 116.4
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 4332,
+          "output_tokens": 106,
+          "latency_ms": 1162
+        }
+      ],
+      "tokens": {
+        "input_tokens": 4559,
+        "output_tokens": 154
+      }
+    },
+    {
+      "id": "L09",
+      "trace_id": "d4c3f6f5-a378-4775-a36a-9fc722b5656c",
+      "query": "What dividends did Goldman Sachs pay in fiscal year 2025?",
+      "category": "metric_qa",
+      "legacy": true,
+      "notes": "Filing reports dividends declared; answers citing preferred dividends in addition are acceptable if the common figure is correct.",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "Common stock dividends declared were $14.00 per common share for 2025 (vs $11.50 in 2024).",
+      "reference_source": "goldman-sachs-10k-fy2025.pdf p212",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "# Goldman Sachs Dividends in Fiscal Year 2025\n\nBased on the 10-K filing, Goldman Sachs paid the following dividends in fiscal year 2025:\n\n## Preferred Stock Dividends\nThe aggregate amount of preferred stock dividends declared was approximately **$225 million**, which included:\n- Series C through Ser",
+      "answer_chars": 907,
+      "retrieval": {
+        "sources": [
+          "GS",
+          "GS",
+          "GS",
+          "GS",
+          "GS"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "GS",
+            "markers": [
+              "Dividends declared per common share",
+              "14.00"
+            ],
+            "rank": null
+          }
+        ],
+        "all_found": false,
+        "worst_rank": null,
+        "reciprocal_rank": 0.0
+      },
+      "page_references": [],
+      "context_relevance": {
+        "score": 4,
+        "pass": true,
+        "reasoning": "The chunks contain detailed information about Goldman Sachs' FY2025 dividends, including preferred stock dividends per share for multiple series, total preferred dividends of approximately $225 million declared (to be paid in early 2026), common stock dividends of $4.00 per share, and total dividends and dividend equivalents paid of $5.277 billion per the cash flow statement, with preferred stock dividends of $876 million noted in the parent company statements; minor gaps exist around the full quarterly common dividend history during the year.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 4,
+        "pass": true,
+        "reasoning": "Nearly all claims are directly supported by the context, including the $225 million aggregate preferred dividends, the specific per-share amounts, the $5.277 billion in dividends paid from the cash flow statement, and the $4.00 per common share dividend; however, the answer states the $4.00 dividend was 'declared' in FY2025 when the context only mentions it being declared with a payment date of March 30, 2026, which is a minor inference about timing.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 2,
+        "pass": false,
+        "reasoning": "The answer provides some dividend information but states $4.00 per share for common stock dividends, which is only the Q4 quarterly dividend declared, not the full-year total of $14.00 per common share declared in 2025 as stated in the reference answer.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 3765.3,
+        "stages_ms": {
+          "route": 899.1,
+          "retrieval.embed": 123.4,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 2742.3,
+          "agent": 2866.2
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 215,
+          "output_tokens": 47,
+          "latency_ms": 873
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 14,
+          "output_tokens": 0,
+          "latency_ms": 123.4
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 4848,
+          "output_tokens": 256,
+          "latency_ms": 2715
+        }
+      ],
+      "tokens": {
+        "input_tokens": 5077,
+        "output_tokens": 303
+      }
+    },
+    {
+      "id": "L10",
+      "trace_id": "e26867bf-93a6-49ec-a31a-dbd587e3c98e",
+      "query": "Which had higher net revenue in 2025, JPMorgan Chase or Goldman Sachs?",
+      "category": "cross_company",
+      "legacy": true,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "JPMorgan Chase: total net revenue $182,447 million; Goldman Sachs: net revenues $58.28 billion. JPMorgan Chase was higher.",
+      "reference_source": "jpmorgan-chase-10k-fy2025.pdf p49; goldman-sachs-10k-fy2025.pdf p67",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "# Net Revenue Comparison for 2025\n\nBased on the provided documents:\n\n**JPMorgan Chase** had significantly higher total net revenue in 2025 than Goldman Sachs.\n\n- **JPMorgan Chase**: $182.447 billion in total net revenue for 2025\n- **Goldman Sachs**: $53.51 billion in net revenues for 2024 (the 2025 ",
+      "answer_chars": 669,
+      "retrieval": {
+        "sources": [
+          "JPM",
+          "JPM",
+          "JPM",
+          "GS",
+          "JPM"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "JPM",
+            "markers": [
+              "182,447"
+            ],
+            "rank": 2
+          },
+          {
+            "company": "GS",
+            "markers": [
+              "58.28 billion"
+            ],
+            "rank": null
+          }
+        ],
+        "all_found": false,
+        "worst_rank": null,
+        "reciprocal_rank": 0.25
+      },
+      "page_references": [],
+      "context_relevance": {
+        "score": 4,
+        "pass": true,
+        "reasoning": "The chunks contain JPMorgan Chase's total net revenue for 2025 ($182,447 million) directly, and Goldman Sachs's net revenues for 2024 ($53.51 billion) with references to 2025 figures mentioned contextually but not explicitly stated as a total; however, Goldman Sachs 2025 net revenues can be partially inferred from the chunks but are not explicitly totaled, creating a minor gap.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 4,
+        "pass": true,
+        "reasoning": "All claims about JPMorgan Chase's $182.447 billion revenue and Goldman Sachs' $53.51 billion 2024 revenue are supported by the context; the minor unsupported inference is the '3 times greater' ratio calculation, which is a derived comparison not explicitly stated in the context.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 3,
+        "pass": false,
+        "reasoning": "Correctly identifies JPMorgan Chase as higher and states the correct JPMorgan figure, but provides an incorrect Goldman Sachs figure ($53.51B for 2024 instead of $58.28B for 2025), missing the correct 2025 Goldman Sachs revenue.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 3188.7,
+        "stages_ms": {
+          "route": 920.5,
+          "retrieval.embed": 143.9,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 2124.0,
+          "agent": 2268.2
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 220,
+          "output_tokens": 49,
+          "latency_ms": 896
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 19,
+          "output_tokens": 0,
+          "latency_ms": 143.9
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 4588,
+          "output_tokens": 196,
+          "latency_ms": 2097
+        }
+      ],
+      "tokens": {
+        "input_tokens": 4827,
+        "output_tokens": 245
+      }
+    },
+    {
+      "id": "L12",
+      "trace_id": "489a7d3e-73dc-4d45-b9cb-24e4517cdafd",
+      "query": "Summarize the key risks in Goldman Sachs 2025 annual report.",
+      "category": "summarize",
+      "legacy": true,
+      "notes": "",
+      "expected_route": "summarize",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": false,
+      "has_reference": false,
+      "reference_answer": null,
+      "reference_source": null,
+      "predicted_route": "summarize",
+      "agent_used": "summarize",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "Summary: Goldman Sachs faces multiple strategic and operational risks including market volatility impacts on trading and investment banking, regulatory compliance challenges, cybersecurity threats, talent retention pressures, and exposure to geopolitical uncertainties. The firm also contends with in",
+      "answer_chars": 1972,
+      "retrieval": {
+        "sources": [],
+        "raw_sources": [],
+        "company_precision": null,
+        "contaminated": null
+      },
+      "evidence": null,
+      "page_references": [],
+      "context_relevance": null,
+      "faithfulness": null,
+      "summary_grounding": {
+        "score": 3,
+        "pass": false,
+        "reasoning": "The evidence supports several claims including regulatory/compliance risks, capital requirement risks, cybersecurity risks, credit risks, climate/geopolitical risks, and market risk exposure, but specific claims like talent retention challenges, fintech competitive pressures, legacy technology infrastructure gaps, fee compression in wealth/asset management, and revenue concentration risks are not addressed in the provided evidence excerpts.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "answer_correctness": null,
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 4680.2,
+        "stages_ms": {
+          "route": 801.2,
+          "llm.summarize": 3878.9,
+          "agent": 3879.0
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 217,
+          "output_tokens": 46,
+          "latency_ms": 775
+        },
+        {
+          "name": "summarize",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 70,
+          "output_tokens": 417,
+          "latency_ms": 3799
+        }
+      ],
+      "tokens": {
+        "input_tokens": 287,
+        "output_tokens": 463
+      }
+    },
+    {
+      "id": "L13",
+      "trace_id": "c07cfd91-7195-4960-b490-e215688047f9",
+      "query": "What are the main business segments of JPMorgan Chase?",
+      "category": "summarize",
+      "legacy": true,
+      "notes": "Taxonomy says 'overview' -> summarize, but this is a factual list; the summarize path is ungrounded. Needs a product decision.",
+      "expected_route": "summarize",
+      "route_label_status": "needs_review",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": false,
+      "has_reference": true,
+      "reference_answer": "Three reportable business segments: Consumer & Community Banking (CCB), Commercial & Investment Bank (CIB), and Asset & Wealth Management (AWM), plus Corporate.",
+      "reference_source": "jpmorgan-chase-10k-fy2025.pdf p9 (LOB breakdown)",
+      "predicted_route": "summarize",
+      "agent_used": "summarize",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "Summary: JPMorgan Chase operates through four main business segments: Consumer & Community Banking, Corporate & Investment Bank, Commercial Banking, and Asset & Wealth Management. These segments serve diverse customer bases from individual consumers to large institutional clients and generate revenu",
+      "answer_chars": 1574,
+      "retrieval": {
+        "sources": [],
+        "raw_sources": [],
+        "company_precision": null,
+        "contaminated": null
+      },
+      "evidence": null,
+      "page_references": [],
+      "context_relevance": null,
+      "faithfulness": null,
+      "summary_grounding": {
+        "score": 2,
+        "pass": false,
+        "reasoning": "The summary incorrectly identifies four segments including 'Corporate & Investment Bank' and 'Commercial Banking' as separate segments, whereas the 10-K clearly states three reportable segments: Consumer & Community Banking (CCB), Commercial & Investment Bank (CIB), and Asset & Wealth Management (AWM); there is no separate 'Commercial Banking' segment, and the CIB is named 'Commercial & Investment Bank' not 'Corporate & Investment Bank.'",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "answer_correctness": {
+        "score": 2,
+        "pass": false,
+        "reasoning": "The system answer describes four segments but names them incorrectly per the FY2025 10-K: it lists 'Corporate & Investment Bank' and 'Commercial Banking' as separate segments, whereas the filing combined these into a single 'Commercial & Investment Bank (CIB)' segment, and omits the separate Corporate segment.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 3976.9,
+        "stages_ms": {
+          "route": 931.1,
+          "llm.summarize": 3045.7,
+          "agent": 3045.7
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 212,
+          "output_tokens": 52,
+          "latency_ms": 906
+        },
+        {
+          "name": "summarize",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 65,
+          "output_tokens": 323,
+          "latency_ms": 3018
+        }
+      ],
+      "tokens": {
+        "input_tokens": 277,
+        "output_tokens": 375
+      }
+    },
+    {
+      "id": "L14",
+      "trace_id": "456bf195-13dd-40b7-aced-a31a09f7e5dc",
+      "query": "Summarize BlackRock's investment strategy as described in their 2025 10-K.",
+      "category": "summarize",
+      "legacy": true,
+      "notes": "",
+      "expected_route": "summarize",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": false,
+      "has_reference": false,
+      "reference_answer": null,
+      "reference_source": null,
+      "predicted_route": "summarize",
+      "agent_used": "summarize",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "Summary: No document content was supplied for analysis\nKey points:\n- Document required: BlackRock 2025 Form 10-K\n- Please provide the full text or relevant sections of the filing\nRisk flags:\n- Cannot assess without access to actual filing\n- Unable to identify investment strategy risks without docume",
+      "answer_chars": 357,
+      "retrieval": {
+        "sources": [],
+        "raw_sources": [],
+        "company_precision": null,
+        "contaminated": null
+      },
+      "evidence": null,
+      "page_references": [],
+      "context_relevance": null,
+      "faithfulness": null,
+      "summary_grounding": {
+        "score": 1,
+        "pass": false,
+        "reasoning": "The summary contains no factual claims about BlackRock's investment strategy whatsoever \u2014 it explicitly states no document was provided and refuses to summarize anything, while the evidence clearly contains extensive information about BlackRock's strategy from the 2025 10-K; this is a fabricated non-response that contradicts the premise of the task.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "answer_correctness": null,
+      "abstained": true,
+      "abstention_appropriate": false,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 3136.5,
+        "stages_ms": {
+          "route": 1076.1,
+          "llm.summarize": 2060.3,
+          "agent": 2060.3
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 220,
+          "output_tokens": 64,
+          "latency_ms": 1049
+        },
+        {
+          "name": "summarize",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 73,
+          "output_tokens": 196,
+          "latency_ms": 2033
+        }
+      ],
+      "tokens": {
+        "input_tokens": 293,
+        "output_tokens": 260
+      }
+    },
+    {
+      "id": "L15",
+      "trace_id": "571fb0c7-3b9d-49a6-b461-c68c25b3e6dd",
+      "query": "What is Bank of America's approach to managing credit risk?",
+      "category": "summarize",
+      "legacy": true,
+      "notes": "",
+      "expected_route": "summarize",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": false,
+      "has_reference": false,
+      "reference_answer": null,
+      "reference_source": null,
+      "predicted_route": "summarize",
+      "agent_used": "summarize",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "Summary: Bank of America manages credit risk through a comprehensive framework that includes credit policies, underwriting standards, portfolio monitoring, stress testing, and provisions for loan losses. The bank employs diversified lending practices across consumer, commercial, and investment portf",
+      "answer_chars": 1448,
+      "retrieval": {
+        "sources": [],
+        "raw_sources": [],
+        "company_precision": null,
+        "contaminated": null
+      },
+      "evidence": null,
+      "page_references": [],
+      "context_relevance": null,
+      "faithfulness": null,
+      "summary_grounding": {
+        "score": 3,
+        "pass": false,
+        "reasoning": "Most general claims about stress testing, portfolio monitoring, allowance for credit losses, and consumer/commercial portfolio management are supported by the evidence, but several specific claims\u2014such as multi-layered credit approval processes with standardized underwriting criteria, collateral management requirements, credit exposure concentration limits, and specific risk flags like cyber risk and geographic concentration\u2014are not directly addressed in the provided excerpts.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "answer_correctness": null,
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 4024.1,
+        "stages_ms": {
+          "route": 1023.9,
+          "llm.summarize": 3000.1,
+          "agent": 3000.2
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 211,
+          "output_tokens": 62,
+          "latency_ms": 999
+        },
+        {
+          "name": "summarize",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 64,
+          "output_tokens": 326,
+          "latency_ms": 2974
+        }
+      ],
+      "tokens": {
+        "input_tokens": 275,
+        "output_tokens": 388
+      }
+    },
+    {
+      "id": "L17",
+      "trace_id": "534f9b92-e380-4520-9db5-0ed3895ea64b",
+      "query": "What is a financial statement?",
+      "category": "boundary",
+      "legacy": true,
+      "notes": "General-knowledge question outside the filings. Is a generic definition acceptable, or should the system decline?",
+      "expected_route": "qa",
+      "route_label_status": "needs_review",
+      "expected_behavior": "either",
+      "gated_for_retrieval": false,
+      "has_reference": false,
+      "reference_answer": null,
+      "reference_source": null,
+      "predicted_route": "summarize",
+      "agent_used": "summarize",
+      "route_correct": false,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "Summary: A financial statement is a formal record of the financial activities and position of a business, individual, or organization. It provides a snapshot of financial health by documenting income, expenses, assets, liabilities, and cash flows over a specific period.\nKey points:\n- Financial state",
+      "answer_chars": 1369,
+      "retrieval": {
+        "sources": [],
+        "raw_sources": [],
+        "company_precision": null,
+        "contaminated": null
+      },
+      "evidence": null,
+      "page_references": [],
+      "context_relevance": null,
+      "faithfulness": null,
+      "summary_grounding": {
+        "score": 3,
+        "pass": false,
+        "reasoning": "The summary provides a general educational definition of financial statements with broadly accurate claims, but none of the specific factual claims (GAAP/IFRS standards, types of statements, preparation frequencies, risk flags) are directly supported by the retrieved evidence excerpts, which focus on forward-looking statements disclosures; however, the summary contains no fabricated figures or contradictions with the evidence, and the content is generically correct financial literacy information rather than company-specific claims.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "answer_correctness": null,
+      "abstained": false,
+      "abstention_appropriate": null,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 3514.7,
+        "stages_ms": {
+          "route": 902.7,
+          "llm.summarize": 2611.8,
+          "agent": 2611.9
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 205,
+          "output_tokens": 57,
+          "latency_ms": 877
+        },
+        {
+          "name": "summarize",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 58,
+          "output_tokens": 319,
+          "latency_ms": 2584
+        }
+      ],
+      "tokens": {
+        "input_tokens": 263,
+        "output_tokens": 376
+      }
+    },
+    {
+      "id": "L18",
+      "trace_id": "c4742838-581b-4edd-aa7d-ea2386a17b60",
+      "query": "What was Apple's revenue in 2025?",
+      "category": "out_of_corpus",
+      "legacy": true,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "abstain",
+      "gated_for_retrieval": false,
+      "has_reference": false,
+      "reference_answer": null,
+      "reference_source": null,
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "I cannot answer this question based on the provided context. The documents provided are 10-K filings from Goldman Sachs and JPMorgan Chase for fiscal year 2025, which contain financial information about those banks, not about Apple Inc.\n\nThe documents do mention Apple Card transactions and programs,",
+      "answer_chars": 543,
+      "retrieval": {
+        "sources": [
+          "GS",
+          "JPM",
+          "GS",
+          "GS",
+          "JPM"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf"
+        ],
+        "company_precision": null,
+        "contaminated": null
+      },
+      "evidence": null,
+      "page_references": [],
+      "context_relevance": {
+        "score": 1,
+        "pass": false,
+        "reasoning": "The retrieved chunks contain financial data for Goldman Sachs and JPMorgan Chase for 2025, but no information about Apple's revenue in 2025.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The answer makes no factual claims about external data; it correctly states that the retrieved context contains Goldman Sachs and JPMorgan Chase 10-K filings and that Apple Card is mentioned only in relation to those banks, which is fully supported by the context.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": null,
+      "abstained": true,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 2510.4,
+        "stages_ms": {
+          "route": 826.6,
+          "retrieval.embed": 112.5,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 1571.0,
+          "agent": 1683.8
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 209,
+          "output_tokens": 46,
+          "latency_ms": 800
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 11,
+          "output_tokens": 0,
+          "latency_ms": 112.5
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 3988,
+          "output_tokens": 124,
+          "latency_ms": 1544
+        }
+      ],
+      "tokens": {
+        "input_tokens": 4208,
+        "output_tokens": 170
+      }
+    },
+    {
+      "id": "L19",
+      "trace_id": "52da79a1-f01e-49b4-ade1-9c63f2293ead",
+      "query": "Goldman Sachs 2025",
+      "category": "boundary",
+      "legacy": true,
+      "notes": "Underspecified. Labeled qa because qa is the grounded fallback.",
+      "expected_route": "qa",
+      "route_label_status": "needs_review",
+      "expected_behavior": "either",
+      "gated_for_retrieval": false,
+      "has_reference": false,
+      "reference_answer": null,
+      "reference_source": null,
+      "predicted_route": "summarize",
+      "agent_used": "summarize",
+      "route_correct": false,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "Summary: Unable to provide analysis - no financial document content was provided. 'Goldman Sachs 2025' appears to be a reference label only, not actual financial data or documents to analyze.\nKey points:\n- No financial statements, reports, or data were supplied for analysis\n- Document content is req",
+      "answer_chars": 542,
+      "retrieval": {
+        "sources": [],
+        "raw_sources": [],
+        "company_precision": null,
+        "contaminated": null
+      },
+      "evidence": null,
+      "page_references": [],
+      "context_relevance": null,
+      "faithfulness": null,
+      "summary_grounding": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The summary makes no specific factual claims about Goldman Sachs financials; it only states that no document content was provided, which is a neutral/generic statement that cannot be contradicted by the evidence.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "answer_correctness": null,
+      "abstained": true,
+      "abstention_appropriate": null,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 2727.4,
+        "stages_ms": {
+          "route": 880.9,
+          "llm.summarize": 1846.3,
+          "agent": 1846.4
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 206,
+          "output_tokens": 63,
+          "latency_ms": 855
+        },
+        {
+          "name": "summarize",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 59,
+          "output_tokens": 168,
+          "latency_ms": 1819
+        }
+      ],
+      "tokens": {
+        "input_tokens": 265,
+        "output_tokens": 231
+      }
+    },
+    {
+      "id": "L20",
+      "trace_id": "30dd6fc4-1a28-4222-8b07-e0369a914484",
+      "query": "What was JPMorgan Chase's revenue and also summarize their risk factors?",
+      "category": "boundary",
+      "legacy": true,
+      "notes": "Multi-intent. Only one route is possible today.",
+      "expected_route": "qa",
+      "route_label_status": "needs_review",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": false,
+      "has_reference": true,
+      "reference_answer": "Total net revenue was $182,447 million for 2025 (risk-factor portion not reference-graded).",
+      "reference_source": "jpmorgan-chase-10k-fy2025.pdf p49",
+      "predicted_route": "summarize",
+      "agent_used": "summarize",
+      "route_correct": false,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "Summary: JPMorgan Chase is one of the largest financial institutions globally. As of recent fiscal year reporting, the company generated total revenue exceeding $150 billion. The bank operates across investment banking, commercial banking, asset management, and consumer banking segments. Key risk fa",
+      "answer_chars": 1564,
+      "retrieval": {
+        "sources": [],
+        "raw_sources": [],
+        "company_precision": null,
+        "contaminated": null
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "JPM",
+            "markers": [
+              "182,447"
+            ],
+            "rank": null
+          }
+        ],
+        "all_found": false,
+        "worst_rank": null,
+        "reciprocal_rank": 0.0
+      },
+      "page_references": [],
+      "context_relevance": null,
+      "faithfulness": null,
+      "summary_grounding": {
+        "score": 3,
+        "pass": false,
+        "reasoning": "The evidence confirms total net revenue of $182.4 billion for FY2025, supporting the claim that revenue exceeds $150 billion, and the diversified business segments are confirmed; however, the specific risk factor claims (interest rate risk, cybersecurity, geopolitical risk, etc.) are not directly supported by the evidence excerpts provided, though they are plausible generic statements, and one specific claim\u2014that revenue 'exceeds $150 billion'\u2014is technically correct but understates the actual $182.4 billion figure, making it a minor inaccuracy rather than fabrication.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "answer_correctness": {
+        "score": 2,
+        "pass": false,
+        "reasoning": "The system states revenue 'exceeds $150 billion' which is directionally in the right ballpark but significantly understates the actual $182,447 million figure, making the key financial figure materially incorrect.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 4250.1,
+        "stages_ms": {
+          "route": 1116.7,
+          "llm.summarize": 3133.1,
+          "agent": 3133.2
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 216,
+          "output_tokens": 69,
+          "latency_ms": 1091
+        },
+        {
+          "name": "summarize",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 69,
+          "output_tokens": 363,
+          "latency_ms": 3106
+        }
+      ],
+      "tokens": {
+        "input_tokens": 285,
+        "output_tokens": 432
+      }
+    },
+    {
+      "id": "N01",
+      "trace_id": "5015d6c6-d965-4c94-bb31-b821813ead40",
+      "query": "What was JPMorgan Chase's net income in 2025?",
+      "category": "numeric_qa",
+      "legacy": false,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "Net income was $57,048 million for 2025.",
+      "reference_source": "jpmorgan-chase-10k-fy2025.pdf p46, p49",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "# JPMorgan Chase's Net Income in 2025\n\nAccording to the JPMorgan Chase 2025 Form 10-K, the Firm's **net income for 2025 was $57.048 billion**.\n\nThis represents a decrease compared to 2024, when net income was $58.471 billion.\n\n**Source:** JPMorgan Chase & Co. 2025 Form 10-K, Consolidated Results of ",
+      "answer_chars": 318,
+      "retrieval": {
+        "sources": [
+          "JPM",
+          "JPM",
+          "JPM",
+          "JPM",
+          "JPM"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "JPM",
+            "markers": [
+              "57,048"
+            ],
+            "rank": 2
+          }
+        ],
+        "all_found": true,
+        "worst_rank": 2,
+        "reciprocal_rank": 0.5
+      },
+      "page_references": [],
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The retrieved chunks explicitly state JPMorgan Chase's net income for 2025 as $57,048 million ($57.048 billion) in multiple places across the consolidated financial statements.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "Both the 2025 net income figure of $57.048 billion and the 2024 net income figure of $58.471 billion are explicitly stated multiple times in the retrieved context.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The answer correctly states net income of $57.048 billion ($57,048 million), matching the reference answer exactly.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 2360.9,
+        "stages_ms": {
+          "route": 840.7,
+          "retrieval.embed": 193.4,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 1326.4,
+          "agent": 1520.1
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 214,
+          "output_tokens": 47,
+          "latency_ms": 813
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 15,
+          "output_tokens": 0,
+          "latency_ms": 193.4
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 5148,
+          "output_tokens": 105,
+          "latency_ms": 1300
+        }
+      ],
+      "tokens": {
+        "input_tokens": 5377,
+        "output_tokens": 152
+      }
+    },
+    {
+      "id": "N02",
+      "trace_id": "a38db8ad-4128-4c70-90a4-d91edaf81837",
+      "query": "What were JPMorgan Chase's diluted earnings per share for 2025?",
+      "category": "metric_qa",
+      "legacy": false,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "Diluted EPS was $20.02 for 2025.",
+      "reference_source": "jpmorgan-chase-10k-fy2025.pdf p46, p49",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "# JPMorgan Chase Diluted Earnings Per Share for 2025\n\nAccording to JPMorgan Chase's 2025 Form 10-K, the **diluted earnings per share (EPS) for 2025 was $20.02**.\n\nThis was calculated based on:\n- Net income applicable to common stockholders: $55,681 million\n- Total weighted-average diluted shares out",
+      "answer_chars": 583,
+      "retrieval": {
+        "sources": [
+          "JPM",
+          "JPM",
+          "JPM",
+          "JPM",
+          "JPM"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "JPM",
+            "markers": [
+              "20.02"
+            ],
+            "rank": 1
+          }
+        ],
+        "all_found": true,
+        "worst_rank": 1,
+        "reciprocal_rank": 1.0
+      },
+      "page_references": [],
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The first chunk contains a complete EPS table showing JPMorgan Chase's diluted earnings per share for 2025 was $20.02, with full calculation details.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "Every claim in the answer\u2014diluted EPS of $20.02, net income applicable to common stockholders of $55,681 million, weighted-average diluted shares of 2,781.5 million, and the dilutive impact of 5.0 million shares from PSUs, RSUs, and SARs\u2014is explicitly stated in the retrieved context.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The system answer correctly states the diluted EPS of $20.02 for 2025, matching the reference answer exactly.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 3085.3,
+        "stages_ms": {
+          "route": 835.6,
+          "retrieval.embed": 132.6,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 2116.7,
+          "agent": 2249.6
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 217,
+          "output_tokens": 50,
+          "latency_ms": 807
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 17,
+          "output_tokens": 0,
+          "latency_ms": 132.6
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 5173,
+          "output_tokens": 177,
+          "latency_ms": 2090
+        }
+      ],
+      "tokens": {
+        "input_tokens": 5407,
+        "output_tokens": 227
+      }
+    },
+    {
+      "id": "N03",
+      "trace_id": "d51744b7-db94-4f96-bfa5-99065fe15956",
+      "query": "What was Bank of America's total revenue, net of interest expense, in 2025?",
+      "category": "numeric_qa",
+      "legacy": false,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "Total revenue, net of interest expense, was $113,097 million for 2025.",
+      "reference_source": "bank-of-america-10k-fy2025.pdf p29",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "According to Bank of America's 2025 Form 10-K, the bank's total revenue, net of interest expense, was **$113,097 million** (or approximately **$113.1 billion**) in 2025.\n\nThis represented an increase of $7,241 million compared to $105,856 million in 2024.\n\n**Source:** Bank of America 10-K for fiscal",
+      "answer_chars": 372,
+      "retrieval": {
+        "sources": [
+          "BAC",
+          "BAC",
+          "BAC",
+          "BAC",
+          "BAC"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "BAC",
+            "markers": [
+              "113,097"
+            ],
+            "rank": 1
+          }
+        ],
+        "all_found": true,
+        "worst_rank": 1,
+        "reciprocal_rank": 1.0
+      },
+      "page_references": [],
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The first retrieved chunk explicitly states Bank of America's total revenue, net of interest expense, was $113,097 million in 2025.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "All claims in the answer\u2014total revenue of $113,097 million in 2025, the increase of $7,241 million, and the 2024 figure of $105,856 million\u2014are explicitly supported by Table 1 in the retrieved context.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The system answer correctly states the total revenue, net of interest expense, as $113,097 million, matching the reference answer exactly.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 2427.9,
+        "stages_ms": {
+          "route": 856.1,
+          "retrieval.embed": 218.1,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 1353.2,
+          "agent": 1571.7
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 218,
+          "output_tokens": 51,
+          "latency_ms": 830
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 20,
+          "output_tokens": 0,
+          "latency_ms": 218.1
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 5213,
+          "output_tokens": 110,
+          "latency_ms": 1327
+        }
+      ],
+      "tokens": {
+        "input_tokens": 5451,
+        "output_tokens": 161
+      }
+    },
+    {
+      "id": "N04",
+      "trace_id": "e1c14e0c-ad75-4b97-aa4c-fad57ee00ab5",
+      "query": "What was Bank of America's return on average common shareholders' equity in 2025?",
+      "category": "metric_qa",
+      "legacy": false,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "Return on average common shareholders' equity was 10.59% for 2025.",
+      "reference_source": "bank-of-america-10k-fy2025.pdf p29",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "# Bank of America's Return on Average Common Shareholders' Equity in 2025\n\nAccording to Bank of America's 2025 10-K filing, the **return on average common shareholders' equity was 10.59%** in 2025.\n\nThis represents an increase from 9.53% in 2024 and 9.73% in 2023.\n\n**Source:** Bank of America Corpor",
+      "answer_chars": 462,
+      "retrieval": {
+        "sources": [
+          "BAC",
+          "BAC",
+          "BAC",
+          "BAC",
+          "BAC"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "BAC",
+            "markers": [
+              "Return on average common shareholders",
+              "10.59"
+            ],
+            "rank": 1
+          }
+        ],
+        "all_found": true,
+        "worst_rank": 1,
+        "reciprocal_rank": 1.0
+      },
+      "page_references": [
+        "page 27",
+        "page 32"
+      ],
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The retrieved chunks explicitly state Bank of America's return on average common shareholders' equity for 2025 as 10.59% in multiple tables.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "All claims in the answer\u201410.59% return on average common shareholders' equity for 2025, 9.53% for 2024, and 9.73% for 2023\u2014are explicitly stated in the retrieved context tables.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The answer correctly states 10.59% for 2025, matching the reference answer exactly.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 2530.2,
+        "stages_ms": {
+          "route": 798.0,
+          "retrieval.embed": 121.9,
+          "retrieval.search": 0.3,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 1609.9,
+          "agent": 1732.2
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 217,
+          "output_tokens": 52,
+          "latency_ms": 771
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 19,
+          "output_tokens": 0,
+          "latency_ms": 121.9
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 5127,
+          "output_tokens": 138,
+          "latency_ms": 1583
+        }
+      ],
+      "tokens": {
+        "input_tokens": 5363,
+        "output_tokens": 190
+      }
+    },
+    {
+      "id": "N05",
+      "trace_id": "331a72db-16e3-40ae-a372-649b30118e7a",
+      "query": "How many employees did Bank of America have at the end of 2025?",
+      "category": "metric_qa",
+      "legacy": false,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "Approximately 213,000 employees at December 31, 2025.",
+      "reference_source": "bank-of-america-10k-fy2025.pdf p5, p29",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "According to Bank of America's 2025 10-K filing, the Corporation employed approximately **213,000 employees** at December 31, 2025.\n\nOf these employees, **77 percent were located in the U.S.**, and none of the U.S. employees were subject to a collective bargaining agreement.",
+      "answer_chars": 275,
+      "retrieval": {
+        "sources": [
+          "BAC",
+          "BAC",
+          "BAC",
+          "BAC",
+          "BAC"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/bank-of-america-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "BAC",
+            "markers": [
+              "213,000"
+            ],
+            "rank": 1
+          }
+        ],
+        "all_found": true,
+        "worst_rank": 1,
+        "reciprocal_rank": 1.0
+      },
+      "page_references": [],
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The retrieved chunks explicitly state that at December 31, 2025, Bank of America employed approximately 213,000 employees.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "Both claims\u2014213,000 employees at December 31, 2025 and 77 percent located in the U.S., with no U.S. employees subject to a collective bargaining agreement\u2014are explicitly stated in the retrieved context.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The answer correctly states approximately 213,000 employees at December 31, 2025, matching the reference answer exactly.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 2254.6,
+        "stages_ms": {
+          "route": 878.1,
+          "retrieval.embed": 122.3,
+          "retrieval.search": 0.3,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 1253.7,
+          "agent": 1376.4
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 215,
+          "output_tokens": 55,
+          "latency_ms": 852
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 17,
+          "output_tokens": 0,
+          "latency_ms": 122.3
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 4626,
+          "output_tokens": 74,
+          "latency_ms": 1227
+        }
+      ],
+      "tokens": {
+        "input_tokens": 4858,
+        "output_tokens": 129
+      }
+    },
+    {
+      "id": "N06",
+      "trace_id": "6da17422-bb10-4492-8340-7a6cee02f13b",
+      "query": "What was Goldman Sachs' return on equity for 2025?",
+      "category": "metric_qa",
+      "legacy": false,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "ROE was 15.0% for 2025.",
+      "reference_source": "goldman-sachs-10k-fy2025.pdf p67",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "# Goldman Sachs Return on Equity for 2025\n\nAccording to the Goldman Sachs 2025 Form 10-K, **Goldman Sachs' return on average common equity (ROE) was 15.0% for 2025**, compared with 12.7% for 2024.\n\nThis metric is calculated by dividing net earnings applicable to common shareholders by average monthl",
+      "answer_chars": 444,
+      "retrieval": {
+        "sources": [
+          "GS",
+          "GS",
+          "GS",
+          "GS",
+          "GS"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "GS",
+            "markers": [
+              "ROE was 15.0%"
+            ],
+            "rank": null
+          }
+        ],
+        "all_found": false,
+        "worst_rank": null,
+        "reciprocal_rank": 0.0
+      },
+      "page_references": [],
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The retrieved chunks explicitly state Goldman Sachs' Return on average common equity (ROE) for 2025 was 15.0%, with comparative figures for 2024 (12.7%) and 2023 (7.5%), and also mention a target range of 15%-17%.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "All claims in the answer\u201415.0% ROE for 2025, 12.7% for 2024, and the calculation methodology\u2014are explicitly stated in the retrieved context.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The system answer correctly states the ROE was 15.0% for 2025, matching the reference answer exactly.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 2323.7,
+        "stages_ms": {
+          "route": 886.5,
+          "retrieval.embed": 124.9,
+          "retrieval.search": 0.3,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 1311.8,
+          "agent": 1437.1
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 214,
+          "output_tokens": 48,
+          "latency_ms": 857
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 14,
+          "output_tokens": 0,
+          "latency_ms": 124.9
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 4050,
+          "output_tokens": 123,
+          "latency_ms": 1284
+        }
+      ],
+      "tokens": {
+        "input_tokens": 4278,
+        "output_tokens": 171
+      }
+    },
+    {
+      "id": "N07",
+      "trace_id": "316e7f90-ea61-4433-8035-6ec0c803e6e3",
+      "query": "What were Goldman Sachs' net revenues in 2025?",
+      "category": "numeric_qa",
+      "legacy": false,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "Net revenues were $58.28 billion for 2025.",
+      "reference_source": "goldman-sachs-10k-fy2025.pdf p67",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "# Goldman Sachs Net Revenues in 2025\n\nAccording to Goldman Sachs' 2025 Form 10-K, the company's **total net revenues were $58.28 billion** in 2025.\n\nThis represented a significant increase from 2024. Here's the breakdown by major business segment:\n\n| Segment | 2025 Net Revenues |\n|---------|--------",
+      "answer_chars": 741,
+      "retrieval": {
+        "sources": [
+          "GS",
+          "GS",
+          "GS",
+          "GS",
+          "GS"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "GS",
+            "markers": [
+              "58.28 billion"
+            ],
+            "rank": null
+          }
+        ],
+        "all_found": false,
+        "worst_rank": null,
+        "reciprocal_rank": 0.0
+      },
+      "page_references": [],
+      "context_relevance": {
+        "score": 4,
+        "pass": true,
+        "reasoning": "The chunks contain substantial information about Goldman Sachs' 2025 net revenues, including total operating expenses of $37.54 billion, efficiency ratio of 64.4%, and segment-level net revenues (Global Banking & Markets at $41.45 billion), but the total consolidated net revenues figure for 2025 is not explicitly stated in the retrieved chunks (only the 2024 figure of $53.51 billion is directly mentioned).",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 3,
+        "pass": false,
+        "reasoning": "Most claims are supported by the context, but the total net revenues figure of $58.28 billion and the Asset & Wealth Management figure of $16.83 billion are not explicitly stated in the retrieved context.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The answer correctly states total net revenues of $58.28 billion, matching the reference answer exactly.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 3178.0,
+        "stages_ms": {
+          "route": 837.1,
+          "retrieval.embed": 141.2,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 2199.2,
+          "agent": 2340.9
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 213,
+          "output_tokens": 47,
+          "latency_ms": 811
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 13,
+          "output_tokens": 0,
+          "latency_ms": 141.2
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 3733,
+          "output_tokens": 235,
+          "latency_ms": 2174
+        }
+      ],
+      "tokens": {
+        "input_tokens": 3959,
+        "output_tokens": 282
+      }
+    },
+    {
+      "id": "N08",
+      "trace_id": "f79acc57-dcbc-4205-b34d-99dcd0a0d8ac",
+      "query": "What was BlackRock's total revenue in 2025?",
+      "category": "numeric_qa",
+      "legacy": false,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "Total revenue was $24,216 million for 2025.",
+      "reference_source": "blackrock-10k-fy2025.pdf p4, p43",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "According to BlackRock's FY2025 10-K filing, **total revenue in 2025 was $24,216 million (or approximately $24.2 billion)**.\n\nThis represented a **19% increase from 2024**, when total revenue was $20,407 million. The revenue growth was primarily driven by:\n- Positive impact of markets\n- Organic base",
+      "answer_chars": 412,
+      "retrieval": {
+        "sources": [
+          "BLK",
+          "BLK",
+          "BLK",
+          "BLK",
+          "BLK"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/blackrock-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/blackrock-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/blackrock-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/blackrock-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/blackrock-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "BLK",
+            "markers": [
+              "24,216"
+            ],
+            "rank": 1
+          }
+        ],
+        "all_found": true,
+        "worst_rank": 1,
+        "reciprocal_rank": 1.0
+      },
+      "page_references": [],
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The retrieved chunks directly state BlackRock's total revenue for 2025 as $24,216 million, confirmed across multiple tables in the document.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "Every claim in the answer is explicitly supported by the context, including the 2025 total revenue of $24,216 million, the 19% increase from 2024's $20,407 million, and all four stated drivers of revenue growth.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The system answer correctly states total revenue of $24,216 million for 2025, matching the reference answer exactly.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 2229.4,
+        "stages_ms": {
+          "route": 794.2,
+          "retrieval.embed": 122.4,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 1312.4,
+          "agent": 1435.1
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 212,
+          "output_tokens": 47,
+          "latency_ms": 771
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 13,
+          "output_tokens": 0,
+          "latency_ms": 122.4
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 4711,
+          "output_tokens": 113,
+          "latency_ms": 1287
+        }
+      ],
+      "tokens": {
+        "input_tokens": 4936,
+        "output_tokens": 160
+      }
+    },
+    {
+      "id": "N09",
+      "trace_id": "3059aad2-213c-4eff-ac25-49de688c91b8",
+      "query": "What was BlackRock's GAAP net income attributable to BlackRock in 2025?",
+      "category": "numeric_qa",
+      "legacy": false,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "GAAP net income attributable to BlackRock was $5,553 million for 2025 (as adjusted: $7,736 million).",
+      "reference_source": "blackrock-10k-fy2025.pdf p43",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "# BlackRock's GAAP Net Income in 2025\n\nAccording to BlackRock's FY2025 10-K filing, the **GAAP net income attributable to BlackRock, Inc. was $5,553 million** in 2025.\n\nThis represented a decrease from $6,369 million in 2024.\n\n**Source:** BlackRock, Inc. 10-K for fiscal year 2025, Financial Highligh",
+      "answer_chars": 340,
+      "retrieval": {
+        "sources": [
+          "BLK",
+          "BLK",
+          "BLK",
+          "BLK",
+          "BLK"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/blackrock-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/blackrock-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/blackrock-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/blackrock-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/blackrock-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "BLK",
+            "markers": [
+              "5,553"
+            ],
+            "rank": 1
+          }
+        ],
+        "all_found": true,
+        "worst_rank": 1,
+        "reciprocal_rank": 1.0
+      },
+      "page_references": [],
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The retrieved chunks directly state BlackRock's GAAP net income attributable to BlackRock, Inc. for 2025 was $5,553 million, confirmed across multiple tables in the document.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "Both figures cited ($5,553 million for 2025 and $6,369 million for 2024) are explicitly stated multiple times in the retrieved context.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The answer correctly states the GAAP net income attributable to BlackRock was $5,553 million for 2025, matching the reference answer exactly.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 2292.1,
+        "stages_ms": {
+          "route": 818.6,
+          "retrieval.embed": 123.1,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 1350.1,
+          "agent": 1473.5
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 221,
+          "output_tokens": 51,
+          "latency_ms": 792
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 19,
+          "output_tokens": 0,
+          "latency_ms": 123.1
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 5058,
+          "output_tokens": 111,
+          "latency_ms": 1322
+        }
+      ],
+      "tokens": {
+        "input_tokens": 5298,
+        "output_tokens": 162
+      }
+    },
+    {
+      "id": "N10",
+      "trace_id": "05a6f200-830a-4204-82f5-8a836da904f6",
+      "query": "What was Visa's net revenue for fiscal year 2025?",
+      "category": "numeric_qa",
+      "legacy": false,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "Net revenue was $40,000 million for fiscal 2025 (year ended September 30, 2025).",
+      "reference_source": "visa-10k-fy2025.pdf p41, p46",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "According to Visa's 10-K filing for fiscal year 2025, **net revenue was $40,000 million ($40.0 billion)**.\n\nThis represented an **11% increase** compared to fiscal year 2024 net revenue of $35,926 million ($35.9 billion).\n\n**Source:** Visa Inc. Form 10-K for the fiscal year ended September 30, 2025",
+      "answer_chars": 299,
+      "retrieval": {
+        "sources": [
+          "V",
+          "V",
+          "V",
+          "V",
+          "V"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/visa-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/visa-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/visa-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/visa-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/visa-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "V",
+            "markers": [
+              "40,000"
+            ],
+            "rank": 1
+          }
+        ],
+        "all_found": true,
+        "worst_rank": 1,
+        "reciprocal_rank": 1.0
+      },
+      "page_references": [],
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The retrieved chunks directly state Visa's net revenue for fiscal year 2025 was $40,000 million ($40 billion), with multiple tables confirming this figure.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "All claims in the answer\u2014net revenue of $40,000 million, 11% increase, and prior year net revenue of $35,926 million\u2014are explicitly stated in the retrieved context.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The answer correctly states Visa's net revenue of $40,000 million for fiscal year 2025, matching the reference answer exactly.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 2088.5,
+        "stages_ms": {
+          "route": 807.1,
+          "retrieval.embed": 117.7,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 1163.3,
+          "agent": 1281.4
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 213,
+          "output_tokens": 52,
+          "latency_ms": 781
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 14,
+          "output_tokens": 0,
+          "latency_ms": 117.7
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 4334,
+          "output_tokens": 96,
+          "latency_ms": 1136
+        }
+      ],
+      "tokens": {
+        "input_tokens": 4561,
+        "output_tokens": 148
+      }
+    },
+    {
+      "id": "N11",
+      "trace_id": "2e89dd38-44a6-4b3a-b6aa-05561649517d",
+      "query": "What was Wells Fargo's net income in 2025?",
+      "category": "out_of_corpus",
+      "legacy": false,
+      "notes": "",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "abstain",
+      "gated_for_retrieval": false,
+      "has_reference": false,
+      "reference_answer": null,
+      "reference_source": null,
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "I cannot answer this question based on the provided context. The documents included are from Goldman Sachs' 2025 Form 10-K and JPMorgan Chase's 2025 Form 10-K, but there is no information about Wells Fargo's financial results in 2025.\n\nTo find Wells Fargo's net income for 2025, you would need to ref",
+      "answer_chars": 342,
+      "retrieval": {
+        "sources": [
+          "GS",
+          "GS",
+          "JPM",
+          "GS",
+          "GS"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/jpmorgan-chase-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/goldman-sachs-10k-fy2025.pdf"
+        ],
+        "company_precision": null,
+        "contaminated": null
+      },
+      "evidence": null,
+      "page_references": [],
+      "context_relevance": {
+        "score": 1,
+        "pass": false,
+        "reasoning": "The retrieved chunks contain information about Goldman Sachs and JPMorgan Chase financials, but nothing about Wells Fargo's net income in 2025.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The answer makes no factual claims about financial data; it correctly states that the context does not contain Wells Fargo information, which is accurate based on the retrieved documents.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": null,
+      "abstained": true,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 2574.0,
+        "stages_ms": {
+          "route": 1170.9,
+          "retrieval.embed": 133.0,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 1269.7,
+          "agent": 1403.0
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 213,
+          "output_tokens": 47,
+          "latency_ms": 1145
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 13,
+          "output_tokens": 0,
+          "latency_ms": 133.0
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 3980,
+          "output_tokens": 105,
+          "latency_ms": 1244
+        }
+      ],
+      "tokens": {
+        "input_tokens": 4206,
+        "output_tokens": 152
+      }
+    },
+    {
+      "id": "N13",
+      "trace_id": "ed8f73b9-0596-4415-a3bf-29bb1a88a1eb",
+      "query": "Summarize JPMorgan Chase's key risk factors in its 2025 10-K.",
+      "category": "summarize",
+      "legacy": false,
+      "notes": "",
+      "expected_route": "summarize",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": false,
+      "has_reference": false,
+      "reference_answer": null,
+      "reference_source": null,
+      "predicted_route": "summarize",
+      "agent_used": "summarize",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "Summary: JPMorgan Chase's 2025 10-K identifies significant risk factors spanning credit, market, operational, regulatory, and geopolitical domains. The bank faces elevated credit risks from economic uncertainty and rising delinquencies, substantial market risks from interest rate and equity volatili",
+      "answer_chars": 2310,
+      "retrieval": {
+        "sources": [],
+        "raw_sources": [],
+        "company_precision": null,
+        "contaminated": null
+      },
+      "evidence": null,
+      "page_references": [],
+      "context_relevance": null,
+      "faithfulness": null,
+      "summary_grounding": {
+        "score": 2,
+        "pass": false,
+        "reasoning": "While the summary correctly identifies several general risk categories mentioned in the 10-K (cybersecurity, regulatory capital, competitive pressures, credit quality, geopolitical risks, operational risks), it includes numerous specific unsupported or contradicted claims: the evidence shows CET1 ratios of 14.1-15.8%, which are well above minimums (not 'near or at minimum requirements'); there is no evidence of 'rising non-performing loan ratios,' 'consumer delinquency rates trending upward,' 'concentration risk in commercial real estate,' or 'net interest margin compression'; and the claim about 'complex legacy technology systems requiring modernization' is not supported by the evidence provided.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "answer_correctness": null,
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 5348.6,
+        "stages_ms": {
+          "route": 857.5,
+          "llm.summarize": 4490.9,
+          "agent": 4491.0
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 221,
+          "output_tokens": 48,
+          "latency_ms": 831
+        },
+        {
+          "name": "summarize",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 74,
+          "output_tokens": 497,
+          "latency_ms": 4465
+        }
+      ],
+      "tokens": {
+        "input_tokens": 295,
+        "output_tokens": 545
+      }
+    },
+    {
+      "id": "N14",
+      "trace_id": "1457faa2-9323-4cd1-82d0-5d3da22704d8",
+      "query": "Give an overview of Bank of America's 2025 business performance.",
+      "category": "summarize",
+      "legacy": false,
+      "notes": "",
+      "expected_route": "summarize",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": false,
+      "has_reference": false,
+      "reference_answer": null,
+      "reference_source": null,
+      "predicted_route": "summarize",
+      "agent_used": "summarize",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "Summary: I don't have access to Bank of America's 2025 financial data or performance reports. My training data has a cutoff date, and I cannot access real-time information or future financial documents. To obtain accurate 2025 business performance analysis, please consult Bank of America's official ",
+      "answer_chars": 801,
+      "retrieval": {
+        "sources": [],
+        "raw_sources": [],
+        "company_precision": null,
+        "contaminated": null
+      },
+      "evidence": null,
+      "page_references": [],
+      "context_relevance": null,
+      "faithfulness": null,
+      "summary_grounding": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The summary makes no specific factual claims about Bank of America's 2025 performance, only stating inability to access the data and recommending official sources, so there are no claims to contradict or be unsupported by the evidence.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "answer_correctness": null,
+      "abstained": true,
+      "abstention_appropriate": false,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": null,
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 3258.9,
+        "stages_ms": {
+          "route": 1012.6,
+          "llm.summarize": 2246.2,
+          "agent": 2246.2
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 214,
+          "output_tokens": 59,
+          "latency_ms": 985
+        },
+        {
+          "name": "summarize",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 67,
+          "output_tokens": 215,
+          "latency_ms": 2218
+        }
+      ],
+      "tokens": {
+        "input_tokens": 281,
+        "output_tokens": 274
+      }
+    },
+    {
+      "id": "V01",
+      "trace_id": "e8553bbd-b64e-4804-8a0d-7a36d88d2eae",
+      "query": "Compare the risk factors of BlackRock and Visa in 2025.",
+      "category": "summarize",
+      "legacy": false,
+      "notes": "",
+      "expected_route": "summarize",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": false,
+      "has_reference": false,
+      "reference_answer": null,
+      "reference_source": null,
+      "predicted_route": "summarize",
+      "agent_used": "summarize",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "Summary: BlackRock and Visa face distinct risk profiles in 2025. BlackRock, as a global asset manager with $10.7T+ AUM, faces market volatility, regulatory scrutiny, geopolitical risks, and concentration in equity markets. Visa, as a payments network, confronts regulatory pressures on interchange fe",
+      "answer_chars": 1683,
+      "retrieval": {
+        "sources": [],
+        "raw_sources": [],
+        "company_precision": null,
+        "contaminated": null
+      },
+      "evidence": null,
+      "page_references": [],
+      "context_relevance": null,
+      "faithfulness": null,
+      "summary_grounding": {
+        "score": 2,
+        "pass": false,
+        "reasoning": "The summary states BlackRock has '$10.7T+ AUM' but the evidence clearly shows $14.0 trillion AUM at December 31, 2025; additionally, all Visa-specific claims are entirely unsupported by the evidence excerpts, which contain no Visa 10-K information.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "answer_correctness": null,
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": "L11",
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 5167.0,
+        "stages_ms": {
+          "route": 1072.7,
+          "llm.summarize": 4094.2,
+          "agent": 4094.2
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 215,
+          "output_tokens": 62,
+          "latency_ms": 1046
+        },
+        {
+          "name": "summarize",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 68,
+          "output_tokens": 456,
+          "latency_ms": 4066
+        }
+      ],
+      "tokens": {
+        "input_tokens": 283,
+        "output_tokens": 518
+      }
+    },
+    {
+      "id": "V02",
+      "trace_id": "3bd4217a-d9d9-4bf7-9a56-5c03989371e6",
+      "query": "Describe Visa's competitive position in the payments industry.",
+      "category": "summarize",
+      "legacy": false,
+      "notes": "",
+      "expected_route": "summarize",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": false,
+      "has_reference": false,
+      "reference_answer": null,
+      "reference_source": null,
+      "predicted_route": "summarize",
+      "agent_used": "summarize",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "Summary: Visa maintains a dominant global position in the payments industry as the world's largest payment processor by transaction volume and network reach. The company operates a closed-loop network connecting financial institutions, merchants, and consumers across 200+ countries, with strong swit",
+      "answer_chars": 1780,
+      "retrieval": {
+        "sources": [],
+        "raw_sources": [],
+        "company_precision": null,
+        "contaminated": null
+      },
+      "evidence": null,
+      "page_references": [],
+      "context_relevance": null,
+      "faithfulness": null,
+      "summary_grounding": {
+        "score": 2,
+        "pass": false,
+        "reasoning": "The summary contains several unsupported or contradicted claims: Visa operates an 'open-loop' not 'closed-loop' network (the evidence explicitly describes a 'four-party' open model); the '70+ million merchant locations' contradicts the evidence's '175 million merchant locations'; the '3+ billion cardholders' contradicts the evidence's 'nearly 5 billion payment credentials'; the '50% global market share' figure is not supported by the evidence; and claims about 'strategic acquisitions in consulting, cyber security, and analytics' are not mentioned in the evidence, while several other specific claims (switching costs, pricing power, margin expansion) lack evidentiary support.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "answer_correctness": null,
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": "L16",
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 4754.1,
+        "stages_ms": {
+          "route": 853.4,
+          "llm.summarize": 3900.6,
+          "agent": 3900.6
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 211,
+          "output_tokens": 55,
+          "latency_ms": 828
+        },
+        {
+          "name": "summarize",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 64,
+          "output_tokens": 384,
+          "latency_ms": 3874
+        }
+      ],
+      "tokens": {
+        "input_tokens": 275,
+        "output_tokens": 439
+      }
+    },
+    {
+      "id": "V03",
+      "trace_id": "439b0173-c56d-4779-9e9e-7293e05fa781",
+      "query": "What were Visa's diluted earnings per share for fiscal year 2025?",
+      "category": "metric_qa",
+      "legacy": false,
+      "notes": "Replaced N12 (Morgan Stanley, out-of-corpus) to keep 34 cases; out-of-corpus coverage remains in L03, L08, L18, N11.",
+      "expected_route": "qa",
+      "route_label_status": "clear",
+      "expected_behavior": "answer",
+      "gated_for_retrieval": true,
+      "has_reference": true,
+      "reference_answer": "GAAP diluted EPS was $10.20 for fiscal 2025 (non-GAAP: $11.47).",
+      "reference_source": "visa-10k-fy2025.pdf p41",
+      "predicted_route": "qa",
+      "agent_used": "qa",
+      "route_correct": true,
+      "router_outcome": "model",
+      "system_error": null,
+      "system_error_detail": null,
+      "trace_errors": [],
+      "answer_preview": "According to Visa's fiscal 2025 10-K filing, the diluted earnings per share for fiscal year 2025 were:\n\n- **Class A common stock: $10.20**\n- **Class B-1 common stock: $15.95**\n- **Class B-2 common stock: $15.70**\n- **Class C common stock: $40.82**\n\nThe overall diluted earnings per share reported in ",
+      "answer_chars": 507,
+      "retrieval": {
+        "sources": [
+          "V",
+          "V",
+          "V",
+          "V",
+          "V"
+        ],
+        "raw_sources": [
+          "s3://financial-copilot-hl/docs/visa-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/visa-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/visa-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/visa-10k-fy2025.pdf",
+          "s3://financial-copilot-hl/docs/visa-10k-fy2025.pdf"
+        ],
+        "company_precision": 1.0,
+        "contaminated": false
+      },
+      "evidence": {
+        "groups": [
+          {
+            "company": "V",
+            "markers": [
+              "10.20"
+            ],
+            "rank": 1
+          }
+        ],
+        "all_found": true,
+        "worst_rank": 1,
+        "reciprocal_rank": 1.0
+      },
+      "page_references": [],
+      "context_relevance": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The retrieved chunks contain explicit diluted EPS figures for Visa's fiscal year 2025, including Class A ($10.20), Class B-1 ($15.95), Class B-2 ($15.70), and Class C ($40.82) common stock, as well as the non-GAAP diluted EPS of $11.47.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "faithfulness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "Every claim in the answer is explicitly supported by the context, including all four class-specific diluted EPS figures, the overall diluted EPS of $10.20, the 5% increase, and the prior year figure of $9.73.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "summary_grounding": null,
+      "answer_correctness": {
+        "score": 5,
+        "pass": true,
+        "reasoning": "The answer correctly identifies the GAAP diluted EPS of $10.20 for fiscal 2025, matching the reference answer, and provides additional detail about different share classes.",
+        "judge_error": false,
+        "judge_infra_error": false
+      },
+      "abstained": false,
+      "abstention_appropriate": true,
+      "forbidden_facts_checked": false,
+      "forbidden_fact_hits": [],
+      "tags": [],
+      "replaces": "N12",
+      "judge_errors": 0,
+      "judge_infra_errors": 0,
+      "harness_infra_errors": 0,
+      "latency": {
+        "total_ms": 4824.3,
+        "stages_ms": {
+          "route": 3261.2,
+          "retrieval.embed": 116.7,
+          "retrieval.search": 0.2,
+          "qa.build_context": 0.0,
+          "llm.qa_generate": 1446.1,
+          "agent": 1563.1
+        },
+        "cold_start": false
+      },
+      "model_calls": [
+        {
+          "name": "router",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 216,
+          "output_tokens": 49,
+          "latency_ms": 3235
+        },
+        {
+          "name": "embed_query",
+          "model_id": "amazon.titan-embed-text-v2:0",
+          "input_tokens": 16,
+          "output_tokens": 0,
+          "latency_ms": 116.7
+        },
+        {
+          "name": "qa_generate",
+          "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "input_tokens": 4498,
+          "output_tokens": 159,
+          "latency_ms": 1423
+        }
+      ],
+      "tokens": {
+        "input_tokens": 4730,
+        "output_tokens": 208
+      }
+    }
+  ]
+}
