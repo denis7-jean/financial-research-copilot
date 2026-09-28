@@ -186,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
 
     exit_code = 0 if result["complete"] else 1
     try:
-        metrics = (bench_metrics.compute(result["records"], cases, plan.routers, seed=plan.seed)
+        metrics = (bench_metrics.compute(result["records"], cases, plan.routers, seed=plan.seed, execution=result)
                    if plan.kind == "benchmark" else _verification_checks(result["records"], plan))
     except Exception as exc:  # the journal already holds every record; keep going to write an artifact
         metrics = {"error": f"metrics failed: {type(exc).__name__}"}
@@ -375,6 +375,9 @@ def _print_result(plan, result, metrics, mode, real_clients) -> None:
         if mode != "live" and "rules" in metrics["per_router"]:
             print("  (rules is deterministic and local, so its numbers are real even in a dry run; its patterns were "
                   "written from the taxonomy by an author who had seen these questions: not an unbiased estimate)")
+        validity = metrics["validity"]
+        print(f"  Benchmark validity: {'VALID' if validity['benchmark_valid'] else 'INVALID'}"
+              + ("" if validity["benchmark_valid"] else " - " + "; ".join(validity["reasons"])))
         for name, m in metrics["per_router"].items():
             acc = m["strict_accuracy"]
             maj, pooled = acc["majority"], acc["pooled"]
@@ -382,7 +385,8 @@ def _print_result(plan, result, metrics, mode, real_clients) -> None:
             print(f"  {name:<6} strict majority {maj['passed']}/{maj['n']}, pooled {pooled['rate']:.3f}; "
                   f"recall qa {rec['qa']['passed']}/{rec['qa']['n']}, summarize {rec['summarize']['passed']}/"
                   f"{rec['summarize']['n']}; fallback {m['fallback']['rate']:.3f}; infra {m['infra_errors']['rate']:.3f}; "
-                  f"p95 {m['latency']['p95_ms']:.2f} ms; cost ${m['cost']['usd']:.6f}")
+                  f"p95 {m['latency']['p95_ms']:.2f} ms; cost ${m['cost']['usd']:.6f}; "
+                  f"decision mismatches {m['decision_mismatches']['count']}")
     else:
         for c in metrics["calls"]:
             print(f"  {c['case_id']}: {c['outcome']}, choice {c['choice']}, p {c['p_choice']}, "

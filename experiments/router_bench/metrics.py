@@ -7,6 +7,16 @@ Accuracy views (repeated calls on the same questions are not independent samples
 - per repetition: min / median / max.
 Only final decisions enter the pre-registered criteria; raw-label accuracy, stability,
 policy compliance, score diagnostics and the threshold sweep are report-only.
+
+Latency intervals: calls are clustered by question and by repetition (time), so they
+are not independent. Intervals use a two-way cluster ("pigeonhole") bootstrap that
+resamples questions and repetitions and takes every cell of the resampled grid. The
+Haiku-vs-candidate p95 difference is paired: both routers are evaluated on the same
+resampled cells in every draw. Point estimates stay nearest-rank over all calls.
+
+Validity: the report combines the runner's execution validity with per-router checks
+(infrastructure errors above 1%, decision mismatches, harness errors). The follow-up
+criteria can pass only for a valid benchmark.
 """
 from collections import Counter
 from statistics import median
@@ -48,24 +58,38 @@ def _cluster_bootstrap(correct: np.ndarray, totals: np.ndarray, seed: int) -> tu
     return float(np.percentile(rates, 2.5)), float(np.percentile(rates, 97.5))
 
 
-def _percentile_ci(samples: np.ndarray, q: float, seed: int) -> tuple[float, float] | None:
-    if len(samples) < 2:
-        return None
-    rng = np.random.default_rng(seed)
-    draws = samples[rng.integers(0, len(samples), size=(BOOTSTRAP_DRAWS, len(samples)))]
-    stats = np.percentile(draws, q, axis=1, method="inverted_cdf")
-    return float(np.percentile(stats, 2.5)), float(np.percentile(stats, 97.5))
+LATENCY_CI_METHOD = ("two-way cluster bootstrap over questions and repetitions (all cells of the resampled "
+                     "grid), 95% percentile interval; the Haiku comparison is paired on the same resampled cells")
 
 
-def _diff_ci(a: np.ndarray, b: np.ndarray, q: float, seed: int) -> tuple[float, float] | None:
-    """CI of percentile_q(a) - percentile_q(b) from independent bootstrap resamples."""
-    if len(a) < 2 or len(b) < 2:
-        return None
+def latency_matrix(records: list[dict], case_ids: list[str], repetitions: list[int]) -> np.ndarray:
+    """Latency per (question, repetition) cell; NaN where a router made no call."""
+    rows = {cid: i for i, cid in enumerate(case_ids)}
+    cols = {rep: j for j, rep in enumerate(repetitions)}
+    matrix = np.full((len(case_ids), len(repetitions)), np.nan)
+    for r in records:
+        matrix[rows[r["case_id"]], cols[r["repetition"]]] = r["latency_ms"]
+    return matrix
+
+
+def cluster_indices(n_cases: int, n_reps: int, seed: int) -> tuple[np.ndarray, np.ndarray]:
     rng = np.random.default_rng(seed)
-    qa = np.percentile(a[rng.integers(0, len(a), size=(BOOTSTRAP_DRAWS, len(a)))], q, axis=1, method="inverted_cdf")
-    qb = np.percentile(b[rng.integers(0, len(b), size=(BOOTSTRAP_DRAWS, len(b)))], q, axis=1, method="inverted_cdf")
-    diff = qa - qb
-    return float(np.percentile(diff, 2.5)), float(np.percentile(diff, 97.5))
+    return (rng.integers(0, n_cases, size=(BOOTSTRAP_DRAWS, n_cases)),
+            rng.integers(0, n_reps, size=(BOOTSTRAP_DRAWS, n_reps)))
+
+
+def resampled_percentiles(matrix: np.ndarray, q: float, case_idx: np.ndarray, rep_idx: np.ndarray) -> np.ndarray:
+    """The q-th percentile of every draw's resampled grid (NaN cells ignored)."""
+    cells = matrix[case_idx[:, :, None], rep_idx[:, None, :]].reshape(len(case_idx), -1)
+    with np.errstate(all="ignore"):
+        return np.nanpercentile(cells, q, axis=1, method="inverted_cdf")
+
+
+def _interval(values: np.ndarray) -> tuple[float, float] | None:
+    values = values[~np.isnan(values)]
+    if len(values) == 0:
+        return None
+    return float(np.percentile(values, 2.5)), float(np.percentile(values, 97.5))
 
 
 def _cohen_kappa(a: list, b: list) -> float | None:
@@ -135,11 +159,12 @@ def _router_metrics(records: list[dict], cases, seed: int) -> dict:
         if share > 0:
             unstable[cid] = round(share, 4)
 
-    latencies = np.array([r["latency_ms"] for r in records], dtype=float)
-    latency = {"n": n_calls}
+    latencies = [r["latency_ms"] for r in records]
+    latency = {"n": n_calls, "ci_method": LATENCY_CI_METHOD}
     for q in (50, 95, 99):
-        latency[f"p{q}_ms"] = percentile(latencies.tolist(), q) if n_calls else None
-        latency[f"p{q}_ci95_ms"] = _percentile_ci(latencies, q, seed + q)
+        latency[f"p{q}_ms"] = percentile(latencies, q) if n_calls else None
+        latency[f"p{q}_ci95_ms"] = None  # filled in by compute(), on the shared question x repetition grid
+    mismatches = [r for r in records if (r.get("extra") or {}).get("decision_mismatch")]
 
     scored = [(r["raw_score"], r["raw_label"] == expected_by_id[r["case_id"]]) for r in records
               if r["raw_score"] is not None and r["case_id"] in expected_by_id]
@@ -199,15 +224,50 @@ def _router_metrics(records: list[dict], cases, seed: int) -> dict:
                  "output_tokens": sum(r["output_tokens"] or 0 for r in records),
                  "calls_charged_at_worst_case": sum(r["cost_basis"] == "worst_case_reservation" for r in records)},
         "score_diagnostics_report_only": diagnostics,
+        "decision_mismatches": {"count": len(mismatches), "case_ids": sorted({r["case_id"] for r in mismatches})},
+        "harness_errors": outcomes.get("fallback_harness_error", 0),
         "_majority_final": majority_final,
-        "_latencies": latencies,
     }
 
 
-def compute(records: list[dict], cases, routers, *, seed: int = 0) -> dict:
+def _validity(per_router: dict, execution: dict | None) -> dict:
+    reasons = list(execution["invalid_reasons"]) if execution else []
+    metric_reasons = []
+    for name, m in per_router.items():
+        if m["infra_errors"]["invalid"]:
+            metric_reasons.append(f"{name}: infrastructure error rate {m['infra_errors']['rate']:.1%} exceeds "
+                                  f"{INFRA_ERROR_RATE_LIMIT:.0%}")
+        if m["decision_mismatches"]["count"]:
+            metric_reasons.append(f"{name}: {m['decision_mismatches']['count']} decision mismatch(es) between the "
+                                  "benchmark's final-decision rule and RouterAgent's own decision")
+        if m["harness_errors"]:
+            metric_reasons.append(f"{name}: {m['harness_errors']} harness error(s)")
+    execution_valid = execution["valid"] if execution else None
+    return {
+        "benchmark_valid": (execution_valid is not False) and not metric_reasons,
+        "execution_valid": execution_valid,
+        "reasons": reasons + metric_reasons,
+        "note": "criteria are evaluated only for a valid benchmark",
+    }
+
+
+def compute(records: list[dict], cases, routers, *, seed: int = 0, execution: dict | None = None) -> dict:
     measured = [r for r in records if not r["warmup"]]
-    per_router = {name: _router_metrics([r for r in measured if r["router"] == name], cases, seed)
-                  for name in routers}
+    by_router = {name: [r for r in measured if r["router"] == name] for name in routers}
+    per_router = {name: _router_metrics(by_router[name], cases, seed) for name in routers}
+
+    case_ids = sorted({r["case_id"] for r in measured})
+    repetitions = sorted({r["repetition"] for r in measured})
+    matrices = {name: latency_matrix(by_router[name], case_ids, repetitions) for name in routers}
+    if case_ids and repetitions:
+        case_idx, rep_idx = cluster_indices(len(case_ids), len(repetitions), seed + 101)
+        draws = {name: {q: resampled_percentiles(matrices[name], q, case_idx, rep_idx) for q in (50, 95, 99)}
+                 for name in routers if by_router[name]}
+        for name, per_q in draws.items():
+            for q, values in per_q.items():
+                per_router[name]["latency"][f"p{q}_ci95_ms"] = _interval(values)
+    else:
+        draws = {}
     strict_ids = [c.id for c in cases if c.status == "clear"]
     all_ids = [c.id for c in cases]
     agreement = {}
@@ -232,17 +292,20 @@ def compute(records: list[dict], cases, routers, *, seed: int = 0) -> dict:
             "fallback_rate": m["fallback"]["rate"] is not None and m["fallback"]["rate"] <= CRITERIA["fallback_rate_max"],
         }
         p95 = None
-        if haiku is not None and name != "haiku" and len(m["_latencies"]) and len(haiku["_latencies"]):
+        if haiku is not None and name != "haiku" and "haiku" in draws and name in draws:
             improvement = haiku["latency"]["p95_ms"] - m["latency"]["p95_ms"]
-            ci = _diff_ci(haiku["_latencies"], m["_latencies"], 95, seed + 7)
-            p95 = {"improvement_ms": improvement, "ci95_ms": ci,
+            ci = _interval(draws["haiku"][95] - draws[name][95])  # paired: same resampled cells
+            p95 = {"improvement_ms": improvement, "ci95_ms": ci, "method": LATENCY_CI_METHOD,
                    "passed": improvement >= CRITERIA["p95_improvement_min_ms"] and ci is not None and ci[0] > 0}
             checks["p95_latency_vs_haiku"] = p95["passed"]
-        criteria[name] = {"checks": checks, "p95_vs_haiku": p95,
-                          "meets_follow_up_criteria": all(checks.values()) if name != "haiku" else None}
+        criteria[name] = {"checks": checks, "p95_vs_haiku": p95}
+    validity = _validity(per_router, execution)
+    for name in criteria:
+        criteria[name]["meets_follow_up_criteria"] = (
+            None if name == "haiku" else all(criteria[name]["checks"].values()) and validity["benchmark_valid"])
     for m in per_router.values():
         m.pop("_majority_final")
-        m.pop("_latencies")
     return {"per_router": per_router, "agreement": agreement, "criteria": criteria, "criteria_definition": CRITERIA,
+            "validity": validity,
             "wilson_reference": {f"{k}/31": wilson_interval(k, 31) for k in (31, 30, 29, 28)},
             "policy": UNCLEAR_DEFAULTS_TO_QA}
