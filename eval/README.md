@@ -191,26 +191,27 @@ Every result row carries the case's `trace_id`.
 
 ## Cost
 
-**Estimated, not measured.** The estimate comes from `python -m eval.preflight`.
+**Measured (Phase 0 baseline, run `6a13ffb1`):**
+- 193 paid requests: 68 Haiku, 34 Titan, 91 Sonnet judge. There were 3 fewer judge calls than
+  the label-based count because 3 questions were routed to the summarizer.
+- Estimated **$1.11** at list prices: $0.16 for the system under test and $0.95 for the judge.
+- Real spend comes from AWS billing.
 
-It assumes:
-- per-call token counts from `TOKEN_ASSUMPTIONS` in `eval/preflight.py`;
-- Anthropic list prices from `eval/metrics.py`;
-- routing that matches the labels (26 cases on the QA path, 8 on the summarize path).
+**Estimate for the next run** (`python -m eval.preflight`): **~$1.17**, range ~$0.87–$1.92. The
+range includes a possible, unverified 10% premium for `us.*` profiles.
 
-| Paid requests per run | Count |
+The per-call token counts in `TOKEN_ASSUMPTIONS` (`eval/preflight.py`) are calibrated from the
+baseline:
+- **Measured:** router, embedding, QA generation and summarizer averages.
+- **Derived:** the per-judge-kind split. The baseline recorded judge totals only. The split
+  reproduces them within 1% under the observed routing (a regression test enforces this).
+
+Runs from Phase 0.5 onward record judge tokens by kind (`tokens.judge.by_kind`); re-calibrate
+from those.
+
+| Paid requests per run (label-based) | Count |
 |---|---|
 | Haiku 4.5: router, QA generation, summarizer | 68 |
 | Titan V2 embeddings (QA retrieval plus harness evidence for summaries) | 34 |
 | Sonnet 4.6 judge (3 per QA case, 2 per summary) | 94 |
 | **Total** | **196** |
-
-| Component | Estimate |
-|---|---|
-| Judge (Sonnet 4.6) | ~$1.05 |
-| System under test (Haiku 4.5, Titan) | ~$0.19 |
-| **Total** | **~$1.24** (range ~$0.93–$2.05, including a possible, unverified 10% premium for `us.*` profiles) |
-
-Each run records its actual token counts and a price-based estimate in
-`tokens.estimated_cost_usd`. Real spend comes from AWS billing. Replace the assumptions with
-measured values after the first run.

@@ -23,17 +23,29 @@ CORPUS_FILES = {
     "visa-10k-fy2025.pdf": "V",
 }
 
-# Per-call token ASSUMPTIONS (input, output) for the estimate. Replace with
-# measured values from the first run's results (tokens section).
+# Per-call tokens (input, output), calibrated from Phase 0 baseline run
+# 6a13ffb1634e40258f283838935ff339 (eval/results/baselines/2026-09-phase0-baseline.json).
+#   Measured per-call averages: router, embed_query, qa_generate, summarize.
+#   Derived: the baseline recorded judge totals only (91 calls, 287,315 input /
+#   6,203 output tokens), not per judge kind. The split below is estimated from
+#   prompt structure and constrained to reproduce the measured totals within 1%
+#   under the measured routing (23 QA / 11 summarize). Runs after Phase 0.5
+#   record tokens per judge kind; re-calibrate from those.
 TOKEN_ASSUMPTIONS = {
-    "router": (240, 50),
-    "embed_query": (25, 0),
-    "qa_generate": (4_100, 350),
-    "summarize": (100, 600),
-    "judge_context_relevance": (4_700, 80),
-    "judge_faithfulness": (4_900, 80),
-    "judge_summary_grounding": (4_700, 80),
-    "judge_answer_assessment": (700, 80),
+    "router": (214, 52),                     # measured: 7,291 / 1,782 over 34 calls
+    "embed_query": (16, 0),                  # measured: 358 over 23 calls
+    "qa_generate": (4_601, 137),             # measured: 105,831 / 3,149 over 23 calls
+    "summarize": (66, 333),                  # measured: 731 / 3,664 over 11 calls
+    "judge_context_relevance": (4_700, 68),  # derived
+    "judge_faithfulness": (4_840, 68),       # derived
+    "judge_summary_grounding": (5_000, 68),  # derived
+    "judge_answer_assessment": (380, 68),    # derived
+}
+BASELINE_MEASURED = {
+    "run_id": "6a13ffb1634e40258f283838935ff339",
+    "routing": {"qa": 23, "summarize": 11},
+    "judge": {"calls": 91, "input_tokens": 287_315, "output_tokens": 6_203},
+    "estimated_cost_usd": {"system_under_test": 0.1568, "judge": 0.9550},
 }
 CALL_MODELS = {
     "router": "system", "qa_generate": "system", "summarize": "system", "embed_query": "embedding",
@@ -156,12 +168,19 @@ def check_configuration(env=os.environ) -> list[dict]:
     ]
 
 
-def estimate_run(cases) -> dict:
-    """Paid requests and cost for one run, from expected routes and TOKEN_ASSUMPTIONS."""
+def estimate_run(cases, routing: dict | None = None) -> dict:
+    """Paid requests and cost for one run, from TOKEN_ASSUMPTIONS.
+
+    By default the QA/summarize split comes from the labels (expected routes);
+    pass routing={"qa": n, "summarize": m} to use an observed split instead.
+    """
     from eval.metrics import price_for
 
-    n_qa = sum(1 for c in cases if c.expected_route == "qa")
-    n_sum = len(cases) - n_qa
+    if routing is None:
+        n_qa = sum(1 for c in cases if c.expected_route == "qa")
+        n_sum = len(cases) - n_qa
+    else:
+        n_qa, n_sum = routing["qa"], routing["summarize"]
     calls = {
         "router": len(cases), "embed_query": n_qa + n_sum,  # QA retrieval + harness evidence for summaries
         "qa_generate": n_qa, "summarize": n_sum,

@@ -99,3 +99,19 @@ def test_cli_blocks_network_and_reports(monkeypatch, capsys, tmp_path):
     assert preflight.main([]) == 0
     out = capsys.readouterr().out
     assert "Network attempts during preflight: 0" in out and "READY: True" in out
+
+
+def test_token_assumptions_reproduce_the_measured_baseline():
+    """Calibration regression: run 6a13ffb1 (23 QA / 11 summarize routes)."""
+    measured = preflight.BASELINE_MEASURED
+    estimate = preflight.estimate_run(EVAL_CASES, routing=measured["routing"])
+    assert estimate["paid_requests"] == {"haiku": 68, "titan": 34, "sonnet_judge": 91, "total": 193}
+    for part in ("system_under_test", "judge"):
+        key = "system" if part == "system_under_test" else "judge"
+        assert estimate["cost_usd"][key] == pytest.approx(measured["estimated_cost_usd"][part], rel=0.01)
+    judge_input = sum(n * preflight.TOKEN_ASSUMPTIONS[k][0] for k, n in estimate["calls"].items()
+                      if k.startswith("judge_"))
+    assert judge_input == pytest.approx(measured["judge"]["input_tokens"], rel=0.01)
+    assert estimate["calls"]["judge_context_relevance"] + estimate["calls"]["judge_faithfulness"] \
+        + estimate["calls"]["judge_summary_grounding"] + estimate["calls"]["judge_answer_assessment"] \
+        == measured["judge"]["calls"]
