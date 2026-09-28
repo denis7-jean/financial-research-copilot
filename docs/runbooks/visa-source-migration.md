@@ -1,7 +1,9 @@
 # Runbook: rename the Visa 10-K in S3 (metadata-only migration)
 
-**Status:** prepared and verified read-only on 2026-09-27. **No S3 writes have been made.**
-Every AWS mutation below needs explicit approval.
+**Status:**
+- **S3 writes executed and verified on 2026-09-28** (see [Execution record](#execution-record)).
+- Pending, each needing separate approval: Lambda refresh, `/ask` smoke test, deletion of the
+  old object.
 
 ## Background
 
@@ -128,3 +130,36 @@ python -m scripts.migrate_visa_source rollback --backup-key <backup key> --confi
 
 After the old object has been deleted, first copy `docs/visa-10k-fy2025.pdf` back to
 `docs/mastercard-10k-fy2025.pdf`, then run the rollback command above.
+
+## Execution record
+
+Executed 2026-09-28 01:06 UTC with
+`python -m scripts.migrate_visa_source execute --confirm MIGRATE-VISA`.
+
+- The preflight `plan` matched the recorded hashes.
+- `execute` passed its internal post-checks.
+- `verify` returned `{"ok": true, "problems": []}`.
+
+| Item | Value |
+|---|---|
+| Backup key | `index/backups/financial_meta.pre-visa-migration.20260928T010613Z.json` (7,749,302 B, ETag `1830234705ac10210162097256fead8d`) |
+| Original metadata SHA-256 | `30c2c187717a6ae791febe082eff105065f5b958bad17a5398a826912d98d23f` (= backup) |
+| New metadata SHA-256 | `f771ba6ce75759ba88e4ad376c642746327592afb991e107bd63c09029317429` (7,748,288 B, ETag `64ae8c8d1da8872e228480b9fe334cbf`) |
+| FAISS SHA-256 | `3d2b3ebd4f992aad3c2be8a09761a18fbc9a17d08d63db99bf6853697abfa5e9`, unchanged. LastModified still 2026-04-26 19:42:46 UTC |
+| `docs/visa-10k-fy2025.pdf` | SHA-256 `eb17e780…` and ETag `3b5252ff…`, identical to `docs/mastercard-10k-fy2025.pdf` (kept) |
+
+Independent read-only checks:
+- 2,220 rows, and `chunk_id` equals the row index.
+- 169 rows (2051–2219) cite `docs/visa-10k-fy2025.pdf`; none cite the old path.
+- Those 169 are exactly the rows that cited the old path, and they are identical apart from
+  `source`.
+- The BAC (445), BLK (237), GS (850) and JPM (519) rows are identical in every field.
+- A FAISS self-search using stored vectors returns the same row with the expected source.
+
+Rollback from this state:
+
+```
+python -m scripts.migrate_visa_source rollback --backup-key index/backups/financial_meta.pre-visa-migration.20260928T010613Z.json --confirm ROLLBACK-VISA
+```
+
+Then refresh Lambda environments.

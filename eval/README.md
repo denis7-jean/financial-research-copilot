@@ -41,7 +41,9 @@ fiscal year ending 2025-09-30.
   and any leak is reported deterministically under `forbidden_fact_leaks`.
 
 **Source names.** Visa's PDF was first uploaded as `docs/mastercard-10k-fy2025.pdf`.
-- `eval/metrics.py` maps that exact legacy name to Visa (`V`) until the S3 rename is complete.
+- `eval/metrics.py` maps that exact legacy name to Visa (`V`). The metadata was migrated on
+  2026-09-28, but warm Lambda containers may still return the old path. Remove the mapping
+  after the Lambda refresh and the deletion of the old object.
 - Any other Mastercard file name maps to `MA`.
 - See `docs/runbooks/visa-source-migration.md`.
 

@@ -229,20 +229,23 @@ Five FY2025 10-K filings stored in S3:
 **Mastercard is not covered.** Questions about Mastercard (or any other company outside the
 five) are out of corpus; the correct behavior is to say the documents don't contain the answer.
 
-**Pending S3 rename.** Visa's 10-K was originally uploaded as `docs/mastercard-10k-fy2025.pdf`,
-and the live index still cites it under that name.
-- Until the approved migration in
-  [`docs/runbooks/visa-source-migration.md`](docs/runbooks/visa-source-migration.md) runs,
-  citations for Visa chunks show the old path.
-- The content, chunks and vectors are unaffected, as verified row by row against the PDF.
+**S3 rename (2026-09-28).** Visa's 10-K was originally uploaded as
+`docs/mastercard-10k-fy2025.pdf`. It is now also at `docs/visa-10k-fy2025.pdf`, and the index
+metadata cites the new path. The FAISS index was not changed. See
+[`docs/runbooks/visa-source-migration.md`](docs/runbooks/visa-source-migration.md).
+
+Still pending:
+- Refresh Lambda execution environments that loaded the old metadata. Until then, warm
+  containers may still cite the old path.
+- Delete the old object.
 
 ---
 
 ## Known Limitations
 
-- **Visa citations use the old file name** until the S3 metadata migration runs (see Data
-  Sources). The earlier "Mastercard retrieval" failures came from this mislabeling: Mastercard
-  was never in the corpus. Retrieval ranking was not the cause.
+- **Warm Lambda containers may cite the old Visa file name** until they are refreshed (see
+  Data Sources). The earlier "Mastercard retrieval" failures came from the mislabeled file:
+  Mastercard was never in the corpus. Retrieval ranking was not the cause.
 - **No company filtering in retrieval.** Top-5 similarity search runs over the shared index, so
   chunks from other companies can appear in the context.
 - **The summarizer is not grounded.** SummarizerAgent calls Claude without retrieval. When
