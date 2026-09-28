@@ -413,7 +413,7 @@ approved separately), and a privacy decision about TypeSafe.
 ```bash
 python -m experiments.router_bench                    # benchmark dry run: plan + simulated execution
 python -m experiments.router_bench verify-jev         # §7 verification dry run (L01, L12)
-pytest tests/test_router_bench.py tests/test_router_bench_safety.py tests/test_router_bench_cli.py
+pytest tests/test_router_bench*.py
 ```
 
 Live runs exist but are **not authorized**:
@@ -424,7 +424,9 @@ A live run refuses to start in any of these cases:
 - inside pytest;
 - when a provider it calls is not authorized;
 - for a benchmark, with fewer than 6 repetitions;
-- when `TYPESAFE_API_KEY` is missing.
+- when `TYPESAFE_API_KEY` is missing;
+- when `BEDROCK_MODEL_ID` is not the pinned Haiku 4.5 model;
+- when the Bedrock client would retry.
 
 **Module map:**
 
@@ -436,6 +438,7 @@ A live run refuses to start in any of these cases:
 | `routers.py` | Haiku (the unchanged `RouterAgent`), rules, Jev client and schema validation |
 | `fakes.py` | Offline stand-ins for the providers |
 | `runner.py` | Plans and execution |
+| `persistence.py` | Crash-resistant, sanitized per-call journal |
 | `metrics.py` | Everything in §3–§5 and the §10 criteria |
 | `cli.py` | The command-line interface |
 
@@ -456,17 +459,13 @@ A live run refuses to start in any of these cases:
    stops everything.
 2. **Jev tokens and price.** The 250 input tokens per call and $0.042 per 1M are assumed. The
    verification compares reported usage with a local byte/4 estimate.
-3. **Haiku worst-case reservation.** 2,000 in / 1,000 out tokens ($0.007). `RouterAgent` sets no
-   `maxTokens` (the app is unchanged), so output is not hard-capped. A call that exceeds its
-   reservation stops the run, but it can overshoot a cap by that one call's excess. The
-   theoretical maximum is about $0.32 if the model's 64k output ceiling applies; the measured
-   mean is 52 tokens.
-4. **Failed calls are charged at worst case.** Billing for failed requests is unknown. For Jev
-   that is $0.002688 per failure, so about 18 scattered failures would exhaust the $0.05 cap.
-   That many failures would also exceed the 1% infrastructure-error limit, so the run is invalid
-   either way.
-5. **Bedrock retries.** A live run sets `AWS_MAX_ATTEMPTS=1` so that each routed call is one
-   request. Throttling therefore shows up as an infrastructure error instead of a silent retry.
+3. **Haiku output limit.** Superseded by §13.1: the strict reservation assumes Haiku 4.5's
+   documented 64,000-token output limit.
+4. **Failed calls.** Jev failures are charged at worst case ($0.002688 each). Haiku failures cost
+   $0 only when the request was not sent, or was rejected before inference (see §13.1);
+   otherwise they are charged the full reservation.
+5. **Bedrock retries.** A live `HaikuRouter` sets `AWS_MAX_ATTEMPTS=1` itself, and refuses to
+   run unless the client's `total_max_attempts` is 1.
 6. **Rules router contamination.** Its patterns come only from the taxonomy text, but the author
    had seen these 34 questions. Its dry-run score (31/31, deterministic and real) is **not** an
    unbiased estimate. The held-out set is needed.
@@ -474,6 +473,85 @@ A live run refuses to start in any of these cases:
    nothing.
 8. **Region.** Phase A latency is client-side from this machine. TypeSafe's serving region is
    still undocumented.
+
+### 13.1 Hardening after the independent audit of `037ad7b`
+
+**Commits:** `1dfbf58`, `b691d48`, `29a0408`, `41c8ae9`.
+
+**Authorization cannot be bypassed by injection.**
+- `HaikuRouter` accepts an injected client only if it is an `OfflineFakeClient`; botocore clients
+  are always refused. `JevClient` accepts only an `httpx.MockTransport`.
+- Every other path needs a provider-specific `LiveAuthorization`.
+- Authorization and the model pin are checked before `app.agents.router` is imported. That
+  module calls `load_dotenv()` when first imported, and the import runs with `.env` loading
+  disabled.
+
+**Credentials.** A live run reads only the `.env` names its authorized providers need:
+- TypeSafe: `TYPESAFE_API_KEY`, read straight into a `SecretValue` and never exported to
+  `os.environ`;
+- Bedrock: the AWS credential names and `BEDROCK_MODEL_ID`.
+
+The CLI never calls `load_dotenv()`. Server-controlled text is never stored:
+- schema errors are fixed codes;
+- unknown field names and unsafe header values are redacted.
+
+**Persistence.** Each live run writes a JSON-lines journal (`<artifact>.journal.jsonl`). Every
+entry is sanitized, flushed and fsynced, and the file is never overwritten.
+- `call_started` is written before every paid call, and each record as soon as it is settled.
+- An interrupt or crash is recorded before the process exits.
+- A record that fails the safety check is replaced by a minimal typed diagnostic.
+- If the full artifact is refused, a minimal diagnostic artifact is written instead (exit 3).
+
+**Model pinning.** The run refuses unless `BEDROCK_MODEL_ID`, the constructed agent and every
+recorded call use `us.anthropic.claude-haiku-4-5-20251001-v1:0`.
+
+**Budget guarantee.** `RouterAgent` and its generation settings are unchanged, so the benchmark
+adapts its accounting instead.
+
+| Reservation (`--haiku-reservation`) | Reserved per Haiku call | Guarantee |
+|---|---|---|
+| `strict` (default) | 2,000 input + 64,000 output tokens = **$0.322** | **Hard cap:** committed Bedrock spend cannot exceed the ceiling |
+| `practical` | 2,000 input + 1,000 output = $0.007 | **Not a hard cap:** one call can overshoot the ceiling by up to **$0.315**, after which the run stops |
+
+Jev reserves the documented 64,000-token request maximum ($0.002688), so the TypeSafe cap is
+hard as well.
+
+These guarantees rest on the following assumptions, which the dry run prints:
+- Haiku 4.5's documented output maximum of 64,000 tokens;
+- at most 2,000 input tokens per Haiku call;
+- list prices;
+- Jev output tokens are free;
+- Bedrock does not bill requests it rejects before inference (throttling, authorization,
+  validation, 503).
+
+If the model limit or the prices are wrong, the "hard cap" is not guaranteed.
+
+**Headroom caveat.** With the default caps, the strict reservation leaves only **$0.0154** of
+Bedrock headroom at the expected cost:
+
+> $0.50 cap − $0.1626 expected − $0.322 reservation = $0.0154
+
+- If real per-call cost runs about 9% above the measured average, the last calls cannot reserve
+  their worst case. The run then stops early and is invalid; no overspend occurs.
+- Options, which need your decision:
+  - raise the Bedrock cap to about $0.60;
+  - accept the risk;
+  - use `practical` mode, accepting the disclosed $0.315 overshoot.
+
+**Latency intervals.**
+- Latency now uses a two-way cluster bootstrap that resamples questions and repetitions.
+- The Haiku comparison is paired on the same resampled cells.
+- On synthetic data where 4 questions are slow, the new p95 interval is [370, 2063] ms. The old
+  per-call bootstrap gave [2021, 2056] ms, far too narrow.
+- Accuracy methods are unchanged.
+
+**Validity.** One verdict combines:
+- execution validity;
+- per-router infrastructure errors above 1%;
+- decision mismatches (the benchmark's rule vs `RouterAgent`'s own decision);
+- harness errors.
+
+The follow-up criteria can pass only when that verdict is valid.
 
 ## Appendix A. Route-label adjudication (decided 2026-09-28)
 
