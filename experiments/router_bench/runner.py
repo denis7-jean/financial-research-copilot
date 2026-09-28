@@ -8,6 +8,8 @@ from experiments.router_bench.config import (
     CONSECUTIVE_INFRA_ERROR_LIMIT,
     DATASET_VERSION,
     DEFAULT_COST_CAPS,
+    DEFAULT_HAIKU_RESERVATION,
+    HAIKU_MAX_OUTPUT_TOKENS,
     HAIKU_EXPECTED_TOKENS,
     JEV_EXPECTED_INPUT_TOKENS,
     JEV_MIN_SECONDS_BETWEEN_CALLS,
@@ -18,18 +20,24 @@ from experiments.router_bench.config import (
 from experiments.router_bench.payload import PAYLOAD_TEMPLATE_SHA256, payload_fingerprint
 from experiments.router_bench.routers import (
     FALLBACK_ROUTE,
-    HAIKU_WORST_CASE_USD,
+    HAIKU_MAX_CALL_USD,
     JEV_WORST_CASE_USD,
     RULES_SHA256,
     RouteRecord,
     haiku_cost,
+    haiku_reservation_usd,
     jev_cost,
     rules_fingerprint,
 )
 from experiments.router_bench.safety import BudgetExhausted, DownstreamTripwire, Ledger
 
 EXPECTED_COST_PER_CALL = {"bedrock": haiku_cost(*HAIKU_EXPECTED_TOKENS), "typesafe": jev_cost(JEV_EXPECTED_INPUT_TOKENS)}
-WORST_CASE_PER_CALL = {"bedrock": HAIKU_WORST_CASE_USD, "typesafe": JEV_WORST_CASE_USD}
+# The most one call can cost, under the documented limits (Haiku output 64k tokens; Jev request 64k tokens).
+MAX_POSSIBLE_CALL = {"bedrock": HAIKU_MAX_CALL_USD, "typesafe": JEV_WORST_CASE_USD}
+
+
+def reservations_for(haiku_reservation: str) -> dict[str, float]:
+    return {"bedrock": haiku_reservation_usd(haiku_reservation), "typesafe": JEV_WORST_CASE_USD}
 
 
 @dataclass(frozen=True)
@@ -53,6 +61,7 @@ class Plan:
     request_caps: dict[str, int]
     cost_caps: dict[str, float]
     dataset_version: str = DATASET_VERSION
+    haiku_reservation: str = DEFAULT_HAIKU_RESERVATION
     fingerprints: dict = field(default_factory=dict)
     planned_calls: dict = field(default_factory=dict)
     cost: dict = field(default_factory=dict)
@@ -87,11 +96,30 @@ def _finish(plan: Plan) -> Plan:
         per_provider[ROUTER_PROVIDERS[call.router] or "local"] += 1
     plan.planned_calls = {**per_provider, "warmup": sum(c.warmup for c in plan.schedule), "total": len(plan.schedule)}
     plan.request_caps = {p: per_provider[p] for p in ("bedrock", "typesafe")}
+    reserve = reservations_for(plan.haiku_reservation)
     expected = {p: round(per_provider[p] * EXPECTED_COST_PER_CALL[p], 6) for p in ("bedrock", "typesafe")}
-    theoretical = {p: round(per_provider[p] * WORST_CASE_PER_CALL[p], 6) for p in ("bedrock", "typesafe")}
+    theoretical = {p: round(per_provider[p] * reserve[p], 6) for p in ("bedrock", "typesafe")}
+    guarantee = {}
+    for p in ("bedrock", "typesafe"):
+        overshoot = max(0.0, MAX_POSSIBLE_CALL[p] - reserve[p])
+        guarantee[p] = {
+            "reservation_per_call_usd": round(reserve[p], 6),
+            "max_possible_call_usd": round(MAX_POSSIBLE_CALL[p], 6),
+            "hard_cap": overshoot == 0.0,
+            "max_overshoot_usd": round(overshoot, 6),  # beyond the cap, by at most one call; then the run stops
+            "headroom_usd": round(plan.cost_caps[p] - expected[p] - reserve[p], 6),
+        }
+    guarantee["bedrock"]["reservation_mode"] = plan.haiku_reservation
+    guarantee["assumptions"] = [
+        f"Haiku 4.5 output is at most {HAIKU_MAX_OUTPUT_TOKENS} tokens per call (RouterAgent sets no maxTokens)",
+        "Haiku input is at most 2,000 tokens per call; Jev requests are at most 64,000 tokens (documented)",
+        "list prices: Haiku $1/$5 per 1M; Jev $0.042 per 1M input, output free (documented)",
+        "Bedrock does not bill requests rejected before inference (throttling, auth, validation, 503)",
+    ]
     plan.cost = {
         "expected_usd": {**expected, "total": round(sum(expected.values()), 6)},
-        "worst_case_reservation_per_call_usd": {p: round(v, 6) for p, v in WORST_CASE_PER_CALL.items()},
+        "worst_case_reservation_per_call_usd": {p: round(v, 6) for p, v in reserve.items()},
+        "budget_guarantee": guarantee,
         "theoretical_all_worst_case_usd": {**theoretical, "total": round(sum(theoretical.values()), 6),
                                            "note": "informational only: each call reserves its worst case "
                                                    "temporarily and is reconciled to recorded usage"},
@@ -104,8 +132,11 @@ def _finish(plan: Plan) -> Plan:
             continue
         if expected[provider] > plan.cost_caps[provider]:
             plan.problems.append(f"{provider}: expected ${expected[provider]:.4f} exceeds cap ${plan.cost_caps[provider]:.4f}")
-        if WORST_CASE_PER_CALL[provider] > plan.cost_caps[provider]:
+        if reserve[provider] > plan.cost_caps[provider]:
             plan.problems.append(f"{provider}: one worst-case call exceeds the cap; nothing could run")
+        elif expected[provider] + reserve[provider] > plan.cost_caps[provider]:
+            plan.problems.append(f"{provider}: at the expected cost the last calls could not reserve their worst "
+                                 "case, so the run would stop early; raise the cap or change the reservation")
     if plan.cost["expected_usd"]["total"] > plan.cost_caps["total"]:
         plan.problems.append("expected total exceeds the total cap")
     if payload_fingerprint() != PAYLOAD_TEMPLATE_SHA256:
@@ -121,7 +152,7 @@ def _finish(plan: Plan) -> Plan:
 
 
 def build_plan(routers, repetitions: int, warmup_calls: int, seed: int, allowed_ids=None,
-               cost_caps: dict | None = None) -> Plan:
+               cost_caps: dict | None = None, haiku_reservation: str = DEFAULT_HAIKU_RESERVATION) -> Plan:
     cases = routing_dataset(DATASET_VERSION)  # raises DatasetDriftError if the frozen labels changed
     allowed_ids = tuple(allowed_ids) if allowed_ids is not None else tuple(c.id for c in cases)
     unknown = sorted(set(allowed_ids) - {c.id for c in cases})
@@ -139,7 +170,7 @@ def build_plan(routers, repetitions: int, warmup_calls: int, seed: int, allowed_
             rng.shuffle(router_order)
             schedule.extend(Call(r, cid, repetition) for r in router_order)
     plan = Plan("benchmark", routers, tuple(allowed), _categories(cases, allowed), repetitions, warmup_calls, seed,
-                schedule, {}, dict(cost_caps or DEFAULT_COST_CAPS))
+                schedule, {}, dict(cost_caps or DEFAULT_COST_CAPS), haiku_reservation=haiku_reservation)
     return _finish(plan)
 
 
@@ -165,6 +196,13 @@ def run(plan: Plan, routers: dict, *, sleep=time.sleep, clock=time.monotonic, pa
     """
     if not plan.feasible:
         raise ValueError(f"plan is not feasible: {plan.problems}")
+    reserve = reservations_for(plan.haiku_reservation)
+    for name in plan.routers:
+        provider = routers[name].provider
+        if provider != ROUTER_PROVIDERS[name]:
+            raise ValueError(f"router {name} reports provider {provider!r}, expected {ROUTER_PROVIDERS[name]!r}")
+        if provider and abs(routers[name].worst_case_usd - reserve[provider]) > 1e-12:
+            raise ValueError(f"router {name} reserves a different worst case than the plan")
     cases = {c.id: c for c in routing_dataset(plan.dataset_version)}
     ledger = Ledger(plan.request_caps, plan.cost_caps)
     records: list[RouteRecord] = []
@@ -207,10 +245,10 @@ def run(plan: Plan, routers: dict, *, sleep=time.sleep, clock=time.monotonic, pa
                     last_typesafe = clock()
                 record.repetition, record.warmup = call.repetition, call.warmup
                 if reservation is not None:
-                    usage_known = record.cost_basis == "usage"
-                    charged, exceeded = ledger.settle(reservation, record.cost_usd if usage_known else None)
+                    cost_known = record.cost_usd is not None  # usage, not_sent or rejected_assumed_unbilled
+                    charged, exceeded = ledger.settle(reservation, record.cost_usd if cost_known else None)
                     record.cost_usd = round(charged, 8)
-                    record.cost_basis = "usage" if usage_known else "worst_case_reservation"
+                    record.cost_basis = record.cost_basis if cost_known else "worst_case_reservation"
                     if exceeded:
                         stop_reason = f"{call.router}: a call cost more than its worst-case reservation"
                 records.append(record)

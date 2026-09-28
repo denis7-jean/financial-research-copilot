@@ -15,10 +15,26 @@ JEV_MIN_SECONDS_BETWEEN_CALLS = 1.0  # at most 60 requests/min (documented limit
 # Haiku 4.5 router on Bedrock (RouterAgent, unchanged).
 HAIKU_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 HAIKU_EXPECTED_TOKENS = (214, 52)  # measured per call in baseline run 6a13ffb1
-# Worst-case reservation per call. ASSUMPTION: RouterAgent sets no maxTokens (app unchanged),
-# so output is not hard-capped by us; 1,000 output tokens is ~19x the measured mean. A call
-# that exceeds its reservation stops the run (see runner).
-HAIKU_WORST_CASE_TOKENS = (2_000, 1_000)
+# Bounds on one routing call. Input: RouterAgent's prompt (~150 tokens) plus one approved
+# question (<= 300 chars) is < 500 tokens. Output: RouterAgent sets no maxTokens (production
+# behavior, deliberately unchanged), so the only bound is the model's own output limit.
+HAIKU_MAX_INPUT_TOKENS = 2_000
+HAIKU_MAX_OUTPUT_TOKENS = 64_000  # ASSUMPTION: Claude Haiku 4.5's documented maximum output (not verified offline)
+# Per-call reservation modes (see docs/experiments/router-benchmark-design.md §13):
+#   strict    reserves the maximum possible call, so committed spend never exceeds a cap;
+#   practical reserves ~19x the measured mean output, so one call may overshoot a cap by up to
+#             (maximum possible call - reservation), after which the run stops.
+HAIKU_RESERVATIONS = {"strict": (HAIKU_MAX_INPUT_TOKENS, HAIKU_MAX_OUTPUT_TOKENS),
+                      "practical": (HAIKU_MAX_INPUT_TOKENS, 1_000)}
+DEFAULT_HAIKU_RESERVATION = "strict"
+# Failed Haiku calls (RouterAgent records the error code). Cost is 0 only when the request cannot
+# have been processed; anything else is charged the full reservation.
+HAIKU_NOT_SENT_CODES = frozenset({"EndpointConnectionError", "ConnectTimeoutError", "NetworkBlockedError",
+                                  "NoCredentialsError", "PartialCredentialsError"})
+# ASSUMPTION: Bedrock does not bill requests it rejects before inference with these codes.
+HAIKU_REJECTED_CODES = frozenset({"ThrottlingException", "TooManyRequestsException", "ServiceQuotaExceededException",
+                                  "AccessDeniedException", "UnrecognizedClientException", "ExpiredTokenException",
+                                  "ValidationException", "ResourceNotFoundException", "ServiceUnavailableException"})
 
 # Production-equivalent final-decision rule (RouterAgent): no raw label or score < 0.6 -> qa.
 FINAL_DECISION_THRESHOLD = 0.6

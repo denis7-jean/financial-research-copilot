@@ -164,7 +164,7 @@ def test_a_call_costing_more_than_its_reservation_stops_the_run():
 
     plan = build_plan(("haiku",), 1, 0, 1)
     runaway = Scripted(converse_responses=[
-        converse_text('{"task_type": "qa", "confidence": 0.9, "reasoning": "r"}', 200, 5_000)])
+        converse_text('{"task_type": "qa", "confidence": 0.9, "reasoning": "r"}', 200, 70_000)])  # > 64k max
     result = run(plan, _routers(plan, bedrock=runaway), pace=False)
     assert result["executed_calls"] == 1 and not result["valid"]
     assert "cost more than its worst-case reservation" in result["invalid_reasons"][0]

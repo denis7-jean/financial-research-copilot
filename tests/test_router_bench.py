@@ -121,7 +121,9 @@ def test_haiku_parse_and_invoke_errors_have_no_raw_label():
     assert (parse.raw_label, parse.final_label, parse.outcome, parse.infra_error) == (None, "qa", "fallback_parse_error", False)
     invoke = _haiku(aws_error("ThrottlingException", status=429)).route(CASES["L01"])
     assert (invoke.raw_label, invoke.outcome, invoke.infra_error) == (None, "fallback_invoke_error", True)
-    assert (invoke.cost_usd, invoke.cost_basis) == (None, "none")  # unknown usage: runner charges worst case
+    assert (invoke.cost_usd, invoke.cost_basis) == (0.0, "rejected_assumed_unbilled")  # rejected before inference
+    unknown = _haiku(aws_error("ModelErrorException", status=424)).route(CASES["L01"])
+    assert (unknown.cost_usd, unknown.cost_basis) == (None, "none")  # may have run: runner charges the reservation
 
 
 def test_rules_router_is_deterministic_and_free():

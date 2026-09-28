@@ -65,6 +65,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-cost-bedrock", type=float, default=None)
     parser.add_argument("--max-cost-typesafe", type=float, default=None)
     parser.add_argument("--max-cost-total", type=float, default=None)
+    parser.add_argument("--haiku-reservation", choices=("strict", "practical"), default="strict",
+                        help="strict: reserve the largest possible Haiku call (hard cap); practical: reserve "
+                             "~19x the mean output (one call may overshoot a cap; disclosed in the plan)")
     parser.add_argument("--output", default=None, help="write the artifact here (dry run: optional)")
     return parser
 
@@ -134,7 +137,8 @@ def main(argv: list[str] | None = None) -> int:
                 caps[provider] = value
         ids = [i.strip() for i in args.ids.split(",")] if args.ids else None
         plan = build_plan(routers, repetitions, args.warmup if args.warmup is not None else WARMUP_CALLS,
-                          args.seed if args.seed is not None else DEFAULT_SEED, ids, caps)
+                          args.seed if args.seed is not None else DEFAULT_SEED, ids, caps,
+                          haiku_reservation=args.haiku_reservation)
 
     needed = {ROUTER_PROVIDERS[r] for r in plan.routers} - {None}
     if live:
@@ -227,6 +231,16 @@ def _minimal_artifact(plan, provenance, result, category: str, journal) -> dict:
 
 def _build_routers(plan, cases, approved, live, LiveAuthorization):
     """Dry run: fakes only. Live: real clients, each behind its provider's LiveAuthorization."""
+    from experiments.router_bench.routers import ModelNotPinned
+
+    try:
+        return _build_routers_unchecked(plan, cases, approved, live, LiveAuthorization)
+    except ModelNotPinned as exc:
+        print(f"Refusing: {exc}", file=sys.stderr)
+        return None, []
+
+
+def _build_routers_unchecked(plan, cases, approved, live, LiveAuthorization):
     from experiments.router_bench.routers import HaikuRouter, JevClient, JevRouter, RulesRouter
 
     impl, real = {}, []
@@ -235,7 +249,8 @@ def _build_routers(plan, cases, approved, live, LiveAuthorization):
 
         labels = {c.query: c.expected_route for c in cases}
         if "haiku" in plan.routers:
-            impl["haiku"] = HaikuRouter(bedrock_client=FakeBedrock(labels, plan.seed + 1))
+            impl["haiku"] = HaikuRouter(bedrock_client=FakeBedrock(labels, plan.seed + 1),
+                                        reservation=plan.haiku_reservation)
         if "jev" in plan.routers:
             fake = FakeTypeSafe(labels, plan.seed + 2)
             impl["jev"] = JevRouter(JevClient(transport=fake.transport()), approved)
@@ -245,8 +260,7 @@ def _build_routers(plan, cases, approved, live, LiveAuthorization):
         file_values = read_env_file(name for provider in live for name in PROVIDER_ENV_NAMES[provider])
         if "haiku" in plan.routers:
             export_bedrock_env(file_values)
-            os.environ["AWS_MAX_ATTEMPTS"] = "1"  # one HTTP request per routed call; no silent retries
-            impl["haiku"] = HaikuRouter(authorization=authorization)
+            impl["haiku"] = HaikuRouter(authorization=authorization, reservation=plan.haiku_reservation)
             real.append("bedrock-runtime")
         if "jev" in plan.routers:
             api_key = load_typesafe_key(file_values)
@@ -326,6 +340,15 @@ def _print_plan(plan, mode: str) -> None:
           f"(if every call hit it: ${th['bedrock']:.2f} / ${th['typesafe']:.2f}; informational only, "
           "reservations are reconciled to recorded usage after each call)")
     print(f"Cost basis: {cost['basis']}")
+    for provider in ("bedrock", "typesafe"):
+        if not plan.planned_calls.get(provider):
+            continue
+        g = cost["budget_guarantee"][provider]
+        guarantee = ("hard cap: committed spend cannot exceed the ceiling" if g["hard_cap"] else
+                     f"NOT a hard cap: one call may overshoot the ceiling by up to ${g['max_overshoot_usd']:.4f}, "
+                     "then the run stops")
+        print(f"Budget guarantee, {provider}: {guarantee}; headroom at expected cost ${g['headroom_usd']:.4f}")
+    print("  (assumptions: " + "; ".join(cost["budget_guarantee"]["assumptions"]) + ")")
     print(f"Plan feasible: {plan.feasible}")
 
 

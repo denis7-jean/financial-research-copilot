@@ -19,9 +19,15 @@ from unittest import mock
 import httpx
 
 from experiments.router_bench.config import (
+    DEFAULT_HAIKU_RESERVATION,
     FALLBACK_ROUTE,
     FINAL_DECISION_THRESHOLD,
-    HAIKU_WORST_CASE_TOKENS,
+    HAIKU_MAX_INPUT_TOKENS,
+    HAIKU_MAX_OUTPUT_TOKENS,
+    HAIKU_MODEL_ID,
+    HAIKU_NOT_SENT_CODES,
+    HAIKU_REJECTED_CODES,
+    HAIKU_RESERVATIONS,
     JEV_CONNECT_TIMEOUT_S,
     JEV_ENDPOINT,
     JEV_MAX_TOKENS_PER_REQUEST,
@@ -54,8 +60,16 @@ def jev_cost(input_tokens: int) -> float:
     return input_tokens * JEV_PRICE_PER_MTOK_INPUT / 1e6
 
 
-HAIKU_WORST_CASE_USD = haiku_cost(*HAIKU_WORST_CASE_TOKENS)
+def haiku_reservation_usd(mode: str) -> float:
+    return haiku_cost(*HAIKU_RESERVATIONS[mode])
+
+
+HAIKU_MAX_CALL_USD = haiku_cost(HAIKU_MAX_INPUT_TOKENS, HAIKU_MAX_OUTPUT_TOKENS)  # $0.322 under the assumptions
 JEV_WORST_CASE_USD = jev_cost(JEV_MAX_TOKENS_PER_REQUEST)
+
+
+class ModelNotPinned(RuntimeError):
+    """The Bedrock model is not the pinned Haiku 4.5: pricing and caps would be wrong, so refuse."""
 
 
 @dataclass
@@ -123,26 +137,42 @@ def _patched_boto3_client(fake):
         yield
 
 
+def _check_pinned_model(model_id) -> None:
+    if model_id != HAIKU_MODEL_ID:
+        raise ModelNotPinned("the configured Bedrock model is not the pinned Haiku 4.5 model "
+                             f"({HAIKU_MODEL_ID}); refusing, because pricing and caps assume it")
+
+
 class HaikuRouter:
     name = "haiku"
     provider = "bedrock"
-    worst_case_usd = HAIKU_WORST_CASE_USD
 
-    def __init__(self, *, bedrock_client=None, authorization: LiveAuthorization | None = None):
+    def __init__(self, *, bedrock_client=None, authorization: LiveAuthorization | None = None,
+                 reservation: str = DEFAULT_HAIKU_RESERVATION):
+        if reservation not in HAIKU_RESERVATIONS:
+            raise ValueError(f"reservation must be one of {sorted(HAIKU_RESERVATIONS)}")
         # Authorization first: nothing below may import app code (and so .env) or build a client before it.
         if bedrock_client is not None:
             require_offline_fake(bedrock_client, "bedrock")
         else:
             require_live(authorization, "bedrock")
+        # RouterAgent reads BEDROCK_MODEL_ID (default: the pinned model). Fail closed before any client exists.
+        _check_pinned_model(os.environ.get("BEDROCK_MODEL_ID", HAIKU_MODEL_ID))
         RouterAgent = _import_router_agent()
         if bedrock_client is not None:
             with _patched_boto3_client(bedrock_client):
                 self.agent = RouterAgent()
             self.live = False
         else:
+            os.environ["AWS_MAX_ATTEMPTS"] = "1"  # one billed request per routed call: no silent SDK retries
             self.agent = RouterAgent()
+            if self.agent._client.meta.config.retries.get("total_max_attempts") != 1:
+                raise RuntimeError("the Bedrock client would retry; refusing a live run")
             self.live = True
+        _check_pinned_model(self.agent._model_id)
         self.model_id = self.agent._model_id
+        self.reservation = reservation
+        self.worst_case_usd = haiku_reservation_usd(reservation)
 
     def route(self, case) -> RouteRecord:
         from app.observability import request_trace
@@ -156,6 +186,8 @@ class HaikuRouter:
         outcome = route.get("router_outcome")
         errors = record["errors"]
         calls = record["model_calls"]
+        for call in calls:  # every recorded call must have used the pinned model (the run stops otherwise)
+            _check_pinned_model(call.get("model_id"))
         input_tokens = sum(c.get("input_tokens") or 0 for c in calls) if calls else None
         output_tokens = sum(c.get("output_tokens") or 0 for c in calls) if calls else None
         server_latency = next((c.get("latency_ms") for c in calls if c.get("latency_ms") is not None), None)
@@ -172,14 +204,22 @@ class HaikuRouter:
         if final_label != decision.task_type:  # our rule must reproduce RouterAgent's own decision
             extra["decision_mismatch"] = decision.task_type
         last_error = errors[-1] if errors else {}
+        code = last_error.get("code")
+        if calls:
+            cost_usd, cost_basis = haiku_cost(input_tokens, output_tokens), "usage"
+        elif outcome == "fallback_invoke_error" and code in HAIKU_NOT_SENT_CODES:
+            cost_usd, cost_basis = 0.0, "not_sent"
+        elif outcome == "fallback_invoke_error" and code in HAIKU_REJECTED_CODES:
+            cost_usd, cost_basis = 0.0, "rejected_assumed_unbilled"
+        else:
+            cost_usd, cost_basis = None, "none"  # unknown: the runner charges the full reservation
         return RouteRecord(
             router=self.name, case_id=case.id, raw_label=raw_label, raw_score=raw_score,
             final_label=final_label, outcome=final_outcome, latency_ms=round(latency_ms, 3),
             infra_error=outcome == "fallback_invoke_error",
-            error_class=last_error.get("code") or last_error.get("kind"),
+            error_class=code or last_error.get("kind"),
             input_tokens=input_tokens, output_tokens=output_tokens,
-            cost_usd=haiku_cost(input_tokens, output_tokens) if calls else None,
-            cost_basis="usage" if calls else "none", extra=extra,
+            cost_usd=cost_usd, cost_basis=cost_basis, extra=extra,
         )
 
 
