@@ -136,8 +136,8 @@ What each job actually verifies:
   - Covers routing and fallbacks, error paths, response contracts, `/evaluate` access control,
     trace records and all evaluation/metric logic.
   - Bedrock, S3 and CloudWatch are mocked.
-  - The test harness forces fake credentials and blocks botocore network I/O, so these tests
-    cannot reach AWS.
+  - A repository-root `conftest.py` forces fake credentials, disables `.env` loading and blocks
+    botocore network I/O for every pytest invocation, so no offline test can reach AWS.
 - **integration-tests** (live AWS):
   - Starts uvicorn and checks `/health`.
   - Runs `python -m scripts.smoke_check` with two known in-corpus questions (JPMorgan Chase and
@@ -145,7 +145,9 @@ What each job actually verifies:
   - Each must return HTTP 200 with no `error`, a real answer (not the no-evidence answer), a
     citation of the expected filing and the expected figure.
   - Infrastructure failures return 5xx and fail the job.
-- **eval-gate** (live, billable) — `pytest eval/test_llm_judge.py -m llm`:
+- **eval-gate** (live, billable) — `pytest eval/test_llm_judge.py -m llm --run-live-eval`:
+  - `--run-live-eval` is the explicit authorization. Without it, selecting only live tests is
+    rejected (exit 4) instead of passing on skipped tests.
   - Runs all 34 cases.
   - Fails the build if context relevance or faithfulness falls below 80% on the gated QA
     population.
@@ -336,8 +338,8 @@ cp .env.example .env
 # Run locally
 uvicorn app.main:app --reload --port 8000
 
-# Offline tests (no AWS calls)
-pytest tests/ -m "not llm and not integration" -v
+# Offline tests (no AWS calls; live tests are skipped)
+pytest
 ```
 
 **Required `.env` keys:**
@@ -385,11 +387,12 @@ eval/
 ├── README.md                ← Evaluation methodology, metrics, gates, cost
 ├── eval_queries.py          ← 34 labeled cases with verified references
 ├── metrics.py               ← Pure metric/gate logic (single source of thresholds)
-├── llm_judge.py             ← LLM-as-judge harness (live)
-├── test_llm_judge.py        ← CI eval gate (live)
+├── llm_judge.py             ← LLM-as-judge harness (live; CLI needs --live)
+├── test_llm_judge.py        ← CI eval gate (live; needs --run-live-eval)
 └── results/legacy/          ← Archived pre-Phase-0 result
 
-tests/                       ← Offline unit tests (network blocked in conftest.py)
+conftest.py                  ← pytest guard: offline by default, live tests need --run-live-eval
+tests/                       ← Offline unit tests (AWS blocked by tests/offline_guard.py)
 
 scripts/
 ├── package_lambda.ps1       ← Lambda packaging (manual)
@@ -398,6 +401,7 @@ scripts/
 
 docs/runbooks/
 └── visa-source-migration.md ← Evidence, exact S3 writes, Lambda refresh, rollback
+docs/incidents/              ← Incident records and their fixes
 
 .github/workflows/
 └── eval-ci.yml              ← 5-job CI/CD pipeline

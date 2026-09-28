@@ -142,15 +142,26 @@ It exits 1 if anything blocks.
 Then:
 
 ```bash
-python -m eval.llm_judge
-pytest eval/test_llm_judge.py -m llm -v
+python -m eval.llm_judge --live
+pytest eval/test_llm_judge.py -m llm --run-live-eval -v
 pytest tests/test_eval.py tests/test_preflight.py -v
 ```
 
-- `python -m eval.llm_judge`: live, billable.
-- `pytest eval/test_llm_judge.py -m llm -v`: live, billable. This is what the CI eval gate runs.
-  It checks `run_validity` first, then the enforced gates.
+- `python -m eval.llm_judge --live`: live, billable. Without `--live` it refuses to start
+  (exit 2). Exit 1 means the run stopped early (cost ceiling or harness failure).
+- `pytest eval/test_llm_judge.py -m llm --run-live-eval -v`: live, billable. This is what the CI
+  eval gate runs. It checks `run_validity` first, then the enforced gates.
 - `pytest tests/test_eval.py tests/test_preflight.py -v`: offline unit tests.
+
+**Live execution is opt-in at three levels** (see
+`docs/incidents/2026-09-28-unguarded-live-eval-test-run.md`):
+- **pytest:** a repository-root `conftest.py` keeps every pytest run offline. It forces fake
+  credentials, disables `.env` and blocks botocore. `llm` tests are skipped unless
+  `--run-live-eval` is given, and selecting only them without it is a usage error (exit 4).
+  With the option, only `llm` tests may be selected.
+- **Fixture:** the eval gate's fixture re-checks the opt-in and refuses to start while the guard
+  is installed.
+- **Harness:** `run_evaluation()` refuses to build real clients unless called with `live=True`.
 
 **Environment variables**
 
@@ -166,10 +177,16 @@ never calls the deployed Lambda, which still runs the June 2026 build.
 ## Run validity and provenance
 
 **Validity.** `summary.run_validity.valid_for_baseline` is false if any of these happened:
+- no case was evaluated, or no case produced a usable result (every case failed with a system
+  error);
+- an offline network guard blocked any system or judge call (`network_blocked`: the run never
+  reached AWS);
 - the system under test hit an infrastructure failure;
 - a router fell back because of one;
 - a judge call failed to invoke;
 - the harness's evidence retrieval failed;
+- unexpected application errors hit more than 20% of cases (systemic breakage);
+- the harness raised an unexpected exception (the rows already evaluated are kept and written);
 - the run stopped early.
 
 "Infrastructure" means access denied, throttling, unavailable, timeout or misconfiguration.
@@ -177,7 +194,7 @@ never calls the deployed Lambda, which still runs the June 2026 build.
 Failures that are findings about the system, not the environment, count against the metrics and
 do **not** invalidate the run:
 - model-output failures: unusable output or model errors;
-- application errors.
+- sporadic application errors (at most 20% of cases).
 
 An invalid run is not a quality verdict.
 

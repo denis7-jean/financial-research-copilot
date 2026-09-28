@@ -53,8 +53,10 @@ financial-multi-agent-copilot/
 │       ├── build_index.py         ← One-time indexing pipeline
 │       ├── retriever.py           ← FAISS retrieval
 │       └── bedrock_client.py      ← RAG generation via Claude
-├── tests/                         ← offline; conftest.py blocks all AWS network I/O
-│   ├── conftest.py                ← fake creds, network guard, FakeBedrock
+├── conftest.py                    ← repo-wide pytest guard: offline by default; live tests need --run-live-eval
+├── tests/                         ← offline; AWS network I/O blocked in every pytest run
+│   ├── offline_guard.py           ← fake creds, no .env, blocked botocore transport
+│   ├── conftest.py                ← FakeBedrock and shared fixtures
 │   ├── test_router.py
 │   ├── test_agents.py
 │   ├── test_api.py
@@ -63,10 +65,10 @@ financial-multi-agent-copilot/
 │   └── test_eval.py
 ├── eval/
 │   ├── README.md              ← metrics, gates, cost
-│   ├── llm_judge.py           ← LLM-as-judge harness (live)
+│   ├── llm_judge.py           ← LLM-as-judge harness (live; CLI needs --live)
 │   ├── metrics.py             ← pure metrics + GATES (single source of thresholds)
 │   ├── eval_queries.py        ← 34 labeled cases with verified references
-│   ├── test_llm_judge.py      ← CI eval gate (live)
+│   ├── test_llm_judge.py      ← CI eval gate (live; needs --run-live-eval)
 │   └── results/
 │       ├── latest.json        ← generated, gitignored
 │       └── legacy/            ← archived pre-Phase-0 result
@@ -75,6 +77,7 @@ financial-multi-agent-copilot/
 │   ├── smoke_check.py         ← CI /ask smoke check (live when run)
 │   └── migrate_visa_source.py ← S3 Visa rename (plan is read-only; execute/rollback gated)
 ├── docs/runbooks/visa-source-migration.md
+├── docs/incidents/                ← incident records (2026-09-28 unguarded live eval run)
 ├── .github/workflows/eval-ci.yml
 ├── .env                           ← Never commit
 ├── .gitignore
@@ -111,7 +114,10 @@ EVAL_SLEEP_SECONDS=2
 - Instrument new stages/model calls via `app.observability` helpers (`stage`,
   `record_converse_usage`, `record_error`); never log query text
 - Unit tests must mock Bedrock/S3 (see `tests/conftest.py` FakeBedrock); real
-  botocore network calls raise in tests
+  botocore network calls raise in every pytest run (`tests/offline_guard.py`, installed by the
+  root `conftest.py`)
+- Live, billable tests are marked `llm` and run only with `--run-live-eval`; never pass it (or
+  `--live` to the eval CLI) without explicit approval
 - Eval thresholds live only in `eval/metrics.py` GATES
 - Infrastructure/model failures raise `app.errors.ServiceFailure` (via `failure_from`); never
   return an empty result for a failure. Empty retrieval and abstention stay HTTP 200
@@ -127,12 +133,13 @@ python -m app.services.build_index
 # Test retrieval
 python -m app.services.retriever
 
-# Run offline unit tests (what CI unit-tests runs; no AWS calls)
-pytest tests/ -m "not llm and not integration" -v
+# Run offline tests (safe default: live tests are skipped; no AWS call can leave the process)
+pytest
+pytest tests/ -m "not llm and not integration" -v   # what CI unit-tests runs
 
-# Run CI eval gate (LIVE, billable)
-pytest eval/test_llm_judge.py -m llm -v
+# Run CI eval gate (LIVE, billable; explicit opt-in required)
+pytest eval/test_llm_judge.py -m llm --run-live-eval -v
 
-# Run LLM-as-judge evaluation (LIVE, billable)
-python -m eval.llm_judge
+# Run LLM-as-judge evaluation (LIVE, billable; run `python -m eval.preflight` first)
+python -m eval.llm_judge --live
 ```
