@@ -10,9 +10,10 @@
 - Routing dataset v2 (`eval/routing_datasets.py`).
 - An offline network guard that blocks TypeSafe and every other non-loopback host in all pytest
   runs.
+- **The benchmark, implemented offline** in `experiments/router_bench/` (approved 2026-09-28;
+  commits `95a01f0` and `e6f52a5`). The dry run is verified; see §13.
 
 **Not yet approved or done:**
-- Implementing the benchmark.
 - Sending any text to TypeSafe.
 - The Jev verification calls.
 - Any paid call or benchmark run.
@@ -390,26 +391,89 @@ approved separately), and a privacy decision about TypeSafe.
 
 ## 12. Decisions requiring your approval
 
-1. **Implement** `experiments/router_bench/` offline. This covers the dry run, fake clients,
-   `LiveAuthorization`, both budgets, the key redaction and canary test, the ID allowlist, the
-   rules router, scoring and reporting. It includes no live execution. Tests use fakes and
-   `httpx.MockTransport`.
+1. ~~Implement `experiments/router_bench/` offline~~: **done** (approved 2026-09-28; see §13).
 2. **Data egress to TypeSafe.** Approve sending:
    - the question text of the listed case IDs;
    - the fixed instruction and criteria text (§6).
 
-   **For Phase A, which set?** Choose one:
-   - **All 34 cases.** This gives agreement on L17 and L20, and includes the Mastercard,
-     Apple and Wells Fargo boundary questions.
-   - **Only the 32 strict and policy cases.**
-
+   **Set.** The benchmark supports all 34 frozen v2 questions (decided 2026-09-28). The egress
+   approval for that set is still outstanding, and so is the verification pair (L01, L12).
    All questions are about public companies and contain no personal data.
 3. **Jev verification:** calls 1–2 (optionally 3), on L01 and L12, with the $0.01 cap. This
    needs `TYPESAFE_API_KEY` in the local `.env`, which you add yourself.
 4. **Phase A benchmark run:** 10 repetitions, Haiku and Jev, about $0.17–0.20, with the §8 caps.
    This should come only after items 1–3 and a dry-run review.
-5. **Confirm or change the 20% application-error validity threshold** (rationale and limitations
-   in `eval/README.md`).
+5. **The 20% application-error validity threshold** stays unchanged for this work (decided
+   2026-09-28). Its limitations are recorded in `eval/README.md` for a separate review.
+
+## 13. Implementation (offline) and unresolved assumptions
+
+**Commands.** All of these are offline by default:
+
+```bash
+python -m experiments.router_bench                    # benchmark dry run: plan + simulated execution
+python -m experiments.router_bench verify-jev         # §7 verification dry run (L01, L12)
+pytest tests/test_router_bench.py tests/test_router_bench_safety.py tests/test_router_bench_cli.py
+```
+
+Live runs exist but are **not authorized**:
+- `--live typesafe` (verification);
+- `--live bedrock --live typesafe` (benchmark).
+
+A live run refuses to start in any of these cases:
+- inside pytest;
+- when a provider it calls is not authorized;
+- for a benchmark, with fewer than 6 repetitions;
+- when `TYPESAFE_API_KEY` is missing.
+
+**Module map:**
+
+| Module | Contents |
+|---|---|
+| `config.py` | Frozen parameters |
+| `safety.py` | `LiveAuthorization`, `SecretValue`, `Ledger` (budgets), `DownstreamTripwire`, artifact checks |
+| `payload.py` | Frozen Jev request, `ApprovedQuestions` allowlist |
+| `routers.py` | Haiku (the unchanged `RouterAgent`), rules, Jev client and schema validation |
+| `fakes.py` | Offline stand-ins for the providers |
+| `runner.py` | Plans and execution |
+| `metrics.py` | Everything in §3–§5 and the §10 criteria |
+| `cli.py` | The command-line interface |
+
+**Dry-run results** (`e6f52a5`):
+- Questions: 34 (strict 24 `qa` and 7 `summarize`; policy L19; exploratory L17 and L20).
+- Planned calls: Bedrock 343, TypeSafe 343, local rules 340.
+- Estimated cost: $0.1662. Hard caps: $0.50, $0.05 and $1.00.
+- Fingerprints:
+  - dataset `9d4f2da1…`;
+  - payload `54e2deaa…`;
+  - rules `86cea35d…`.
+- Downstream isolation: clean (no downstream module is even imported).
+- Outbound network attempts: 0.
+
+**Unresolved assumptions** (to settle during verification, or before Phase A):
+1. **Jev request schema.** The `instructions` field and the `answers.route.*` / `usage.*` response
+   fields come from the documentation and are unverified. A 422 on the first verification call
+   stops everything.
+2. **Jev tokens and price.** The 250 input tokens per call and $0.042 per 1M are assumed. The
+   verification compares reported usage with a local byte/4 estimate.
+3. **Haiku worst-case reservation.** 2,000 in / 1,000 out tokens ($0.007). `RouterAgent` sets no
+   `maxTokens` (the app is unchanged), so output is not hard-capped. A call that exceeds its
+   reservation stops the run, but it can overshoot a cap by that one call's excess. The
+   theoretical maximum is about $0.32 if the model's 64k output ceiling applies; the measured
+   mean is 52 tokens.
+4. **Failed calls are charged at worst case.** Billing for failed requests is unknown. For Jev
+   that is $0.002688 per failure, so about 18 scattered failures would exhaust the $0.05 cap.
+   That many failures would also exceed the 1% infrastructure-error limit, so the run is invalid
+   either way.
+5. **Bedrock retries.** A live run sets `AWS_MAX_ATTEMPTS=1` so that each routed call is one
+   request. Throttling therefore shows up as an infrastructure error instead of a silent retry.
+6. **Rules router contamination.** Its patterns come only from the taxonomy text, but the author
+   had seen these 34 questions. Its dry-run score (31/31, deterministic and real) is **not** an
+   unbiased estimate. The held-out set is needed.
+7. **Simulated numbers.** Haiku and Jev metrics in a dry run come from seeded fakes and measure
+   nothing.
+8. **Region.** Phase A latency is client-side from this machine. TypeSafe's serving region is
+   still undocumented.
 
 ## Appendix A. Route-label adjudication (decided 2026-09-28)
 

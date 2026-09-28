@@ -73,6 +73,7 @@ financial-multi-agent-copilot/
 │   └── results/
 │       ├── latest.json        ← generated, gitignored
 │       └── legacy/            ← archived pre-Phase-0 result
+├── experiments/router_bench/     ← isolated router benchmark (offline dry run by default; live needs --live)
 ├── scripts/
 │   ├── package_lambda.ps1
 │   ├── smoke_check.py         ← CI /ask smoke check (live when run)
@@ -143,4 +144,8 @@ pytest eval/test_llm_judge.py -m llm --run-live-eval -v
 
 # Run LLM-as-judge evaluation (LIVE, billable; run `python -m eval.preflight` first)
 python -m eval.llm_judge --live
+
+# Router benchmark dry run (offline: fakes, no credentials, no network)
+python -m experiments.router_bench
+python -m experiments.router_bench verify-jev
 ```
