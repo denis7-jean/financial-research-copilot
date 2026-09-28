@@ -9,12 +9,16 @@ The subprocess tests run the real eval test file in a child pytest. As a second
 barrier, the child inherits this session's fake credentials and disabled `.env`,
 and gets an unreachable HTTPS proxy, so even a broken guard could not reach AWS.
 """
+import asyncio
 import os
+import socket
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 import boto3
+import httpx
 import pytest
 from dotenv import load_dotenv
 
@@ -47,6 +51,60 @@ def test_boto3_resolves_only_the_fake_credentials():
     credentials = boto3.Session().get_credentials()
     assert credentials.access_key == "unit-test-fake-key"
     assert credentials.method == "env"
+
+
+# --- Non-AWS network: TypeSafe (Jev) and any other host ---------------------------------------
+
+TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone"
+CANARY_KEY = "ts-canary-not-a-real-key"
+
+
+def test_typesafe_api_key_is_removed():
+    assert "TYPESAFE_API_KEY" not in os.environ
+
+
+def test_httpx_cannot_reach_typesafe_and_never_records_credentials():
+    before = len(offline_guard.blocked_requests)
+    with httpx.Client() as client, pytest.raises(NetworkBlockedError) as excinfo:
+        client.post(TYPESAFE_URL + "?probe=1", headers={"Authorization": f"Bearer {CANARY_KEY}"},
+                    json={"state": "q", "model": "jev-1.13.0"})
+    assert offline_guard.blocked_requests[before:] == [TYPESAFE_URL]
+    assert CANARY_KEY not in str(excinfo.value)
+    assert all(CANARY_KEY not in entry for entry in offline_guard.blocked_requests)
+
+
+def test_async_httpx_cannot_reach_typesafe():
+    async def call():
+        async with httpx.AsyncClient() as client:
+            await client.post(TYPESAFE_URL, headers={"Authorization": f"Bearer {CANARY_KEY}"}, json={})
+
+    with pytest.raises(NetworkBlockedError):
+        asyncio.run(call())
+
+
+@pytest.mark.parametrize("attempt", [
+    lambda: socket.create_connection(("api.typesafe.ai", 443), timeout=1),
+    lambda: socket.getaddrinfo("api.typesafe.ai", 443),
+    lambda: socket.socket().connect(("8.8.8.8", 53)),
+    lambda: socket.socket().connect_ex(("2001:4860:4860::8888", 53)),
+    # Bypass environment proxies: a loopback proxy is (correctly) allowed.
+    lambda: urllib.request.build_opener(urllib.request.ProxyHandler({})).open(TYPESAFE_URL, timeout=1),
+], ids=["create_connection", "dns", "connect", "connect_ex", "urllib"])
+def test_every_other_outbound_path_is_blocked(attempt):
+    with pytest.raises(NetworkBlockedError):
+        attempt()
+
+
+def test_loopback_connections_still_work():
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    try:
+        client = socket.create_connection(server.getsockname(), timeout=2)
+        client.close()
+    finally:
+        server.close()
+    assert socket.getaddrinfo("localhost", 80)
 
 
 def test_blocked_requests_are_recorded():

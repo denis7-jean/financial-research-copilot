@@ -64,5 +64,5 @@ def pytest_terminal_summary(terminalreporter, config):
     intercepted = len(offline_guard.blocked_requests)
     state = "active" if offline_guard.is_installed() else "NOT ACTIVE"
     terminalreporter.write_line(
-        f"offline guard {state}: {intercepted} AWS request attempt(s) intercepted, none sent."
+        f"offline guard {state}: {intercepted} outbound network attempt(s) intercepted, none sent."
     )
