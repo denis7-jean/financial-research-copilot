@@ -789,3 +789,22 @@ def test_every_gated_case_has_evidence_markers():
         if case.gated_for_retrieval:
             assert case.evidence, case.id
             assert all(ticker in case.companies for ticker, _ in case.evidence), case.id
+
+
+# --- Phase 0.5 measurement fixes ------------------------------------------------------------
+
+def test_cli_main_prints_gates_and_exits_zero(monkeypatch, capsys, tmp_path):
+    """Regression: the baseline run exited 1 because main indexed a Gate dataclass like a dict."""
+    real_run_evaluation = llm_judge.run_evaluation
+
+    def fake_run_evaluation():
+        return real_run_evaluation(
+            [_case("A", "a")], orchestrator=FakeOrchestrator({"a": _qa_result("x", [JPM_SRC])}),
+            client=FakeJudge({}), retrieve_evidence=lambda q, n_results=5: [],
+            results_path=str(tmp_path / "r.json"), sleep_seconds=0)
+
+    monkeypatch.setattr(llm_judge, "run_evaluation", fake_run_evaluation)
+    assert llm_judge.main() == 0
+    out = capsys.readouterr().out
+    assert "Enforced gates: ['context_relevance_pass_rate', 'faithfulness_pass_rate']" in out
+    assert "Valid for baseline: True" in out

@@ -14,6 +14,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 import uuid
 from dataclasses import asdict
@@ -569,8 +570,16 @@ def _print_summary(summary: dict) -> None:
     print(f"Overall pass     : {summary['overall_pass']}  (enforced gates only)")
 
 
-if __name__ == "__main__":
+def main() -> int:
+    """CLI entry point. The exit code reflects whether the run completed, not gate
+    results (gates are enforced by eval/test_llm_judge.py)."""
     load_dotenv()
     summary = run_evaluation()
     print("\nOverall pass:", summary["overall_pass"])
-    print("Gates:", [g["metric"] for g in GATES if g.enforced], "enforced")
+    print("Enforced gates:", [g.metric for g in GATES if g.enforced])
+    print("Valid for baseline:", summary["run_validity"]["valid_for_baseline"])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
