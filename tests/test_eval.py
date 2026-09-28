@@ -796,15 +796,18 @@ def test_every_gated_case_has_evidence_markers():
 def test_cli_main_prints_gates_and_exits_zero(monkeypatch, capsys, tmp_path):
     """Regression: the baseline run exited 1 because main indexed a Gate dataclass like a dict."""
     real_run_evaluation = llm_judge.run_evaluation
+    calls = []
 
-    def fake_run_evaluation():
+    def fake_run_evaluation(**kwargs):
+        calls.append(kwargs)
         return real_run_evaluation(
             [_case("A", "a")], orchestrator=FakeOrchestrator({"a": _qa_result("x", [JPM_SRC])}),
             client=FakeJudge({}), retrieve_evidence=lambda q, n_results=5: [],
             results_path=str(tmp_path / "r.json"), sleep_seconds=0)
 
     monkeypatch.setattr(llm_judge, "run_evaluation", fake_run_evaluation)
-    assert llm_judge.main() == 0
+    assert llm_judge.main(["--live"]) == 0
+    assert calls == [{"live": True}]
     out = capsys.readouterr().out
     assert "Enforced gates: ['context_relevance_pass_rate', 'faithfulness_pass_rate']" in out
     assert "Valid for baseline: True" in out
@@ -928,3 +931,40 @@ def test_judge_calls_record_their_kind_and_rows_keep_retrieved_text(tmp_path):
         "context_relevance": 1, "faithfulness": 1, "answer_assessment": 1}
     chunks = data["results"][0]["retrieved_chunks"]
     assert chunks == [{"source": JPM_SRC, "score": 0.5, "text": "chunk 0"}]
+
+
+# --- Live-execution opt-in (2026-09-28 incident) --------------------------------------------
+
+def test_cli_refuses_to_start_without_live(monkeypatch, capsys):
+    def must_not_run(**kwargs):
+        raise AssertionError("run_evaluation called without --live")
+
+    monkeypatch.setattr(llm_judge, "run_evaluation", must_not_run)
+    assert llm_judge.main([]) == 2
+    assert "--live" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("injected", [
+    {},
+    {"client": "judge", "retrieve_evidence": "evidence"},
+    {"orchestrator": "orch", "retrieve_evidence": "evidence"},
+    {"orchestrator": "orch", "client": "judge"},
+])
+def test_run_evaluation_refuses_real_clients_without_live(monkeypatch, tmp_path, injected):
+    """Nothing billable is constructed unless the caller passes live=True."""
+    def must_not_construct(*args, **kwargs):
+        raise AssertionError("a real client was constructed")
+
+    monkeypatch.setattr(llm_judge, "CopilotOrchestrator", must_not_construct)
+    monkeypatch.setattr(llm_judge.boto3, "client", must_not_construct)
+    fakes = {"orchestrator": FakeOrchestrator({}), "client": FakeJudge({}),
+             "retrieve_evidence": lambda q, n_results=5: []}
+    kwargs = {name: fakes[name] for name in injected}
+    with pytest.raises(llm_judge.LiveEvaluationNotAuthorized, match="live=True"):
+        llm_judge.run_evaluation([_case("A", "a")], results_path=str(tmp_path / "r.json"), sleep_seconds=0, **kwargs)
+    assert not (tmp_path / "r.json").exists()
+
+
+def test_fully_injected_run_needs_no_live_flag(tmp_path):
+    summary, _, _ = _run(tmp_path, [_case("A", "a")], {"a": _qa_result("x", [JPM_SRC])}, FakeJudge({}))
+    assert summary["completion"]["complete"] is True

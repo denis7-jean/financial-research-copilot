@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import argparse
 import hashlib
 import json
 import os
@@ -48,6 +49,10 @@ LEGACY_RESULTS_DIR = "eval/results/legacy"
 # it incomplete (and therefore invalid as a baseline).
 DEFAULT_MAX_COST_USD = 5.0
 RESULTS_SCHEMA_VERSION = 2
+
+
+class LiveEvaluationNotAuthorized(RuntimeError):
+    """run_evaluation would create real, billable AWS clients without live=True."""
 
 # Pass thresholds per judge score (1-5). Unchanged from the original rubrics.
 CONTEXT_RELEVANCE_PASS_MIN = 3
@@ -498,6 +503,7 @@ def _resolve_cases(cases) -> list[EvalCase]:
 def run_evaluation(
     cases=None,
     *,
+    live: bool = False,
     orchestrator=None,
     client=None,
     retrieve_evidence=None,
@@ -508,7 +514,18 @@ def run_evaluation(
     """Run the labeled evaluation, write results and return the summary.
 
     `cases` may be EvalCase objects or, for backward compatibility, query strings.
+
+    Any of orchestrator, client or retrieve_evidence left as None is created as a
+    real AWS client, which is billable. That requires live=True, passed only by an
+    authorized entry point: `python -m eval.llm_judge --live` or the pytest eval
+    gate under --run-live-eval. Offline callers inject all three.
     """
+    if not live and (orchestrator is None or client is None or retrieve_evidence is None):
+        raise LiveEvaluationNotAuthorized(
+            "run_evaluation would make billable Bedrock/S3 calls. Pass live=True from an authorized entry "
+            "point (python -m eval.llm_judge --live, or pytest --run-live-eval), or inject orchestrator, "
+            "client and retrieve_evidence."
+        )
     cases = _resolve_cases(cases)
     orchestrator = orchestrator or CopilotOrchestrator()
     client = client or boto3.client("bedrock-runtime", region_name="us-east-1")
@@ -601,11 +618,23 @@ def _print_summary(summary: dict) -> None:
     print(f"Overall pass     : {summary['overall_pass']}  (enforced gates only)")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     """CLI entry point. The exit code reflects whether the run completed, not gate
-    results (gates are enforced by eval/test_llm_judge.py)."""
+    results (gates are enforced by eval/test_llm_judge.py). Without --live it
+    refuses to start (exit 2) and makes no AWS calls."""
+    parser = argparse.ArgumentParser(
+        prog="python -m eval.llm_judge",
+        description="Live LLM-as-judge evaluation: billable Bedrock calls (system under test and judge).",
+    )
+    parser.add_argument("--live", action="store_true",
+                        help="authorize the billable run; run `python -m eval.preflight` first")
+    args = parser.parse_args(argv)
+    if not args.live:
+        print("Refusing to start: this evaluation makes billable Bedrock calls (~$1.2 per run). "
+              "Run `python -m eval.preflight`, then re-run with --live.", file=sys.stderr)
+        return 2
     load_dotenv()
-    summary = run_evaluation()
+    summary = run_evaluation(live=True)
     print("\nOverall pass:", summary["overall_pass"])
     print("Enforced gates:", [g.metric for g in GATES if g.enforced])
     print("Valid for baseline:", summary["run_validity"]["valid_for_baseline"])

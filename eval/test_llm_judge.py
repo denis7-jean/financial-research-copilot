@@ -43,7 +43,7 @@ def _authorize_live_run(config) -> None:
 def eval_results(request):
     _authorize_live_run(request.config)
     load_dotenv()
-    return run_evaluation()
+    return run_evaluation(live=True)
 
 
 def _gate(summary: dict, metric: str) -> dict:
