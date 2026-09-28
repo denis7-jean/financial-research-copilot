@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Run ruff
-        run: ruff check conftest.py app/ eval/ tests/ scripts/
+        run: ruff check conftest.py app/ eval/ tests/ scripts/ experiments/
 
   unit-tests:
     name: Unit Tests
