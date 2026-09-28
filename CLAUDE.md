@@ -68,6 +68,7 @@ financial-multi-agent-copilot/
 │   ├── llm_judge.py           ← LLM-as-judge harness (live; CLI needs --live)
 │   ├── metrics.py             ← pure metrics + GATES (single source of thresholds)
 │   ├── eval_queries.py        ← 34 labeled cases with verified references
+│   ├── routing_datasets.py    ← versioned, pinned routing labels (v1 historical, v2 for router benchmarks)
 │   ├── test_llm_judge.py      ← CI eval gate (live; needs --run-live-eval)
 │   └── results/
 │       ├── latest.json        ← generated, gitignored
