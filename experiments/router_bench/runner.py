@@ -154,9 +154,15 @@ def build_verification_plan(repeat_first: bool = False) -> Plan:
     return _finish(plan)
 
 
-def run(plan: Plan, routers: dict, *, sleep=time.sleep, clock=time.monotonic, pace: bool = True) -> dict:
+def run(plan: Plan, routers: dict, *, sleep=time.sleep, clock=time.monotonic, pace: bool = True,
+        journal=None) -> dict:
     """Execute the schedule. Stops the whole run on budget exhaustion, a harness error or a
-    call that cost more than its reservation; stops one router after consecutive infra errors."""
+    call that cost more than its reservation; stops one router after consecutive infra errors.
+
+    With a journal (persistence.RunJournal), every paid call is announced before it is made
+    and every record is persisted as soon as it is settled, so an interrupt or crash keeps
+    the sanitized records of all completed calls.
+    """
     if not plan.feasible:
         raise ValueError(f"plan is not feasible: {plan.problems}")
     cases = {c.id: c for c in routing_dataset(plan.dataset_version)}
@@ -165,52 +171,67 @@ def run(plan: Plan, routers: dict, *, sleep=time.sleep, clock=time.monotonic, pa
     stop_reason = None
     state = {r: {"consecutive_infra_errors": 0, "stopped": None} for r in plan.routers}
     last_typesafe = None
-    with DownstreamTripwire() as tripwire:
-        for call in plan.schedule:
-            if state[call.router]["stopped"]:
-                continue
-            router = routers[call.router]
-            provider = router.provider
-            reservation = None
-            if provider:
+    if journal is not None:
+        journal.event("run_started", kind=plan.kind, scheduled_calls=len(plan.schedule),
+                      fingerprints=plan.fingerprints, request_caps=plan.request_caps, cost_caps=plan.cost_caps)
+    tripwire = DownstreamTripwire()
+    try:
+        with tripwire:
+            for call in plan.schedule:
+                if state[call.router]["stopped"]:
+                    continue
+                router = routers[call.router]
+                provider = router.provider
+                reservation = None
+                if provider:
+                    try:
+                        reservation = ledger.reserve(provider, router.worst_case_usd)
+                    except BudgetExhausted as exc:
+                        stop_reason = f"budget exhausted: {exc}"
+                        break
+                    if journal is not None:
+                        journal.call_started(call, provider, router.worst_case_usd)
+                if provider == "typesafe" and pace and last_typesafe is not None:
+                    wait = JEV_MIN_SECONDS_BETWEEN_CALLS - (clock() - last_typesafe)
+                    if wait > 0:
+                        sleep(wait)
+                harness_error = None
                 try:
-                    reservation = ledger.reserve(provider, router.worst_case_usd)
-                except BudgetExhausted as exc:
-                    stop_reason = f"budget exhausted: {exc}"
+                    record = router.route(cases[call.case_id])
+                except Exception as exc:  # a harness defect (or a downstream tripwire): record it, then stop
+                    harness_error = type(exc).__name__
+                    record = RouteRecord(router=call.router, case_id=call.case_id, raw_label=None, raw_score=None,
+                                         final_label=FALLBACK_ROUTE, outcome="fallback_harness_error",
+                                         latency_ms=0.0, error_class=harness_error)
+                if provider == "typesafe":
+                    last_typesafe = clock()
+                record.repetition, record.warmup = call.repetition, call.warmup
+                if reservation is not None:
+                    usage_known = record.cost_basis == "usage"
+                    charged, exceeded = ledger.settle(reservation, record.cost_usd if usage_known else None)
+                    record.cost_usd = round(charged, 8)
+                    record.cost_basis = "usage" if usage_known else "worst_case_reservation"
+                    if exceeded:
+                        stop_reason = f"{call.router}: a call cost more than its worst-case reservation"
+                records.append(record)
+                if journal is not None:
+                    journal.record(record.to_dict())
+                if harness_error:
+                    stop_reason = f"harness error in {call.router} on {call.case_id}: {harness_error}"
+                if stop_reason:
                     break
-            if provider == "typesafe" and pace and last_typesafe is not None:
-                wait = JEV_MIN_SECONDS_BETWEEN_CALLS - (clock() - last_typesafe)
-                if wait > 0:
-                    sleep(wait)
-            harness_error = None
-            try:
-                record = router.route(cases[call.case_id])
-            except Exception as exc:  # a harness defect (or a downstream tripwire): record it, then stop
-                harness_error = type(exc).__name__
-                record = RouteRecord(router=call.router, case_id=call.case_id, raw_label=None, raw_score=None,
-                                     final_label=FALLBACK_ROUTE, outcome="fallback_harness_error", latency_ms=0.0,
-                                     error_class=harness_error)
-            if provider == "typesafe":
-                last_typesafe = clock()
-            record.repetition, record.warmup = call.repetition, call.warmup
-            if reservation is not None:
-                usage_known = record.cost_basis == "usage"
-                charged, exceeded = ledger.settle(reservation, record.cost_usd if usage_known else None)
-                record.cost_usd = round(charged, 8)
-                record.cost_basis = "usage" if usage_known else "worst_case_reservation"
-                if exceeded:
-                    stop_reason = f"{call.router}: a call cost more than its worst-case reservation"
-            records.append(record)
-            if harness_error:
-                stop_reason = f"harness error in {call.router} on {call.case_id}: {harness_error}"
-            if stop_reason:
-                break
-            if record.infra_error:
-                state[call.router]["consecutive_infra_errors"] += 1
-                if state[call.router]["consecutive_infra_errors"] >= CONSECUTIVE_INFRA_ERROR_LIMIT:
-                    state[call.router]["stopped"] = f"{CONSECUTIVE_INFRA_ERROR_LIMIT} consecutive infrastructure errors"
-            else:
-                state[call.router]["consecutive_infra_errors"] = 0
+                if record.infra_error:
+                    state[call.router]["consecutive_infra_errors"] += 1
+                    if state[call.router]["consecutive_infra_errors"] >= CONSECUTIVE_INFRA_ERROR_LIMIT:
+                        state[call.router]["stopped"] = (f"{CONSECUTIVE_INFRA_ERROR_LIMIT} consecutive "
+                                                         "infrastructure errors")
+                else:
+                    state[call.router]["consecutive_infra_errors"] = 0
+    except BaseException as exc:  # interrupt or crash: persist where the run stood, then re-raise
+        if journal is not None:
+            journal.event("run_interrupted", error_type=type(exc).__name__, executed_calls=len(records),
+                          ledger=ledger.summary())
+        raise
     downstream = tripwire.report()
     complete = stop_reason is None and len(records) == len(plan.schedule)
     reasons = []
@@ -221,6 +242,9 @@ def run(plan: Plan, routers: dict, *, sleep=time.sleep, clock=time.monotonic, pa
     if not downstream["clean"]:
         reasons.append("downstream QA/summarization/retrieval code was touched")
     reasons += [f"{r} stopped: {s['stopped']}" for r, s in state.items() if s["stopped"]]
+    if journal is not None:
+        journal.event("run_finished" if stop_reason is None else "run_stopped", stop_reason=stop_reason,
+                      complete=complete, executed_calls=len(records), ledger=ledger.summary())
     return {
         "records": [r.to_dict() for r in records],
         "complete": complete,

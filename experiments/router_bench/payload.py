@@ -81,12 +81,13 @@ def validate_outgoing(payload: dict, approved: ApprovedQuestions) -> None:
     """Last check before anything is sent to TypeSafe."""
     template = payload_template()
     if set(payload) != set(template):
-        raise ArtifactSafetyError(f"payload fields {sorted(payload)} differ from the frozen template")
+        raise ArtifactSafetyError("payload fields differ from the frozen template", "payload_template")
     rest = copy.deepcopy(payload)
     state = rest.pop("state")
     template.pop("state")
     if rest != template:
-        raise ArtifactSafetyError("payload model, instruction or criteria differ from the frozen template")
+        raise ArtifactSafetyError("payload model, instruction or criteria differ from the frozen template",
+                                  "payload_template")
     if not isinstance(state, str) or state not in approved._text.values() or len(state) > MAX_QUESTION_CHARS:
-        raise ArtifactSafetyError("payload question is not an approved question text")
+        raise ArtifactSafetyError("payload question is not an approved question text", "payload_question")
     assert_safe_for_output(payload, what="TypeSafe request")

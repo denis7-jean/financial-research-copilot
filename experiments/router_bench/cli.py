@@ -112,7 +112,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     from experiments.router_bench.payload import ApprovedQuestions
     from experiments.router_bench.runner import build_plan, build_verification_plan, run
-    from experiments.router_bench.safety import LiveAuthorization, assert_safe_for_output
+    from experiments.router_bench.persistence import JOURNAL_SUFFIX, RunJournal
+    from experiments.router_bench.safety import ArtifactSafetyError, LiveAuthorization, assert_safe_for_output
 
     cases = routing_dataset(DATASET_VERSION)
     if args.command == "verify-jev":
@@ -156,37 +157,72 @@ def main(argv: list[str] | None = None) -> int:
         print("\nPLAN NOT FEASIBLE:\n  " + "\n  ".join(plan.problems))
         return 2
 
-    result = run(plan, impl, pace=bool(live))
-    metrics = (bench_metrics.compute(result["records"], cases, plan.routers, seed=plan.seed)
-               if plan.kind == "benchmark" else _verification_checks(result["records"], plan))
+    created_at = datetime.now(timezone.utc)
     provenance = {
-        "created_at": datetime.now(timezone.utc).isoformat(), "mode": mode, "git": _git(),
+        "created_at": created_at.isoformat(), "mode": mode, "git": _git(),
         "python": platform.python_version(), "platform": platform.platform(),
         "live_authorization": sorted(live), "real_clients_constructed": real_clients,
         "jev_model_pinned": JEV_MODEL, "bedrock_router_model": impl["haiku"].model_id if "haiku" in impl else None,
         "bedrock_router_model_expected": HAIKU_MODEL_ID,
         "aws_max_attempts": os.environ.get("AWS_MAX_ATTEMPTS"),
     }
+    output = args.output
+    if live and not output:
+        output = f"eval/results/experiments/{plan.kind.replace('_', '-')}-{created_at.strftime('%Y%m%dT%H%M%SZ')}.json"
+    # Live runs always journal; each completed call is persisted (sanitized, fsynced) before the next one.
+    journal = RunJournal(output + JOURNAL_SUFFIX) if output else None
+    if journal is not None:
+        journal.event("provenance", **provenance)
+        print(f"Journal (per-call, crash-resistant): {journal.path}")
+    try:
+        result = run(plan, impl, pace=bool(live), journal=journal)
+    finally:
+        if journal is not None:
+            journal.close()
+
+    exit_code = 0 if result["complete"] else 1
+    try:
+        metrics = (bench_metrics.compute(result["records"], cases, plan.routers, seed=plan.seed)
+                   if plan.kind == "benchmark" else _verification_checks(result["records"], plan))
+    except Exception as exc:  # the journal already holds every record; keep going to write an artifact
+        metrics = {"error": f"metrics failed: {type(exc).__name__}"}
+        exit_code = 3
     artifact = {"kind": plan.kind, "provenance": provenance, "plan": plan.to_dict(),
                 "execution": {k: v for k, v in result.items() if k != "records"},
                 "records": result["records"], "metrics": metrics}
-    text = assert_safe_for_output(artifact, what="benchmark artifact")
+    try:
+        text = assert_safe_for_output(artifact, what="benchmark artifact")
+    except ArtifactSafetyError as exc:
+        text = assert_safe_for_output(_minimal_artifact(plan, provenance, result, exc.category, journal),
+                                      what="minimal artifact")
+        print(f"\nFull artifact REFUSED by the safety check ({exc.category}); writing a minimal diagnostic "
+              "artifact instead. Sanitized per-call records are in the journal.")
+        metrics = None
+        exit_code = 3
 
     _print_result(plan, result, metrics, mode, real_clients)
-    output = args.output
-    if live and not output:
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        output = f"eval/results/experiments/{plan.kind.replace('_', '-')}-{stamp}.json"
     if output:
         os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
-        with open(output, "w", encoding="utf-8") as f:
+        with open(output, "x" if live else "w", encoding="utf-8") as f:  # live evidence is never overwritten
             f.write(text)
         print(f"\nArtifact written: {output}")
     if not live:
         from tests import offline_guard
 
         print(f"Outbound network attempts intercepted by the offline guard: {len(offline_guard.blocked_requests)}")
-    return 0 if result["complete"] else 1
+    return exit_code
+
+
+def _minimal_artifact(plan, provenance, result, category: str, journal) -> dict:
+    """What remains safe to store when the full artifact is refused: counts, ledger, fingerprints."""
+    return {
+        "kind": plan.kind, "artifact_rejected": True, "rejection_category": category,
+        "provenance": {k: provenance[k] for k in ("created_at", "mode", "git", "live_authorization", "jev_model_pinned")},
+        "fingerprints": plan.fingerprints,
+        "execution": {k: result[k] for k in ("complete", "valid", "executed_calls", "scheduled_calls", "ledger")},
+        "journal": None if journal is None else {"path": journal.path, "lines": journal.lines,
+                                                 "redacted_records": journal.redacted_records},
+    }
 
 
 def _build_routers(plan, cases, approved, live, LiveAuthorization):
@@ -309,7 +345,9 @@ def _print_result(plan, result, metrics, mode, real_clients) -> None:
           f"{d['downstream_modules_imported_during_run'] or 'none'}; loaded in this process: "
           f"{sorted(m for m in d['downstream_modules_guarded'] if m in sys.modules) or 'none'}")
     print(f"Live authorization: {'none' if mode != 'live' else 'yes'}; real clients constructed: {real_clients or 'none'}")
-    if plan.kind == "benchmark":
+    if metrics is None or "error" in metrics:
+        print(f"\nMetrics not available: {'artifact refused' if metrics is None else metrics['error']}")
+    elif plan.kind == "benchmark":
         print(f"\nMetrics{sim}")
         if mode != "live" and "rules" in metrics["per_router"]:
             print("  (rules is deterministic and local, so its numbers are real even in a dry run; its patterns were "

@@ -29,7 +29,14 @@ class DownstreamCalled(RuntimeError):
 
 
 class ArtifactSafetyError(RuntimeError):
-    """An artifact or outgoing payload would contain a secret, headers or document text."""
+    """An artifact or outgoing payload would contain a secret, headers or document text.
+
+    `category` is a fixed token (safe to store or print); the message may name paths.
+    """
+
+    def __init__(self, message: str, category: str = "unsafe"):
+        super().__init__(message)
+        self.category = category
 
 
 # --- Live authorization ------------------------------------------------------------------------
@@ -285,12 +292,13 @@ def assert_safe_for_output(obj, *, what: str) -> str:
     """Serialize obj, refusing secrets, auth headers, forbidden keys and document-length text."""
     for path, key, leaf in _walk(obj):
         if key is not None and str(key).lower() in FORBIDDEN_KEYS:
-            raise ArtifactSafetyError(f"{what}: forbidden key {key!r} at {path}")
+            raise ArtifactSafetyError(f"{what}: forbidden key at {path}", "forbidden_key")
         if isinstance(leaf, str) and len(leaf) > MAX_STRING_CHARS:
-            raise ArtifactSafetyError(f"{what}: string of {len(leaf)} chars at {path} (document text?)")
+            raise ArtifactSafetyError(f"{what}: string of {len(leaf)} chars at {path} (document text?)",
+                                      "document_length_text")
     text = json.dumps(obj, sort_keys=True, default=str)
     if contains_registered_secret(text):
-        raise ArtifactSafetyError(f"{what}: contains a registered secret value")
+        raise ArtifactSafetyError(f"{what}: contains a registered secret value", "secret")
     if "bearer " in text.lower():
-        raise ArtifactSafetyError(f"{what}: contains an authorization header value")
+        raise ArtifactSafetyError(f"{what}: contains an authorization header value", "authorization_header")
     return text
