@@ -1,15 +1,23 @@
 """CI eval gate. LIVE: makes billable Bedrock calls (system under test + judge).
 
+Runs only when pytest is given --run-live-eval (see the repository-root
+conftest.py); otherwise these tests are skipped, or rejected with a usage error
+when they are the only tests selected:
+
+    pytest eval/test_llm_judge.py -m llm --run-live-eval -v
+
 Thresholds come from eval.metrics.GATES (single source of truth). Only gates
 marked enforced can fail the build; report-only gates are printed and written
 to the results file.
 """
-from dotenv import load_dotenv
-load_dotenv()
+# Imported first: importing the tests package installs the offline guard, so this
+# module is guarded even if the root conftest.py is bypassed (--noconftest).
+from tests import offline_guard
 
 import json
 
 import pytest
+from dotenv import load_dotenv
 
 from eval.eval_queries import EVAL_CASES
 from eval.llm_judge import run_evaluation
@@ -18,8 +26,23 @@ from eval.metrics import GATES
 ENFORCED = [gate for gate in GATES if gate.enforced]
 
 
+def _authorize_live_run(config) -> None:
+    """Defense in depth for the paid fixture, independent of the root conftest hooks.
+
+    Skips unless --run-live-eval was given (the option does not exist when the root
+    conftest is bypassed, so that case skips too), and fails if the offline guard is
+    still installed, which would mean the live run is misconfigured.
+    """
+    if not config.getoption("run_live_eval", default=False):
+        pytest.skip("live, billable evaluation not authorized: pass --run-live-eval")
+    if offline_guard.is_installed():
+        pytest.fail("offline network guard is still installed; refusing to start a live evaluation")
+
+
 @pytest.fixture(scope="module")
-def eval_results():
+def eval_results(request):
+    _authorize_live_run(request.config)
+    load_dotenv()
     return run_evaluation()
 
 

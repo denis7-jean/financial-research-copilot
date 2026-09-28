@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Run ruff
-        run: ruff check app/ eval/ tests/ scripts/
+        run: ruff check conftest.py app/ eval/ tests/ scripts/
 
   unit-tests:
     name: Unit Tests
@@ -92,8 +92,10 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       # The harness drives CopilotOrchestrator in-process; no server is needed.
+      # --run-live-eval is the explicit authorization for billable calls; without it
+      # pytest rejects an llm-only selection with a usage error instead of skipping.
       - name: Run LLM eval suite
-        run: pytest eval/test_llm_judge.py -m llm -v
+        run: pytest eval/test_llm_judge.py -m llm --run-live-eval -v
       - name: Upload eval results
         if: always()
         uses: actions/upload-artifact@v4
