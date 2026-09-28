@@ -17,6 +17,38 @@ from datetime import datetime, timezone
 
 LIVE_PROVIDERS = ("bedrock", "typesafe")
 
+# Live runs read only these names from .env, per authorized provider; nothing else is loaded.
+PROVIDER_ENV_NAMES = {
+    "bedrock": ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_DEFAULT_REGION",
+                "BEDROCK_MODEL_ID"),
+    "typesafe": ("TYPESAFE_API_KEY",),
+}
+DOTENV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env")
+
+
+def read_env_file(names, path: str = DOTENV_PATH) -> dict:
+    """Only the named keys from .env (other entries are parsed and discarded, never exported)."""
+    wanted = set(names)
+    if not wanted or not os.path.exists(path):
+        return {}
+    from dotenv import dotenv_values
+
+    return {k: v for k, v in dotenv_values(path).items() if k in wanted and v}
+
+
+def export_bedrock_env(file_values: dict) -> None:
+    """Bedrock credentials for botocore; existing environment values win. The TypeSafe key is never exported."""
+    for name in PROVIDER_ENV_NAMES["bedrock"]:
+        if name not in os.environ and file_values.get(name):
+            os.environ[name] = file_values[name]
+
+
+def load_typesafe_key(file_values: dict):
+    from experiments.router_bench.safety import SecretValue
+
+    value = os.environ.get("TYPESAFE_API_KEY") or file_values.get("TYPESAFE_API_KEY")
+    return SecretValue(value) if value else None
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m experiments.router_bench", description=__doc__,
@@ -172,24 +204,22 @@ def _build_routers(plan, cases, approved, live, LiveAuthorization):
             fake = FakeTypeSafe(labels, plan.seed + 2)
             impl["jev"] = JevRouter(JevClient(transport=fake.transport()), approved)
     else:
-        from dotenv import load_dotenv
-
-        from experiments.router_bench.safety import SecretValue
-
         authorization = LiveAuthorization(live)
-        load_dotenv()
+        # Only the names each authorized provider needs; a TypeSafe-only run reads no AWS values.
+        file_values = read_env_file(name for provider in live for name in PROVIDER_ENV_NAMES[provider])
         if "haiku" in plan.routers:
+            export_bedrock_env(file_values)
             os.environ["AWS_MAX_ATTEMPTS"] = "1"  # one HTTP request per routed call; no silent retries
             impl["haiku"] = HaikuRouter(authorization=authorization)
             real.append("bedrock-runtime")
         if "jev" in plan.routers:
-            key = os.environ.get("TYPESAFE_API_KEY")
-            if not key:
+            api_key = load_typesafe_key(file_values)
+            if api_key is None:
                 print("TYPESAFE_API_KEY is not set (value never printed).", file=sys.stderr)
                 return None, real
-            impl["jev"] = JevRouter(JevClient(authorization=authorization, api_key=SecretValue(key)), approved)
-            del key
+            impl["jev"] = JevRouter(JevClient(authorization=authorization, api_key=api_key), approved)
             real.append("typesafe")
+        file_values.clear()
     if "rules" in plan.routers:
         impl["rules"] = RulesRouter()
     return impl, real

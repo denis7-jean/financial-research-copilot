@@ -14,13 +14,18 @@ from experiments.router_bench.routers import (
     HaikuRouter,
     JevClient,
     JevRouter,
+    JevSchemaError,
     RulesRouter,
     final_decision,
     rules_fingerprint,
     validate_jev_response,
 )
-from experiments.router_bench.safety import SecretValue
+from experiments.router_bench.safety import OfflineFakeClient, SecretValue
 from tests.conftest import FakeBedrock, aws_error, converse_text
+
+
+class ScriptedBedrock(OfflineFakeClient, FakeBedrock):
+    """tests.conftest.FakeBedrock, explicitly marked as an offline fake for the benchmark."""
 
 V2 = routing_dataset("v2")
 CASES = {c.id: c for c in V2}
@@ -90,7 +95,7 @@ def test_final_decision_rule(raw, score, expected):
 
 
 def _haiku(*responses):
-    return HaikuRouter(bedrock_client=FakeBedrock(converse_responses=list(responses)))
+    return HaikuRouter(bedrock_client=ScriptedBedrock(converse_responses=list(responses)))
 
 
 def test_haiku_records_raw_and_final_for_a_model_decision():
@@ -156,23 +161,24 @@ def test_jev_low_probability_falls_back_to_qa():
     assert (record.raw_label, record.final_label, record.outcome) == ("summarize", "qa", "fallback_low_score")
 
 
-@pytest.mark.parametrize("body, reason", [
-    (_jev_body(model="jev-latest"), "pinned"),
+@pytest.mark.parametrize("body, code", [
+    (_jev_body(model="jev-latest"), "model_mismatch"),
     ({**_jev_body(), "answers": {"route": {"choice": "qa", "probabilities": {"qa": 0.9, "summarize": 0.9},
-                                           "confidence": 0.8}}}, "sum to 1"),
+                                           "confidence": 0.8}}}, "probabilities_do_not_sum_to_1"),
     ({**_jev_body(), "answers": {"route": {"choice": "qa", "probabilities": {"qa": 0.3, "summarize": 0.7},
-                                           "confidence": 0.4}}}, "most probable"),
+                                           "confidence": 0.4}}}, "choice_not_argmax"),
     ({**_jev_body(), "answers": {"route": {"choice": "other", "probabilities": {"qa": 0.5, "summarize": 0.5},
-                                           "confidence": 0.0}}}, "not one of"),
-    ({k: v for k, v in _jev_body().items() if k != "usage"}, "usage missing"),
-    ({**_jev_body(), "usage": {"input_tokens": 0, "output_tokens": 0}}, "positive integer"),
+                                           "confidence": 0.0}}}, "bad_choice"),
+    ({k: v for k, v in _jev_body().items() if k != "usage"}, "usage_missing"),
+    ({**_jev_body(), "usage": {"input_tokens": 0, "output_tokens": 0}}, "bad_input_tokens"),
 ])
-def test_jev_schema_violations(body, reason):
-    with pytest.raises(Exception, match=reason):
+def test_jev_schema_violations(body, code):
+    with pytest.raises(JevSchemaError) as excinfo:
         validate_jev_response(body)
+    assert excinfo.value.code == code and str(excinfo.value) == code
     record = _jev_router(lambda req: httpx.Response(200, json=body)).route(CASES["L01"])
     assert (record.raw_label, record.final_label, record.outcome) == (None, "qa", "fallback_schema_error")
-    assert record.cost_basis == "none"
+    assert (record.error_class, record.cost_basis) == (f"schema:{code}", "none")
 
 
 @pytest.mark.parametrize("status, error_class", [

@@ -65,6 +65,24 @@ def require_live(authorization: "LiveAuthorization | None", provider: str) -> No
     authorization.require(provider)
 
 
+class OfflineFakeClient:
+    """Marker base class for explicitly controlled offline fakes of a provider client.
+
+    Dependency injection is allowed only for instances of this class (Bedrock) or an
+    httpx.MockTransport (TypeSafe). Anything else injected is treated as a real client
+    and needs a LiveAuthorization, so injection cannot bypass the live opt-in.
+    """
+
+
+def require_offline_fake(client, provider: str) -> None:
+    from botocore.client import BaseClient
+
+    if isinstance(client, BaseClient) or not isinstance(client, OfflineFakeClient):
+        raise LiveCallNotAuthorized(
+            f"{provider}: an injected client must be an OfflineFakeClient; real clients are built only "
+            "by the benchmark itself, behind a LiveAuthorization")
+
+
 # --- Secrets -------------------------------------------------------------------------------------
 
 _REGISTERED_SECRETS: list[str] = []

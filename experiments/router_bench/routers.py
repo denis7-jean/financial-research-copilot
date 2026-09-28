@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import re
 import time
 from contextlib import contextmanager
@@ -29,7 +30,14 @@ from experiments.router_bench.config import (
     JEV_READ_TIMEOUT_S,
 )
 from experiments.router_bench.payload import LABELS, ApprovedQuestions, build_jev_payload
-from experiments.router_bench.safety import LiveAuthorization, SecretValue, require_live
+from experiments.router_bench.safety import (
+    LiveAuthorization,
+    LiveCallNotAuthorized,
+    SecretValue,
+    contains_registered_secret,
+    require_live,
+    require_offline_fake,
+)
 
 # Never log request details (headers) from the HTTP stack.
 for _name in ("httpx", "httpcore"):
@@ -87,8 +95,28 @@ def final_decision(raw_label: str | None, raw_score: float | None, outcome_if_mi
 # --- Haiku 4.5: the existing RouterAgent, unchanged --------------------------------------------------
 
 @contextmanager
+def _dotenv_disabled():
+    """app.agents.router calls load_dotenv() when first imported; keep it from reading .env."""
+    previous = os.environ.get("PYTHON_DOTENV_DISABLED")
+    os.environ["PYTHON_DOTENV_DISABLED"] = "1"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("PYTHON_DOTENV_DISABLED", None)
+        else:
+            os.environ["PYTHON_DOTENV_DISABLED"] = previous
+
+
+def _import_router_agent():
+    with _dotenv_disabled():
+        from app.agents.router import RouterAgent
+    return RouterAgent
+
+
+@contextmanager
 def _patched_boto3_client(fake):
-    """Build RouterAgent around an injected client, without creating (or resolving credentials for) a real one."""
+    """Build RouterAgent around an injected fake, without creating (or resolving credentials for) a real client."""
     import app.agents.router as router_module
 
     with mock.patch.object(router_module.boto3, "client", lambda *args, **kwargs: fake):
@@ -101,14 +129,17 @@ class HaikuRouter:
     worst_case_usd = HAIKU_WORST_CASE_USD
 
     def __init__(self, *, bedrock_client=None, authorization: LiveAuthorization | None = None):
-        from app.agents.router import RouterAgent
-
+        # Authorization first: nothing below may import app code (and so .env) or build a client before it.
+        if bedrock_client is not None:
+            require_offline_fake(bedrock_client, "bedrock")
+        else:
+            require_live(authorization, "bedrock")
+        RouterAgent = _import_router_agent()
         if bedrock_client is not None:
             with _patched_boto3_client(bedrock_client):
                 self.agent = RouterAgent()
             self.live = False
         else:
-            require_live(authorization, "bedrock")
             self.agent = RouterAgent()
             self.live = True
         self.model_id = self.agent._model_id
@@ -191,7 +222,23 @@ class RulesRouter:
 # --- TypeSafe Jev --------------------------------------------------------------------------------------
 
 class JevSchemaError(RuntimeError):
-    """A 200 response that does not match the documented contract."""
+    """A 200 response that does not match the documented contract.
+
+    Carries a fixed code only: no server-controlled text ever reaches a message,
+    a record or an artifact.
+    """
+
+    CODES = frozenset({
+        "not_json", "not_object", "model_mismatch", "answers_missing", "bad_choice", "bad_probability_keys",
+        "bad_probability_values", "probabilities_do_not_sum_to_1", "choice_not_argmax", "bad_confidence",
+        "usage_missing", "bad_input_tokens", "bad_output_tokens",
+    })
+
+    def __init__(self, code: str):
+        if code not in self.CODES:
+            raise ValueError(f"unknown schema error code {code!r}")
+        super().__init__(code)
+        self.code = code
 
 
 class JevCallError(RuntimeError):
@@ -212,42 +259,62 @@ def _is_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
+_SAFE_HEADER_VALUE = re.compile(r"^[\x20-\x7e]{0,128}$")
+MAX_REPORTED_NAMES = 20
+
+
+def _safe_names(names) -> list[str]:
+    """Server-controlled field names, reduced to short identifiers; anything else is redacted."""
+    kept = sorted(n if isinstance(n, str) and _SAFE_NAME.match(n) else "<redacted>" for n in names)
+    return kept[:MAX_REPORTED_NAMES] + ([f"<{len(kept) - MAX_REPORTED_NAMES} more>"] if len(kept) > MAX_REPORTED_NAMES else [])
+
+
+def _safe_header_value(value: str) -> str:
+    if not _SAFE_HEADER_VALUE.match(value) or "bearer" in value.lower() or contains_registered_secret(value):
+        return "<redacted>"
+    return value
+
+
 def validate_jev_response(body) -> dict:
-    """The design §7 schema checks. Returns the parsed fields; raises JevSchemaError."""
+    """The design §7 schema checks. Returns the parsed fields; raises JevSchemaError(code)."""
     if not isinstance(body, dict):
-        raise JevSchemaError("body is not a JSON object")
+        raise JevSchemaError("not_object")
     if body.get("model") != JEV_MODEL:
-        raise JevSchemaError(f"model is {body.get('model')!r}, expected the pinned {JEV_MODEL}")
+        raise JevSchemaError("model_mismatch")
     try:
         answer = body["answers"]["route"]
     except (KeyError, TypeError):
-        raise JevSchemaError("answers.route missing") from None
+        raise JevSchemaError("answers_missing") from None
+    if not isinstance(answer, dict):
+        raise JevSchemaError("answers_missing")
     choice, probabilities, confidence = answer.get("choice"), answer.get("probabilities"), answer.get("confidence")
-    if choice not in LABELS:
-        raise JevSchemaError(f"choice {choice!r} is not one of {LABELS}")
+    if not isinstance(choice, str) or choice not in LABELS:
+        raise JevSchemaError("bad_choice")
     if not isinstance(probabilities, dict) or set(probabilities) != set(LABELS):
-        raise JevSchemaError("probabilities must have exactly the keys qa and summarize")
+        raise JevSchemaError("bad_probability_keys")
     if not all(_is_number(p) and 0.0 <= p <= 1.0 for p in probabilities.values()):
-        raise JevSchemaError("probabilities must be numbers in [0, 1]")
+        raise JevSchemaError("bad_probability_values")
     if abs(sum(probabilities.values()) - 1.0) > 1e-3:
-        raise JevSchemaError("probabilities do not sum to 1")
+        raise JevSchemaError("probabilities_do_not_sum_to_1")
     if probabilities[choice] < max(probabilities.values()):
-        raise JevSchemaError("choice is not the most probable option")
+        raise JevSchemaError("choice_not_argmax")
     if not _is_number(confidence) or not 0.0 <= confidence <= 1.0:
-        raise JevSchemaError("confidence must be a number in [0, 1]")
+        raise JevSchemaError("bad_confidence")
     usage = body.get("usage")
     if not isinstance(usage, dict):
-        raise JevSchemaError("usage missing")
+        raise JevSchemaError("usage_missing")
     input_tokens, output_tokens = usage.get("input_tokens"), usage.get("output_tokens")
     if not (isinstance(input_tokens, int) and not isinstance(input_tokens, bool) and input_tokens > 0):
-        raise JevSchemaError("usage.input_tokens must be a positive integer")
+        raise JevSchemaError("bad_input_tokens")
     if not (isinstance(output_tokens, int) and not isinstance(output_tokens, bool) and output_tokens >= 0):
-        raise JevSchemaError("usage.output_tokens must be a non-negative integer")
+        raise JevSchemaError("bad_output_tokens")
     return {
-        "choice": choice, "probabilities": dict(probabilities), "confidence": confidence, "model": body["model"],
+        "choice": choice, "probabilities": {k: float(v) for k, v in probabilities.items()},
+        "confidence": float(confidence), "model": JEV_MODEL,
         "input_tokens": input_tokens, "output_tokens": output_tokens,
-        "extra_fields": sorted(set(body) - {"model", "answers", "usage"}),
-        "extra_answer_fields": sorted(set(answer) - {"choice", "probabilities", "confidence"}),
+        "extra_fields": _safe_names(set(body) - {"model", "answers", "usage"}),
+        "extra_answer_fields": _safe_names(set(answer) - {"choice", "probabilities", "confidence"}),
     }
 
 
@@ -255,19 +322,26 @@ class JevClient:
     """HTTP client for jev-1.13.0. No retries, no redirects, no environment proxies or .netrc.
 
     A real network transport requires a LiveAuthorization for typesafe and an API key;
-    tests and dry runs inject an httpx.MockTransport instead.
+    tests and dry runs inject an httpx.MockTransport instead. Any other injected
+    transport is treated as real, so injection cannot bypass the live opt-in.
     """
 
     def __init__(self, *, transport: httpx.BaseTransport | None = None,
                  authorization: LiveAuthorization | None = None, api_key: SecretValue | None = None):
+        if api_key is not None and not isinstance(api_key, SecretValue):
+            raise TypeError("api_key must be a SecretValue")
         if transport is None:
             require_live(authorization, "typesafe")
             if api_key is None:
                 raise ValueError("a live Jev client needs TYPESAFE_API_KEY")
             transport = httpx.HTTPTransport(retries=0)
             self.live = True
-        else:
+        elif isinstance(transport, httpx.MockTransport):
             self.live = False
+        else:
+            raise LiveCallNotAuthorized(
+                "typesafe: only an httpx.MockTransport may be injected; real transports are built by the "
+                "client itself, behind a LiveAuthorization")
         self._api_key = api_key
         self._http = httpx.Client(
             transport=transport, trust_env=False, follow_redirects=False,
@@ -287,7 +361,7 @@ class JevClient:
             raise JevCallError(f"transport:{type(exc).__name__}") from None
         except Exception as exc:  # e.g. the offline guard's NetworkBlockedError; never echo the message
             raise JevCallError(f"transport:{type(exc).__name__}") from None
-        kept = {k.lower(): v for k, v in response.headers.items()
+        kept = {k.lower(): _safe_header_value(v) for k, v in response.headers.items()
                 if k.lower() in ALLOWED_RESPONSE_HEADERS or k.lower().startswith(ALLOWED_RESPONSE_HEADER_PREFIXES)}
         if response.status_code != 200:
             status = response.status_code
@@ -295,7 +369,7 @@ class JevClient:
         try:
             body = response.json()
         except ValueError:
-            raise JevSchemaError("response is not JSON") from None
+            raise JevSchemaError("not_json") from None
         return validate_jev_response(body), kept
 
     def close(self) -> None:
@@ -326,7 +400,7 @@ class JevRouter:
             latency_ms = (time.perf_counter() - start) * 1000
             return RouteRecord(router=self.name, case_id=case.id, raw_label=None, raw_score=None,
                                final_label=FALLBACK_ROUTE, outcome="fallback_schema_error",
-                               latency_ms=round(latency_ms, 3), error_class=f"schema:{exc}")
+                               latency_ms=round(latency_ms, 3), error_class=f"schema:{exc.code}")
         latency_ms = (time.perf_counter() - start) * 1000
         raw_label, raw_score = fields["choice"], fields["probabilities"][fields["choice"]]
         final_label, outcome = final_decision(raw_label, raw_score, "fallback_schema_error")

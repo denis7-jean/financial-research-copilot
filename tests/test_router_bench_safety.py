@@ -4,6 +4,8 @@ No test here can reach Bedrock or TypeSafe: the offline guard blocks all non-loo
 network, fakes and httpx.MockTransport stand in for the providers, LiveAuthorization
 refuses inside pytest, and child processes get an unreachable proxy as a second barrier.
 """
+import os
+
 import httpx
 import pytest
 
@@ -157,8 +159,11 @@ def test_budget_exhaustion_stops_the_run_and_keeps_partial_results(tmp_path):
 def test_a_call_costing_more_than_its_reservation_stops_the_run():
     from tests.conftest import FakeBedrock, converse_text
 
+    class Scripted(safety.OfflineFakeClient, FakeBedrock):
+        pass
+
     plan = build_plan(("haiku",), 1, 0, 1)
-    runaway = FakeBedrock(converse_responses=[
+    runaway = Scripted(converse_responses=[
         converse_text('{"task_type": "qa", "confidence": 0.9, "reasoning": "r"}', 200, 5_000)])
     result = run(plan, _routers(plan, bedrock=runaway), pace=False)
     assert result["executed_calls"] == 1 and not result["valid"]
@@ -239,3 +244,101 @@ def test_secret_values_cannot_be_serialized():
 
     with pytest.raises(TypeError):
         pickle.dumps(safety.SecretValue(CANARY))
+
+
+# --- Injected clients cannot bypass live authorization (audit finding 1) -----------------------------
+
+def test_an_injected_real_bedrock_client_is_refused():
+    import boto3
+    from unittest import mock
+
+    real = boto3.client("bedrock-runtime", region_name="us-east-1")  # built offline; never called
+    for injected in (real, mock.MagicMock(), object()):
+        with pytest.raises(safety.LiveCallNotAuthorized, match="OfflineFakeClient"):
+            HaikuRouter(bedrock_client=injected)
+
+
+def test_an_injected_real_transport_is_refused():
+    class CustomTransport(httpx.BaseTransport):
+        def handle_request(self, request):
+            raise AssertionError("must never be used")
+
+    for transport in (httpx.HTTPTransport(), CustomTransport()):
+        with pytest.raises(safety.LiveCallNotAuthorized, match="MockTransport"):
+            JevClient(transport=transport, api_key=safety.SecretValue(CANARY))
+    with pytest.raises(TypeError, match="SecretValue"):
+        JevClient(transport=httpx.MockTransport(lambda r: httpx.Response(200)), api_key=CANARY)
+
+
+def test_authorization_is_checked_before_app_code_is_imported(monkeypatch):
+    import sys
+
+    monkeypatch.delitem(sys.modules, "app.agents.router")
+    with pytest.raises(safety.LiveCallNotAuthorized):
+        HaikuRouter()
+    with pytest.raises(safety.LiveCallNotAuthorized):
+        HaikuRouter(bedrock_client=object())
+    assert "app.agents.router" not in sys.modules  # not imported, so its load_dotenv() never ran
+
+
+def test_router_agent_is_imported_with_dotenv_disabled(monkeypatch):
+    import sys
+
+    import dotenv
+
+    seen = []
+    monkeypatch.delitem(sys.modules, "app.agents.router")
+    monkeypatch.delenv("PYTHON_DOTENV_DISABLED", raising=False)
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: seen.append(os.environ.get("PYTHON_DOTENV_DISABLED")))
+    HaikuRouter(bedrock_client=SimulatedBedrock(LABELS, 1))
+    assert seen == ["1"]  # the module-level load_dotenv() ran with loading disabled
+    assert "PYTHON_DOTENV_DISABLED" not in os.environ  # and the setting was restored afterwards
+
+
+# --- Credential exposure (audit findings 7 and 8) ---------------------------------------------------
+
+def test_live_runs_read_only_the_keys_their_providers_need(tmp_path, monkeypatch):
+    from experiments.router_bench import cli
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("AWS_ACCESS_KEY_ID=file-aws-canary\nAWS_SECRET_ACCESS_KEY=file-secret-canary\n"
+                        "TYPESAFE_API_KEY=file-ts-canary\nOTHER_SECRET=file-other-canary\n", encoding="utf-8")
+    typesafe_only = cli.read_env_file(cli.PROVIDER_ENV_NAMES["typesafe"], path=str(env_file))
+    assert typesafe_only == {"TYPESAFE_API_KEY": "file-ts-canary"}
+    key = cli.load_typesafe_key(typesafe_only)
+    assert key.reveal() == "file-ts-canary" and "file-ts-canary" not in repr(key)
+    assert "TYPESAFE_API_KEY" not in os.environ  # never exported
+    bedrock_only = cli.read_env_file(cli.PROVIDER_ENV_NAMES["bedrock"], path=str(env_file))
+    assert set(bedrock_only) == {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID")
+    cli.export_bedrock_env(bedrock_only)
+    assert os.environ["AWS_ACCESS_KEY_ID"] == "file-aws-canary"
+    assert os.environ["AWS_SECRET_ACCESS_KEY"] == "unit-test-fake-secret"  # existing values win
+    assert "OTHER_SECRET" not in os.environ and "TYPESAFE_API_KEY" not in os.environ
+
+
+def test_the_cli_never_loads_the_whole_dotenv_file():
+    import inspect
+
+    from experiments.router_bench import cli
+
+    assert "load_dotenv" not in inspect.getsource(cli)
+
+
+def test_server_controlled_text_never_reaches_records_or_artifacts():
+    safety.SecretValue(CANARY)
+    hostile = "<script>alert(1)</script> Bearer stolen " + "x" * 700
+    body = {"model": hostile, "answers": {"route": {"choice": "qa"}}, "usage": {}}
+    record = JevRouter(JevClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body))),
+                       ApprovedQuestions(V2, ["L01"])).route(V2[0])
+    assert record.error_class == "schema:model_mismatch"
+    ok_body = {**_ok_body(), hostile[:30]: 1, "headers": 2, **{f"f{i}": i for i in range(30)}}
+    headers = [(b"x-request-id", f"id-{CANARY}".encode()), (b"x-ratelimit-remaining", b"\xe9\xe9"), (b"date", b"Mon")]
+    record_ok = JevRouter(JevClient(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, headers=headers, json=ok_body))), ApprovedQuestions(V2, ["L01"])).route(V2[0])
+    assert "<redacted>" in record_ok.extra["extra_fields"] and len(record_ok.extra["extra_fields"]) <= 21
+    assert record_ok.extra["response_headers"]["x-request-id"] == "<redacted>"
+    assert record_ok.extra["response_headers"]["x-ratelimit-remaining"] == "<redacted>"
+    for r in (record, record_ok):
+        text = safety.assert_safe_for_output(r.to_dict(), what="record")
+        assert "script" not in text and "stolen" not in text and CANARY not in text

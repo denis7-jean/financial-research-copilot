@@ -10,9 +10,10 @@ import random
 import httpx
 
 from experiments.router_bench.config import JEV_ENDPOINT, JEV_MODEL
+from experiments.router_bench.safety import OfflineFakeClient
 
 
-class FakeBedrock:
+class FakeBedrock(OfflineFakeClient):
     """A bedrock-runtime client whose converse() answers like the Haiku router prompt."""
 
     def __init__(self, labels: dict[str, str], seed: int, *, accuracy=0.9, parse_error_rate=0.01,
