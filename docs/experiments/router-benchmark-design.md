@@ -13,10 +13,14 @@
 - **The benchmark, implemented offline** in `experiments/router_bench/` (approved 2026-09-28;
   commits `95a01f0` and `e6f52a5`). The dry run is verified; see §13.
 
+**Done live (approved 2026-09-28):**
+- The two-call Jev API verification: L01 and L12, $0.000034. Results are in §7.1 and archived in
+  `eval/results/experiments/2026-09-28-jev-verification/`.
+
 **Not yet approved or done:**
-- Sending any text to TypeSafe.
-- The Jev verification calls.
-- Any paid call or benchmark run.
+- Sending the other 32 questions to TypeSafe.
+- The proposed $0.60 Bedrock ceiling.
+- The Phase A benchmark run.
 
 §12 lists the decisions still needed. Version 1 of this design (commit `264ee6b`) used the
 30-case v1 labels.
@@ -226,7 +230,7 @@ It is experimental and report-only.
 
   All of these are validated as in §7.
 
-## 7. Jev API verification plan (1–3 calls, not executed)
+## 7. Jev API verification plan (executed 2026-09-28: 2 calls; results in §7.1)
 
 **Purpose:** confirm the documented contract before building on it.
 
@@ -290,6 +294,62 @@ It is experimental and report-only.
 - at most $0.01;
 - only case IDs L01 and L12.
 
+### 7.1 Verification results (2026-09-28, 20:44 UTC)
+
+**The run:**
+- **Command:** `python -m experiments.router_bench verify-jev --live typesafe`, at `c0c2f42`
+  (clean tree).
+- **Requests:** exactly 2, with no retries or failures. The run stops at the first failure
+  (`c0c2f42`).
+- **Cost:** $0.000034 committed against the $0.01 cap.
+- **Archive:** `eval/results/experiments/2026-09-28-jev-verification/`, with a SHA-256
+  manifest. Artifact `646f7735…`, journal `812d30ba…`.
+
+| | L01 (clear `qa`) | L12 (clear `summarize`) |
+|---|---|---|
+| Returned `model` | `jev-1.13.0` (the pin held) | `jev-1.13.0` |
+| Choice (raw label) | `qa`: correct | `summarize`: correct |
+| `probabilities` | qa **1.0**, summarize **0.0** | qa **0.0**, summarize **1.0** |
+| `confidence` | 1.0 | 1.0 |
+| Final decision | `qa` (no fallback) | `summarize` (no fallback) |
+| `usage.input_tokens` / `output_tokens` | **410** / 33 | **408** / 35 |
+| Estimated cost (input tokens × $0.042 per 1M) | $0.0000172 | $0.0000171 |
+| Client-side latency | 187.5 ms (includes connection setup) | 133.6 ms |
+
+**Verified response schema:**
+- Top-level fields are exactly `model`, `answers` and `usage`.
+- `answers.route` has `choice`, `probabilities` (exactly the two option keys, summing to 1),
+  `confidence` and an **undocumented `type` field**. Only the field's name is recorded; the
+  schema check does not depend on it.
+- The documented request, including the `instructions` field, was accepted (no 422).
+- Only `date` matched the response-header allowlist. No `x-request-id`/`request-id` or
+  `x-ratelimit-*` headers were returned under those names.
+
+**Documented vs observed:**
+- **Input tokens:** about 410 per call, not the assumed 150–250. That is about 2.4× a bytes/4
+  estimate of the request (≈ 170), so TypeSafe adds its own overhead. The cost model now uses
+  410 (§9).
+- **Output tokens are reported** (33–35), although the documentation says output is free. Costs
+  still exclude output; whether it is billed is unverified.
+- **Confidence formula:** `confidence = 2p − 1` holds in both calls. At p = 1.0, however, this
+  cannot be told apart from other forms (for example `confidence = p`), so the 2-option formula
+  remains **unconfirmed**.
+
+**Limitations of two saturated predictions:**
+- **n = 2, on easy questions.** L01 and L12 are among the clearest questions in the set. Nothing
+  about accuracy, stability or calibration follows from them.
+- **Saturation.** Both probabilities are exactly 1.0/0.0. If that is typical, Jev's choice
+  probability will almost never fall below 0.6, so for Jev:
+  - raw and final decisions will be identical;
+  - its fallback rate will be about 0;
+  - score diagnostics (Brier, reliability, threshold sweep) will carry little information.
+
+  Phase A will show whether probabilities fall below 1.0 on harder or ambiguous questions (L13,
+  L19, L17, L20). The pre-registered rules (§4, §10) stay unchanged.
+- **Determinism is untested** (no repeated call was authorized).
+- **Latency was measured from this machine,** with connection setup on the first call. It is not
+  comparable with Haiku's in-process baseline.
+
 ## 8. Live-call safety (lessons from the 2026-09-28 incident)
 
 See `docs/incidents/2026-09-28-unguarded-live-eval-test-run.md`.
@@ -342,11 +402,11 @@ See `docs/incidents/2026-09-28-unguarded-live-eval-test-run.md`.
 
 | Item | Calls | Estimated cost |
 |---|---|---|
-| Jev verification (§7) | ≤ 3 | ≈ $0.00003 (cap $0.01) |
+| Jev verification (§7) | 2 (done) | **$0.000034** (actual, from reported usage) |
 | Haiku router, Phase A (measured 214 in / 52 out per call) | 34 × 10 + 3 = 343 | ≈ **$0.16** (≈ $0.18 with a possible 10% `us.*` premium) |
-| Jev, Phase A (150–250 input tokens per call assumed; checked by the verification) | 343 | ≈ **$0.003** (unverified pricing) |
+| Jev, Phase A (**410** input tokens per call, measured in the verification) | 343 | ≈ **$0.006** (documented price; output tokens assumed free) |
 | Rules | 34 | $0 |
-| **Total, Phase A** | | **≈ $0.17–0.20** (caps: $1 total) |
+| **Total, Phase A** | | **≈ $0.17** (ceilings: Bedrock $0.60 proposed, TypeSafe $0.05, $1.00 total) |
 | Optional: 150-query held-out set × 5 repetitions | 750 Haiku + 750 Jev | ≈ $0.36 + $0.01 |
 
 ## 10. Pre-registered reading of results
@@ -380,12 +440,15 @@ approved separately), and a privacy decision about TypeSafe.
 
 | Item | Source | Status |
 |---|---|---|
-| Endpoint, auth header, request/response field names, Choice schema (≤ 255 options) | docs.typesafe.ai `/api`, `/primitives/choice` (checked 2026-09-28) | Documented; **not verified** (§7) |
-| Pricing: $0.042 per 1M input tokens; output free | `/models` | Documented; not verified against a bill |
+| Endpoint, auth header, request and response fields for a 2-option Choice | docs.typesafe.ai `/api`, `/primitives/choice` | **Verified 2026-09-28** (§7.1), plus an undocumented `answers.route.type` field |
+| Model pin `jev-1.13.0` honored | — | **Verified** (returned `model` matched) |
+| Input tokens per routing request | assumed 150–250 | **Observed 408–410** (§7.1) |
+| Pricing: $0.042 per 1M input tokens; output free | `/models` | Documented. Output tokens are *reported* (33–35); not verified against a bill |
 | Rate limits: 250k tokens/s, 1,200 requests/min, 64k tokens per request | `/models` | Documented; may change |
 | Errors 401/422/429/529 | `/api` | Documented |
-| `confidence` formula for 2 options | `/confidence` (3-option example only) | **Inferred**; checked in §7 |
-| Calibration of probabilities; Haiku's verbalized confidence | not stated | **Unknown**; not assumed (§4) |
+| `confidence` formula for 2 options | `/confidence` (3-option example only) | Consistent with `2p − 1` in 2 calls, but both were saturated (p = 1.0), so **unconfirmed** |
+| Calibration of probabilities; Haiku's verbalized confidence | not stated | **Unknown**; not assumed (§4). The two observed probabilities were exactly 1.0 |
+| Request-ID and rate-limit response headers | not stated | None returned under `x-request-id`, `request-id` or `x-ratelimit-*` |
 | Latency, determinism, serving region, default retention | not stated | **Unknown**; the benchmark measures the first two |
 | Availability on Amazon Bedrock | none found | Not available as of 2026-09-27 |
 
@@ -396,15 +459,17 @@ approved separately), and a privacy decision about TypeSafe.
    - the question text of the listed case IDs;
    - the fixed instruction and criteria text (§6).
 
-   **Set.** The benchmark supports all 34 frozen v2 questions (decided 2026-09-28). The egress
-   approval for that set is still outstanding, and so is the verification pair (L01, L12).
-   All questions are about public companies and contain no personal data.
-3. **Jev verification:** calls 1–2 (optionally 3), on L01 and L12, with the $0.01 cap. This
-   needs `TYPESAFE_API_KEY` in the local `.env`, which you add yourself.
-4. **Phase A benchmark run:** 10 repetitions, Haiku and Jev, about $0.17–0.20, with the §8 caps.
-   This should come only after items 1–3 and a dry-run review.
+   **Set.** The benchmark supports all 34 frozen v2 questions (decided 2026-09-28). L01 and L12
+   were approved and sent in the verification. Egress approval for the full set of 34 is still
+   outstanding. All questions are about public companies and contain no personal data.
+3. ~~Jev verification~~: **done** (2 calls, §7.1).
+4. **Phase A benchmark run:** 10 repetitions, Haiku and Jev, about $0.17, strict reservation,
+   with the §8 limits. The dry run at `c879f83` is reviewed in §13.
 5. **The 20% application-error validity threshold** stays unchanged for this work (decided
    2026-09-28). Its limitations are recorded in `eval/README.md` for a separate review.
+6. **Bedrock ceiling $0.60** (proposed 2026-09-28; the default in `config.py`, pending final
+   approval). At $0.50, strict mode left only $0.0154 of headroom (§13.1). The TypeSafe ($0.05)
+   and total ($1.00) ceilings are unchanged.
 
 ## 13. Implementation (offline) and unresolved assumptions
 
@@ -442,10 +507,15 @@ A live run refuses to start in any of these cases:
 | `metrics.py` | Everything in §3–§5 and the §10 criteria |
 | `cli.py` | The command-line interface |
 
-**Dry-run results** (`e6f52a5`):
+**Dry-run results** (`c879f83`: strict reservation, calibrated Jev tokens, proposed ceilings):
 - Questions: 34 (strict 24 `qa` and 7 `summarize`; policy L19; exploratory L17 and L20).
-- Planned calls: Bedrock 343, TypeSafe 343, local rules 340.
-- Estimated cost: $0.1662. Hard caps: $0.50, $0.05 and $1.00.
+- Models (pinned): `us.anthropic.claude-haiku-4-5-20251001-v1:0` and `jev-1.13.0`.
+- Planned calls: Bedrock 343, TypeSafe 343 (each including 3 warm-up calls), local rules 340;
+  1,026 in total.
+- Estimated cost: Bedrock $0.1626, TypeSafe $0.0059, total $0.1685.
+- Hard ceilings: Bedrock $0.60 (proposed), TypeSafe $0.05, total $1.00.
+- Headroom at expected cost: Bedrock $0.1154, TypeSafe $0.0414.
+- The journal had 1,715 lines, and every paid record was preceded by its `call_started`.
 - Fingerprints:
   - dataset `9d4f2da1…`;
   - payload `54e2deaa…`;
@@ -454,11 +524,10 @@ A live run refuses to start in any of these cases:
 - Outbound network attempts: 0.
 
 **Unresolved assumptions** (to settle during verification, or before Phase A):
-1. **Jev request schema.** The `instructions` field and the `answers.route.*` / `usage.*` response
-   fields come from the documentation and are unverified. A 422 on the first verification call
-   stops everything.
-2. **Jev tokens and price.** The 250 input tokens per call and $0.042 per 1M are assumed. The
-   verification compares reported usage with a local byte/4 estimate.
+1. **Jev request schema.** Resolved: verified by the two calls (§7.1). The undocumented
+   `answers.route.type` field is recorded by name only.
+2. **Jev tokens and price.** Tokens are now calibrated to 410 per call (§7.1). The $0.042 per 1M
+   price, and whether output tokens are free, are still unverified against a bill.
 3. **Haiku output limit.** Superseded by §13.1: the strict reservation assumes Haiku 4.5's
    documented 64,000-token output limit.
 4. **Failed calls.** Jev failures are charged at worst case ($0.002688 each). Haiku failures cost
@@ -526,17 +595,15 @@ These guarantees rest on the following assumptions, which the dry run prints:
 
 If the model limit or the prices are wrong, the "hard cap" is not guaranteed.
 
-**Headroom caveat.** With the default caps, the strict reservation leaves only **$0.0154** of
-Bedrock headroom at the expected cost:
+**Headroom.** At a $0.50 Bedrock ceiling, the strict reservation left only **$0.0154** of
+headroom:
 
-> $0.50 cap − $0.1626 expected − $0.322 reservation = $0.0154
+> $0.50 − $0.1626 expected − $0.322 reservation = $0.0154
 
-- If real per-call cost runs about 9% above the measured average, the last calls cannot reserve
-  their worst case. The run then stops early and is invalid; no overspend occurs.
-- Options, which need your decision:
-  - raise the Bedrock cap to about $0.60;
-  - accept the risk;
-  - use `practical` mode, accepting the disclosed $0.315 overshoot.
+A per-call cost only about 9% above the measured average would then have stopped the run early.
+The proposed **$0.60** ceiling (§12 item 6, pending approval) gives **$0.1154** of headroom:
+per-call cost can run about 71% above the average before the last calls can no longer reserve.
+The ceiling still holds strictly, under the assumptions above.
 
 **Latency intervals.**
 - Latency now uses a two-way cluster bootstrap that resamples questions and repetitions.
