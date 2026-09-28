@@ -149,3 +149,59 @@ def test_verification_dry_run_journals_both_calls(tmp_path):
 def test_route_records_carry_no_forbidden_fields():
     fields = set(RouteRecord.__dataclass_fields__)
     assert not fields & {"query", "headers", "authorization", "context", "chunks", "retrieved_context"}
+
+
+# --- Verification stops at the first failure --------------------------------------------------------
+
+@pytest.mark.parametrize("response, outcome", [
+    (httpx.Response(500), "fallback_invoke_error"),
+    (httpx.Response(429), "fallback_invoke_error"),
+    (httpx.Response(200, json={"model": "jev-latest"}), "fallback_schema_error"),
+])
+def test_verification_stops_at_the_first_failed_call(response, outcome):
+    from experiments.router_bench.runner import build_verification_plan
+
+    sent = []
+
+    def handler(request):
+        sent.append(json.loads(request.content)["state"])
+        return response
+
+    plan = build_verification_plan()
+    assert plan.stop_on_first_failure is True
+    result = run(plan, {"jev": _jev(plan, handler)}, pace=False)
+    assert len(sent) == 1 and result["executed_calls"] == 1  # L12 was never sent
+    assert result["records"][0]["outcome"] == outcome and not result["complete"]
+    assert result["invalid_reasons"][0].startswith("stopped at the first failure: jev on L01")
+
+
+def test_verification_timeout_stops_the_run():
+    from experiments.router_bench.runner import build_verification_plan
+
+    def handler(request):
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    plan = build_verification_plan()
+    result = run(plan, {"jev": _jev(plan, handler)}, pace=False)
+    assert result["executed_calls"] == 1 and result["records"][0]["error_class"] == "timeout"
+
+
+def test_a_low_score_is_a_valid_response_not_a_failure():
+    from experiments.router_bench.runner import build_verification_plan
+
+    def handler(request):
+        return httpx.Response(200, json={
+            "model": JEV_MODEL, "answers": {"route": {"choice": "qa", "probabilities": {"qa": 0.55, "summarize": 0.45},
+                                                      "confidence": 0.1}},
+            "usage": {"input_tokens": 180, "output_tokens": 1}})
+
+    plan = build_verification_plan()
+    result = run(plan, {"jev": _jev(plan, handler)}, pace=False)
+    assert result["complete"] and result["executed_calls"] == 2
+
+
+def test_benchmark_plans_do_not_stop_on_a_single_failure():
+    plan = build_plan(("jev",), 1, 0, 1, allowed_ids=["L01", "L12"])
+    assert plan.stop_on_first_failure is False
+    result = run(plan, {"jev": _jev(plan, lambda r: httpx.Response(500))}, pace=False)
+    assert result["executed_calls"] == 2  # the benchmark relies on the consecutive-error limit instead

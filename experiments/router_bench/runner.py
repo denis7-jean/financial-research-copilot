@@ -36,6 +36,11 @@ EXPECTED_COST_PER_CALL = {"bedrock": haiku_cost(*HAIKU_EXPECTED_TOKENS), "typesa
 MAX_POSSIBLE_CALL = {"bedrock": HAIKU_MAX_CALL_USD, "typesafe": JEV_WORST_CASE_USD}
 
 
+# Outcomes that are failures (a low-score fallback is a valid response, not a failure).
+FAILURE_OUTCOMES = frozenset({"fallback_invoke_error", "fallback_schema_error", "fallback_parse_error",
+                              "fallback_harness_error"})
+
+
 def reservations_for(haiku_reservation: str) -> dict[str, float]:
     return {"bedrock": haiku_reservation_usd(haiku_reservation), "typesafe": JEV_WORST_CASE_USD}
 
@@ -62,6 +67,8 @@ class Plan:
     cost_caps: dict[str, float]
     dataset_version: str = DATASET_VERSION
     haiku_reservation: str = DEFAULT_HAIKU_RESERVATION
+    # Verification: stop at the first failed call (HTTP error, timeout, schema mismatch, harness error).
+    stop_on_first_failure: bool = False
     fingerprints: dict = field(default_factory=dict)
     planned_calls: dict = field(default_factory=dict)
     cost: dict = field(default_factory=dict)
@@ -181,7 +188,7 @@ def build_verification_plan(repeat_first: bool = False) -> Plan:
     schedule = [Call("jev", cid, i + 1) for i, cid in enumerate(ids)]
     caps = {"bedrock": 0.0, "typesafe": VERIFICATION_COST_CAP, "total": VERIFICATION_COST_CAP}
     plan = Plan("jev_verification", ("jev",), tuple(VERIFICATION_CASE_IDS), _categories(cases, VERIFICATION_CASE_IDS),
-                len(ids), 0, 0, schedule, {}, caps)
+                len(ids), 0, 0, schedule, {}, caps, stop_on_first_failure=True)
     return _finish(plan)
 
 
@@ -256,6 +263,9 @@ def run(plan: Plan, routers: dict, *, sleep=time.sleep, clock=time.monotonic, pa
                     journal.record(record.to_dict())
                 if harness_error:
                     stop_reason = f"harness error in {call.router} on {call.case_id}: {harness_error}"
+                elif plan.stop_on_first_failure and record.outcome in FAILURE_OUTCOMES:
+                    stop_reason = (f"stopped at the first failure: {call.router} on {call.case_id}: "
+                                   f"{record.outcome} ({record.error_class})")
                 if stop_reason:
                     break
                 if record.infra_error:
