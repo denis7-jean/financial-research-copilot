@@ -416,7 +416,7 @@ def test_metadata_join_without_rescreening(tmp_path):
     assert p.prepare(**f)[0] is None
 
 
-def test_missing_contract_and_freeze_mismatch(tmp_path):
+def test_missing_encoding_evidence_and_freeze_mismatch(tmp_path):
     f = fixture(tmp_path)
     fb = f["artifacts"]["selection_specification"]
     roles = {role: fb for role in a.FREEZE_ROLES}
@@ -433,7 +433,7 @@ def test_missing_contract_and_freeze_mismatch(tmp_path):
     )
     result = adoption(f, proposed_freeze1=raw, expected_freeze1_sha256=sha_bytes(raw))
     assert result["historical_provenance_verified"] is True
-    assert result["code"] == "FREEZE_ADOPTION_ENCODING_UNSPECIFIED"
+    assert result["code"] == "invalid_json"
     assert result["proposed_freeze_compatible"] is False
     assert (
         p.prepare(

@@ -168,6 +168,8 @@ def prepare(
             code_bindings["selection_bundle"],
             proposed_freeze1,
             trusted_expected_freeze1_sha256,
+            executing_sources=executing_sources,
+            input_binding_raw=raw,
         )
         require(
             adoption["historical_provenance_verified"]
