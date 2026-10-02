@@ -270,7 +270,7 @@ def _history(root, manifest_binding, expected_manifest_sha256, sources):
 
 
 def dependency_modules(sources):
-    """Scoped import evidence; unsupported dynamic loaders fail closed."""
+    """Static checks on reviewed hash-bound source, not a Python sandbox."""
     declared = set()
     packages = set()
     for path in sources:
@@ -295,16 +295,76 @@ def dependency_modules(sources):
         "datetime",
         "itertools",
     }
-    prohibited = {"__import__", "exec", "eval", "compile", "getattr", "__builtins__"}
-    for raw in sources.values():
+    access = {
+        "ast": {
+            "Assign",
+            "Attribute",
+            "Call",
+            "FunctionDef",
+            "Import",
+            "ImportFrom",
+            "Name",
+            "dump",
+            "literal_eval",
+            "parse",
+            "walk",
+            "iter_child_nodes",
+        },
+        "collections": {"Counter", "defaultdict"},
+        "datetime": {"datetime"},
+        "hashlib": {"sha256"},
+        "itertools": {"combinations"},
+        "json": {"JSONDecodeError", "dumps", "loads"},
+        "math": {"sqrt", "isfinite"},
+        "pathlib": {"Path"},
+        "platform": {"python_implementation", "python_version", "machine", "platform"},
+        "re": {"compile", "escape", "fullmatch", "sub"},
+        "sys": {"byteorder", "float_info", "stdlib_module_names", "version_info"},
+        "unicodedata": {"normalize", "unidata_version"},
+    }
+    prohibited = {
+        "__import__",
+        "exec",
+        "eval",
+        "compile",
+        "getattr",
+        "__builtins__",
+        "vars",
+        "globals",
+        "locals",
+    }
+    for path, raw in sources.items():
         tree = ast.parse(raw.decode("utf-8", errors="strict"))
+        parents = {
+            child: parent
+            for parent in ast.walk(tree)
+            for child in ast.iter_child_nodes(parent)
+        }
+        aliases = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in allowed_stdlib:
+                        aliases[alias.asname or alias.name] = alias.name
+            elif isinstance(node, ast.ImportFrom) and node.module in allowed_stdlib:
+                require(
+                    all(alias.name in access[node.module] for alias in node.names),
+                    "RUNTIME_STDLIB_ACCESS",
+                )
         for node in ast.walk(tree):
             require(
                 not isinstance(node, ast.Name) or node.id not in prohibited,
                 "RUNTIME_DYNAMIC_LOADING",
             )
+            reviewed_re_compile = (
+                isinstance(node, ast.Attribute)
+                and node.attr == "compile"
+                and isinstance(node.value, ast.Name)
+                and aliases.get(node.value.id) == "re"
+            )
             require(
                 not isinstance(node, ast.Attribute)
+                or reviewed_re_compile
                 or node.attr
                 not in {
                     "__import__",
@@ -312,9 +372,55 @@ def dependency_modules(sources):
                     "load_module",
                     "exec_module",
                     "__dict__",
+                    "exec",
+                    "eval",
+                    "compile",
+                    "vars",
+                    "globals",
+                    "locals",
+                    "__globals__",
+                    "__builtins__",
                 },
                 "RUNTIME_DYNAMIC_LOADING",
             )
+            if isinstance(node, ast.Name) and node.id in aliases:
+                require(
+                    isinstance(parents.get(node), ast.Attribute), "RUNTIME_MODULE_ALIAS"
+                )
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+                module = aliases.get(node.value.id)
+                if module:
+                    allowed = node.attr in access[module]
+                    if module == "sys" and node.attr == "modules":
+                        member = parents.get(node)
+                        call = parents.get(member)
+                        assignment = parents.get(call)
+                        ancestor = assignment
+                        while ancestor is not None and not isinstance(
+                            ancestor, ast.FunctionDef
+                        ):
+                            ancestor = parents.get(ancestor)
+                        allowed = (
+                            path
+                            == "main/experiments/reviewer_protocol_v2/production_preparation.py"
+                            and node.value.id == "sys"
+                            and isinstance(member, ast.Attribute)
+                            and member.attr == "get"
+                            and isinstance(call, ast.Call)
+                            and call.func is member
+                            and len(call.args) == 1
+                            and isinstance(call.args[0], ast.Name)
+                            and call.args[0].id == "module_name"
+                            and not call.keywords
+                            and isinstance(assignment, ast.Assign)
+                            and assignment.value is call
+                            and len(assignment.targets) == 1
+                            and isinstance(assignment.targets[0], ast.Name)
+                            and assignment.targets[0].id == "module"
+                            and ancestor is not None
+                            and ancestor.name == "_executing_sources"
+                        )
+                    require(allowed, "RUNTIME_STDLIB_ACCESS")
             names = []
             if isinstance(node, ast.Import):
                 names = [alias.name for alias in node.names]

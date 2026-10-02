@@ -324,7 +324,7 @@ def selection_phase_predicate(
     evidence. This pure predicate cannot authenticate approval or durable history.
     """
     from experiments.reviewer_protocol_v2.control_serialization import (
-        object_header,
+        object_bytes,
         relative_path,
     )
 
@@ -348,20 +348,30 @@ def selection_phase_predicate(
         hex256(ledger_seal_sha256)
         hex256(procedure_sha256)
         require(
+            sha_bytes(canonical(assessment["binding"])) == assessment["inputs_sha256"],
+            "assessment_input_binding",
+        )
+        require(
             sha_bytes(authorization_raw) == trusted_authorization_sha256,
             "authorization_trusted_hash",
         )
-        grant = object_header(
-            authorization_raw,
-            "selection-authorization",
+        grant = object_bytes(authorization_raw)
+        exact_keys(
+            grant,
             (
+                "schema",
                 "operation",
                 "inputs_sha256",
+                "report_sha256",
                 "freeze1_sha256",
                 "ledger_seal_sha256",
                 "procedure_sha256",
                 "destination_policy",
             ),
+        )
+        require(
+            grant["schema"] == "reviewer-protocol-v2-selection-authorization-v2",
+            "authorization_version",
         )
         require(
             phase == "FREEZE_1_LEDGER_SEALED"
@@ -375,6 +385,7 @@ def selection_phase_predicate(
         require(
             grant["operation"] in {"SELECTION", "SELECTION_AND_PUBLICATION"}
             and grant["inputs_sha256"] == assessment["inputs_sha256"]
+            and grant["report_sha256"] == assessment["report_sha256"]
             and grant["freeze1_sha256"] == assessment["freeze1_sha256"]
             and grant["ledger_seal_sha256"] == ledger_seal_sha256
             and grant["procedure_sha256"] == procedure_sha256,

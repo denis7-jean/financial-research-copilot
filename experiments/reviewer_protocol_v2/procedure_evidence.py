@@ -3,7 +3,11 @@
 from datetime import datetime
 
 from experiments.reviewer_protocol_v2.common import canonical, require, sha_bytes
-from experiments.reviewer_protocol_v2.control_serialization import object_header
+from experiments.reviewer_protocol_v2.control_serialization import (
+    object_header,
+    object_bytes,
+    relative_path,
+)
 from experiments.reviewer_protocol_v2.eligibility import PATTERNS
 from experiments.reviewer_protocol_v2.selection import (
     SOURCE_ROOT,
@@ -39,7 +43,7 @@ INTERFACE_CONTRACTS = {
         abstained_label=None,
         abstained_components=[],
         abstained_certainty=None,
-        explanatory_note="REQUIRED",
+        explanatory_note="KEY_REQUIRED_NONEMPTY_IF_ABSTAINED_OR_CONCERN",
     ),
     "analysis_population": dict(
         pair="BOTH_REVIEWER_VALID",
@@ -172,23 +176,53 @@ def rule_contract(role):
     )
 
 
-def text_evidence(raw, kind, contract):
-    value = object_header(
+def evidence_v2(raw, name, keys):
+    value = object_bytes(raw)
+    exact_keys(value, ("schema", *keys))
+    require(
+        value["schema"] == "reviewer-protocol-v2-" + name + "-v2", "evidence_version"
+    )
+    return value
+
+
+def source_record(value, read):
+    nonempty(value["record_reference"])
+    relative_path(value["record_path"])
+    hex256(value["record_sha256"])
+    origin = dict(path=value["record_path"], sha256=value["record_sha256"])
+    raw = read(origin)
+    require(
+        type(raw) is bytes and sha_bytes(raw) == origin["sha256"], "source_record_hash"
+    )
+    return origin
+
+
+def text_evidence(raw, kind, contract, read, algorithm=False):
+    header = object_header if algorithm else evidence_v2
+    value = header(
         raw,
-        "rule-text-evidence",
-        ("role", "record_reference", "contract_sha256", "text"),
+        "rule-algorithm-evidence" if algorithm else "rule-text-evidence",
+        (
+            "role",
+            "record_reference",
+            "record_path",
+            "record_sha256",
+            "contract_sha256",
+            "text",
+        ),
     )
     require(
         value["role"] == kind
         and value["contract_sha256"] == sha_bytes(canonical(contract)),
         "normative_source_binding",
     )
-    nonempty(value["record_reference"])
+    source_record(value, read)
     nonempty(value["text"])
+    return value
 
 
 def specification(raw, role, read):
-    value = object_header(
+    value = evidence_v2(
         raw,
         "rule-specification",
         (
@@ -197,6 +231,7 @@ def specification(raw, role, read):
             "source_evidence",
             "decision_evidence",
             "algorithm_evidence",
+            "shared_origins",
         ),
     )
     require(
@@ -208,8 +243,32 @@ def specification(raw, role, read):
         type(value["source_evidence"]) is list and bool(value["source_evidence"]),
         "normative_source_missing",
     )
-    for fb in [*value["source_evidence"], value["algorithm_evidence"]]:
-        text_evidence(read(fb), role, value["contract"])
+    require(
+        value["algorithm_evidence"] not in value["source_evidence"],
+        "algorithm_evidence_distinct",
+    )
+    texts = [
+        text_evidence(read(fb), role, value["contract"], read)
+        for fb in value["source_evidence"]
+    ]
+    algorithm = text_evidence(
+        read(value["algorithm_evidence"]), role, value["contract"], read, algorithm=True
+    )
+    origins = {}
+    for item in [*texts, algorithm]:
+        identity = (item["record_path"], item["record_reference"])
+        digest = item["record_sha256"]
+        require(
+            digest not in origins or origins[digest] == identity,
+            "evidence_origin_alias",
+        )
+        origins[digest] = identity
+    shared = (
+        [dict(path=algorithm["record_path"], sha256=algorithm["record_sha256"])]
+        if any(item["record_sha256"] == algorithm["record_sha256"] for item in texts)
+        else []
+    )
+    require(value["shared_origins"] == shared, "evidence_shared_origins")
     current_decision(read(value["decision_evidence"]))
     return value
 
@@ -269,17 +328,53 @@ def rule_bindings(procedure, roles, history, current, read, rule_roles):
             "RULE_APPLICABILITY_BINDING",
         )
         read(witness["current_source"])
-        review = object_header(
+        review = evidence_v2(
             read(witness["semantic_review_evidence"]),
             "review-evidence",
-            ("subject_sha256", "record_reference", "reviewer", "recorded_utc", "note"),
+            (
+                "subject_sha256",
+                "contract_sha256",
+                "record_reference",
+                "record_path",
+                "record_sha256",
+                "reviewer",
+                "recorded_utc",
+                "note",
+                "shared_origin_reviews",
+            ),
         )
         require(
             review["subject_sha256"] == roles[role]["sha256"], "RULE_REVIEW_SUBJECT"
         )
+        require(
+            review["contract_sha256"] == sha_bytes(canonical(spec["contract"])),
+            "RULE_REVIEW_CONTRACT",
+        )
+        source_record(review, read)
         for key in ("record_reference", "reviewer", "note"):
             nonempty(review[key])
         utc(review["recorded_utc"])
+        shared_reviews = review["shared_origin_reviews"]
+        require(
+            type(shared_reviews) is list
+            and len(shared_reviews) == len(spec["shared_origins"]),
+            "RULE_REVIEW_SHARED_ORIGINS",
+        )
+        for declaration, origin in zip(
+            shared_reviews, spec["shared_origins"], strict=True
+        ):
+            exact_keys(
+                declaration,
+                ("record_path", "record_sha256", "supports_both_roles", "note"),
+                "RULE_REVIEW_SHARED_SCHEMA",
+            )
+            require(
+                declaration["record_path"] == origin["path"]
+                and declaration["record_sha256"] == origin["sha256"]
+                and declaration["supports_both_roles"] is True,
+                "RULE_REVIEW_SHARED_ORIGINS",
+            )
+            nonempty(declaration["note"])
 
 
 def interface_specifications(refs, read):
@@ -298,7 +393,7 @@ def interface_specifications(refs, read):
             "interface_source_missing",
         )
         for source in value["source_evidence"]:
-            text_evidence(read(source), kind, value["contract"])
+            text_evidence(read(source), kind, value["contract"], read)
 
 
 def selection_specification(raw):

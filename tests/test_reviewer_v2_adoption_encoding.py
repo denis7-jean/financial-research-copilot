@@ -78,33 +78,66 @@ def complete_fixture(root):
         path = "heldout-external/reviewer-protocol-v2-offline/" + name
         fb = dict(path=path, sha256=sha_bytes((root / path).read_bytes()))
         contract = e.rule_contract(role)
+        origin = put(
+            role + "-original-record.txt",
+            b"Invented source document for both roles.\n",
+            raw=True,
+        )
+        extraction = dict(
+            role=role,
+            record_reference="Invented complete normative source",
+            record_path=origin["path"],
+            record_sha256=origin["sha256"],
+            contract_sha256=sha_bytes(canonical(contract)),
+            text="Invented specification extraction; no approval is authenticated.",
+        )
         text = put(
             role + "-normative-text.json",
             dict(
-                schema="reviewer-protocol-v2-rule-text-evidence-v1",
-                role=role,
-                record_reference="Invented complete normative source",
-                contract_sha256=sha_bytes(canonical(contract)),
-                text="Invented specification evidence only; no approval is authenticated.",
+                schema="reviewer-protocol-v2-rule-text-evidence-v2",
+                **extraction,
             ),
         )
         roles[role] = put(
             role + "-specification.json",
             dict(
-                schema="reviewer-protocol-v2-rule-specification-v1",
+                schema="reviewer-protocol-v2-rule-specification-v2",
                 role=role,
                 contract=contract,
                 source_evidence=[text],
-                algorithm_evidence=text,
+                algorithm_evidence=put(
+                    role + "-algorithm.json",
+                    dict(
+                        schema="reviewer-protocol-v2-rule-algorithm-evidence-v1",
+                        **extraction,
+                    ),
+                ),
+                shared_origins=[origin],
                 decision_evidence=decision,
             ),
+        )
+        review_origin = put(
+            role + "-review-original.txt",
+            b"Invented semantic review raw record.\n",
+            raw=True,
         )
         review = put(
             role + "-review.json",
             dict(
-                schema="reviewer-protocol-v2-review-evidence-v1",
+                schema="reviewer-protocol-v2-review-evidence-v2",
                 subject_sha256=roles[role]["sha256"],
+                contract_sha256=sha_bytes(canonical(contract)),
                 record_reference="Invented semantic review reference",
+                record_path=review_origin["path"],
+                record_sha256=review_origin["sha256"],
+                shared_origin_reviews=[
+                    dict(
+                        record_path=origin["path"],
+                        record_sha256=origin["sha256"],
+                        supports_both_roles=True,
+                        note="Invented review addresses both roles.",
+                    )
+                ],
                 reviewer="Invented reviewer",
                 recorded_utc="2026-10-01T00:00:00Z",
                 note="Synthetic reviewed applicability declaration.",
@@ -139,12 +172,17 @@ def complete_fixture(root):
     roles["selection_code_bundle"] = put("selection-bundle.json", s.selection_bundle())
     interface_specs = {}
     for kind, contract in e.INTERFACE_CONTRACTS.items():
+        origin = put(
+            kind + "-original.txt", b"Invented original interface document.\n", raw=True
+        )
         source = put(
             kind + "-text.json",
             dict(
-                schema="reviewer-protocol-v2-rule-text-evidence-v1",
+                schema="reviewer-protocol-v2-rule-text-evidence-v2",
                 role=kind,
                 record_reference="Invented complete interface source",
+                record_path=origin["path"],
+                record_sha256=origin["sha256"],
                 contract_sha256=sha_bytes(canonical(contract)),
                 text="Invented normative interface evidence.",
             ),
