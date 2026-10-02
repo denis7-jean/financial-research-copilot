@@ -177,10 +177,15 @@ def rule_contract(role):
 
 
 def evidence_v2(raw, name, keys):
+    return evidence_header(raw, name, keys, 2)
+
+
+def evidence_header(raw, name, keys, version):
     value = object_bytes(raw)
     exact_keys(value, ("schema", *keys))
     require(
-        value["schema"] == "reviewer-protocol-v2-" + name + "-v2", "evidence_version"
+        value["schema"] == "reviewer-protocol-v2-" + name + "-v" + str(version),
+        "evidence_version",
     )
     return value
 
@@ -198,8 +203,7 @@ def source_record(value, read):
 
 
 def text_evidence(raw, kind, contract, read, algorithm=False):
-    header = object_header if algorithm else evidence_v2
-    value = header(
+    value = evidence_header(
         raw,
         "rule-algorithm-evidence" if algorithm else "rule-text-evidence",
         (
@@ -209,7 +213,9 @@ def text_evidence(raw, kind, contract, read, algorithm=False):
             "record_sha256",
             "contract_sha256",
             "text",
+            "section_locator",
         ),
+        2 if algorithm else 3,
     )
     require(
         value["role"] == kind
@@ -218,6 +224,7 @@ def text_evidence(raw, kind, contract, read, algorithm=False):
     )
     source_record(value, read)
     nonempty(value["text"])
+    nonempty(value["section_locator"])
     return value
 
 
@@ -293,7 +300,7 @@ def rule_bindings(procedure, roles, history, current, read, rule_roles):
             )
         require(record["specification"] == roles[role], "RULE_SPECIFICATION_BINDING")
         spec = specification(read(record["specification"]), role, read)
-        witness = object_header(
+        witness = evidence_v2(
             read(record["relationship_evidence"]),
             "rule-applicability",
             (
@@ -306,6 +313,8 @@ def rule_bindings(procedure, roles, history, current, read, rule_roles):
                 "decision_evidence",
                 "semantic_review_evidence",
                 "reconciliation",
+                "normative_document_id",
+                "historical_ledger_policy",
             ),
         )
         current_path = "main/experiments/reviewer_protocol_v2/" + name
@@ -321,14 +330,22 @@ def rule_bindings(procedure, roles, history, current, read, rule_roles):
             and witness["decision_evidence"] == spec["decision_evidence"]
             and witness["reconciliation"]
             == (
-                "CURRENT_E01_METADATA_CLARIFICATION"
+                "CURRENT_E01_METADATA_AND_E03C_LITERAL_CORRECTION"
                 if role == "eligibility_specification"
                 else "UNCHANGED_POLICY"
+            )
+            and witness["normative_document_id"]
+            == "reviewer-protocol-v2-current-rules-v1"
+            and witness["historical_ledger_policy"]
+            == (
+                "IDENTICAL_CORRECTED_ELIGIBILITY_SOURCE_ONLY"
+                if role == "eligibility_specification"
+                else "NO_NEW_LEDGER_POLICY"
             ),
             "RULE_APPLICABILITY_BINDING",
         )
         read(witness["current_source"])
-        review = evidence_v2(
+        review = evidence_header(
             read(witness["semantic_review_evidence"]),
             "review-evidence",
             (
@@ -342,6 +359,7 @@ def rule_bindings(procedure, roles, history, current, read, rule_roles):
                 "note",
                 "shared_origin_reviews",
             ),
+            3,
         )
         require(
             review["subject_sha256"] == roles[role]["sha256"], "RULE_REVIEW_SUBJECT"
@@ -365,7 +383,14 @@ def rule_bindings(procedure, roles, history, current, read, rule_roles):
         ):
             exact_keys(
                 declaration,
-                ("record_path", "record_sha256", "supports_both_roles", "note"),
+                (
+                    "record_path",
+                    "record_sha256",
+                    "supports_both_roles",
+                    "note",
+                    "source_sections",
+                    "algorithm_sections",
+                ),
                 "RULE_REVIEW_SHARED_SCHEMA",
             )
             require(
@@ -375,6 +400,25 @@ def rule_bindings(procedure, roles, history, current, read, rule_roles):
                 "RULE_REVIEW_SHARED_ORIGINS",
             )
             nonempty(declaration["note"])
+            for field, refs in (
+                ("source_sections", spec["source_evidence"]),
+                ("algorithm_sections", [spec["algorithm_evidence"]]),
+            ):
+                citations = [object_bytes(read(fb)) for fb in refs]
+                expected = sorted(
+                    {
+                        c["section_locator"]
+                        for c in citations
+                        if c["record_sha256"] == origin["sha256"]
+                    }
+                )
+                require(declaration[field] == expected, "RULE_REVIEW_SHARED_SECTIONS")
+    # A declaration alone cannot clear the ledger evidence implications of D8.
+    require(
+        history["sources"]["eligibility.py"]
+        == current["files"]["main/experiments/reviewer_protocol_v2/eligibility.py"],
+        "E03C_LEDGER_RECONCILIATION_REQUIRED",
+    )
 
 
 def interface_specifications(refs, read):

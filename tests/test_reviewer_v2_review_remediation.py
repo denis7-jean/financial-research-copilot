@@ -394,7 +394,7 @@ def rule_context(root):
     "mutation,code",
     [
         ("same_wrapper", "algorithm_evidence_distinct"),
-        ("same_schema", "schema_version"),
+        ("same_schema", "evidence_version"),
         ("missing_shared", "evidence_shared_origins"),
         ("copied_origin", "evidence_origin_alias"),
         ("altered_raw", "input_hash_mismatch"),
@@ -412,7 +412,7 @@ def test_r1_source_and_algorithm_bindings(tmp_path, mutation, code):
         spec["algorithm_evidence"] = text_fb
     elif mutation == "same_schema":
         algorithm = json.loads(read(spec["algorithm_evidence"]))
-        algorithm["schema"] = "reviewer-protocol-v2-rule-text-evidence-v2"
+        algorithm["schema"] = "reviewer-protocol-v2-rule-text-evidence-v3"
         spec["algorithm_evidence"] = write_evidence(
             tmp_path, spec["algorithm_evidence"], algorithm
         )
@@ -607,3 +607,173 @@ def test_r5_note_token_matches_audit_behavior(abstained, concern):
     with pytest.raises(ProtocolError) as failure:
         owner_audit.validate_audit(canonical(audit), *f[1:5])
     assert str(failure.value) == "schema_keys"
+
+
+def test_evidence_derived_corrected_e03c_contract_rejects_defect(tmp_path):
+    import re
+
+    # Literal sets transcribed from the owner-accepted draft, not PATTERNS.
+    modifiers = "financial annual quarterly consolidated summary detailed".split()
+    material = "table tables chart charts figure figures graph graphs diagram diagrams document documents report reports passage passages excerpt excerpts statement statements data information result results value values".split()
+
+    def finite(literals):
+        return (
+            "(?:"
+            + "|".join(
+                re.escape(x) for x in sorted(literals, key=lambda x: (-len(x), x))
+            )
+            + ")"
+        )
+
+    def form(prepositions):
+        return (
+            r"(?<!\w)"
+            + finite(prepositions)
+            + " (?:the )?"
+            + finite(["attached", "provided"])
+            + "(?: "
+            + finite(modifiers)
+            + "){0,2} "
+            + finite(material)
+            + r"(?!\w)"
+        )
+
+    f, freeze, _, _, read = rule_context(tmp_path)
+    spec = artifact(f, freeze, "eligibility_specification")
+    spec["contract"]["finite_patterns"]["E03c"] = dict(
+        pattern=form(["in", "from", "according to"]), flags=re.UNICODE
+    )
+    assert e.specification(canonical(spec), "eligibility_specification", read) == spec
+    spec["contract"]["finite_patterns"]["E03c"]["pattern"] = form(
+        ["in", "from", "according", "to"]
+    )
+    with pytest.raises(ProtocolError) as failure:
+        e.specification(canonical(spec), "eligibility_specification", read)
+    assert str(failure.value) == "normative_rule_contract"
+
+
+def test_dr1_multiple_sections_and_duplicate_citations_share_one_origin(tmp_path):
+    f, freeze, procedure, history, read = rule_context(tmp_path)
+    spec_fb = freeze["artifacts"]["eligibility_specification"]
+    spec = json.loads(read(spec_fb))
+    fb = spec["source_evidence"][0]
+    other = json.loads(read(fb))
+    other["section_locator"] = "Invented second rules section"
+    second = dict(path=fb["path"] + ".second", sha256="0" * 64)
+    second = write_evidence(tmp_path, second, other)
+    spec["source_evidence"] += [second, fb]
+    assert e.specification(canonical(spec), "eligibility_specification", read) == spec
+    assert len(spec["shared_origins"]) == 1
+    rule = procedure["rules"]["eligibility_specification"]
+    updated_spec = write_evidence(tmp_path, spec_fb, spec)
+    freeze["artifacts"]["eligibility_specification"] = updated_spec
+    rule["specification"] = updated_spec
+    witness = json.loads(read(rule["relationship_evidence"]))
+    witness["specification"] = updated_spec
+    review_fb = witness["semantic_review_evidence"]
+    review = json.loads(read(review_fb))
+    review["subject_sha256"] = updated_spec["sha256"]
+    review["shared_origin_reviews"][0]["source_sections"] = [
+        "Invented rules section",
+        "Invented second rules section",
+    ]
+    witness["semantic_review_evidence"] = write_evidence(tmp_path, review_fb, review)
+    rule["relationship_evidence"] = write_evidence(
+        tmp_path, rule["relationship_evidence"], witness
+    )
+    e.rule_bindings(
+        procedure,
+        freeze["artifacts"],
+        history,
+        p.verification_bundle(f["executing_sources"]),
+        read,
+        a.RULE_ROLES,
+    )
+
+
+@pytest.mark.parametrize("field", ["source_sections", "algorithm_sections"])
+def test_dr1_shared_origin_review_requires_exact_section_locators(tmp_path, field):
+    f, freeze, procedure, history, read = rule_context(tmp_path)
+    record = procedure["rules"]["eligibility_specification"]
+    witness = json.loads(read(record["relationship_evidence"]))
+    fb = witness["semantic_review_evidence"]
+    review = json.loads(read(fb))
+    review["shared_origin_reviews"][0][field] = ["Invented wrong section"]
+    witness["semantic_review_evidence"] = write_evidence(tmp_path, fb, review)
+    record["relationship_evidence"] = write_evidence(
+        tmp_path, record["relationship_evidence"], witness
+    )
+    with pytest.raises(ProtocolError) as failure:
+        e.rule_bindings(
+            procedure,
+            freeze["artifacts"],
+            history,
+            p.verification_bundle(f["executing_sources"]),
+            read,
+            a.RULE_ROLES,
+        )
+    assert str(failure.value) == "RULE_REVIEW_SHARED_SECTIONS"
+
+
+def test_changed_historical_eligibility_requires_ledger_reconciliation(tmp_path):
+    f, freeze, procedure, history, read = rule_context(tmp_path)
+    history["sources"]["eligibility.py"] = "0" * 64
+    record = procedure["rules"]["eligibility_specification"]
+    witness = json.loads(read(record["relationship_evidence"]))
+    witness["historical_source"]["sha256"] = "0" * 64
+    record["relationship_evidence"] = write_evidence(
+        tmp_path, record["relationship_evidence"], witness
+    )
+    with pytest.raises(ProtocolError) as failure:
+        e.rule_bindings(
+            procedure,
+            freeze["artifacts"],
+            history,
+            p.verification_bundle(f["executing_sources"]),
+            read,
+            a.RULE_ROLES,
+        )
+    assert str(failure.value) == "E03C_LEDGER_RECONCILIATION_REQUIRED"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("reconciliation", "CURRENT_E01_METADATA_CLARIFICATION"),
+        ("historical_ledger_policy", "UNCHANGED_LEDGER"),
+    ],
+)
+def test_old_reconciliation_does_not_silently_cover_e03c(tmp_path, field, value):
+    f, freeze, procedure, history, read = rule_context(tmp_path)
+    rule = procedure["rules"]["eligibility_specification"]
+    witness = json.loads(read(rule["relationship_evidence"]))
+    witness[field] = value
+    rule["relationship_evidence"] = write_evidence(
+        tmp_path, rule["relationship_evidence"], witness
+    )
+    with pytest.raises(ProtocolError) as failure:
+        e.rule_bindings(
+            procedure,
+            freeze["artifacts"],
+            history,
+            p.verification_bundle(f["executing_sources"]),
+            read,
+            a.RULE_ROLES,
+        )
+    assert str(failure.value) == "RULE_APPLICABILITY_BINDING"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"c = __loader__.get_code('experiments.router_bench'); type(lambda: 0)(c, {})()",
+        b"breakpoint()",
+        b"help(object)",
+        b"__spec__.loader.get_code('x')",
+        b"().__class__.__base__.__subclasses__()",
+        b"g.__code__.replace(invented=1)",
+    ],
+)
+def test_dr3_remaining_loader_forms_documented_not_executed(raw):
+    # Parse/inspect only. Never eval, exec, import, or run any probe.
+    assert a.dependency_modules({"invented.py": raw}) == []

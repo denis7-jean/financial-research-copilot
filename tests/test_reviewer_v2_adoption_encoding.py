@@ -90,11 +90,12 @@ def complete_fixture(root):
             record_sha256=origin["sha256"],
             contract_sha256=sha_bytes(canonical(contract)),
             text="Invented specification extraction; no approval is authenticated.",
+            section_locator="Invented rules section",
         )
         text = put(
             role + "-normative-text.json",
             dict(
-                schema="reviewer-protocol-v2-rule-text-evidence-v2",
+                schema="reviewer-protocol-v2-rule-text-evidence-v3",
                 **extraction,
             ),
         )
@@ -108,8 +109,11 @@ def complete_fixture(root):
                 algorithm_evidence=put(
                     role + "-algorithm.json",
                     dict(
-                        schema="reviewer-protocol-v2-rule-algorithm-evidence-v1",
-                        **extraction,
+                        schema="reviewer-protocol-v2-rule-algorithm-evidence-v2",
+                        **(
+                            extraction
+                            | {"section_locator": "Invented algorithm section"}
+                        ),
                     ),
                 ),
                 shared_origins=[origin],
@@ -124,7 +128,7 @@ def complete_fixture(root):
         review = put(
             role + "-review.json",
             dict(
-                schema="reviewer-protocol-v2-review-evidence-v2",
+                schema="reviewer-protocol-v2-review-evidence-v3",
                 subject_sha256=roles[role]["sha256"],
                 contract_sha256=sha_bytes(canonical(contract)),
                 record_reference="Invented semantic review reference",
@@ -136,6 +140,8 @@ def complete_fixture(root):
                         record_sha256=origin["sha256"],
                         supports_both_roles=True,
                         note="Invented review addresses both roles.",
+                        source_sections=["Invented rules section"],
+                        algorithm_sections=["Invented algorithm section"],
                     )
                 ],
                 reviewer="Invented reviewer",
@@ -145,7 +151,7 @@ def complete_fixture(root):
         )
         current_path = s.PREFIX + a.RULE_ROLES[role]
         witness = dict(
-            schema="reviewer-protocol-v2-rule-applicability-v1",
+            schema="reviewer-protocol-v2-rule-applicability-v2",
             role=role,
             historical_implementation_sha256=generating["implementation_sha256"],
             historical_source=dict(
@@ -160,9 +166,13 @@ def complete_fixture(root):
             specification=roles[role],
             decision_evidence=decision,
             semantic_review_evidence=review,
-            reconciliation="CURRENT_E01_METADATA_CLARIFICATION"
+            reconciliation="CURRENT_E01_METADATA_AND_E03C_LITERAL_CORRECTION"
             if role == "eligibility_specification"
             else "UNCHANGED_POLICY",
+            normative_document_id="reviewer-protocol-v2-current-rules-v1",
+            historical_ledger_policy="IDENTICAL_CORRECTED_ELIGIBILITY_SOURCE_ONLY"
+            if role == "eligibility_specification"
+            else "NO_NEW_LEDGER_POLICY",
         )
         rules[role] = dict(
             original_evidence=[fb],
@@ -178,13 +188,14 @@ def complete_fixture(root):
         source = put(
             kind + "-text.json",
             dict(
-                schema="reviewer-protocol-v2-rule-text-evidence-v2",
+                schema="reviewer-protocol-v2-rule-text-evidence-v3",
                 role=kind,
                 record_reference="Invented complete interface source",
                 record_path=origin["path"],
                 record_sha256=origin["sha256"],
                 contract_sha256=sha_bytes(canonical(contract)),
                 text="Invented normative interface evidence.",
+                section_locator="Invented interface section",
             ),
         )
         interface_specs[kind] = put(

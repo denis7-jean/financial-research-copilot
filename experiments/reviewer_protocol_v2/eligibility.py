@@ -36,10 +36,11 @@ def normalize(question):
 
 
 def alternatives(words):
+    literals = words.split() if isinstance(words, str) else words
     return (
         "(?:"
         + "|".join(
-            re.escape(x) for x in sorted(set(words.split()), key=lambda x: (-len(x), x))
+            re.escape(x) for x in sorted(set(literals), key=lambda x: (-len(x), x))
         )
         + ")"
     )
@@ -83,7 +84,7 @@ PATTERNS = {
         )
     ),
     "E03c": re.compile(
-        bounded(alternatives("in from according to") + " (?:the )?" + T + AM)
+        bounded(alternatives(("in", "from", "according to")) + " (?:the )?" + T + AM)
     ),
     "E04": re.compile(
         bounded(
@@ -242,6 +243,7 @@ def classify(record, refs, parse_error=None):
                 usable = True
                 view, matches = textual(question)
                 if not view:
+                    usable = False
                     invalid.append("normalized_empty_question")
                 if ref and digest != ref["question_sha256"]:
                     invalid.append("question_hash_mismatch")

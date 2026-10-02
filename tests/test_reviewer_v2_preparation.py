@@ -37,6 +37,11 @@ def fixture(root, mutate=None):
     (root / spec_fb["path"]).write_bytes(canonical(selection_spec))
     spec_fb["sha256"] = sha_bytes(canonical(selection_spec))
     sources = {name: b"# Invented historical source.\n" for name in a.GENERATING_FILES}
+    # Synthetic positive compatibility uses the corrected eligibility source;
+    # this is invented history, not a claim about original audit execution.
+    sources["eligibility.py"] = (
+        s.SOURCE_ROOT / (s.PREFIX + "eligibility.py")
+    ).read_bytes()
 
     def put(path, raw):
         target = root / path
