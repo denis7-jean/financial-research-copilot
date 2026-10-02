@@ -56,7 +56,7 @@ def decode(text):
 
     try:
         return json.loads(text, object_pairs_hook=pairs, parse_constant=constant)
-    except (json.JSONDecodeError, UnicodeError):
+    except (json.JSONDecodeError, UnicodeError, RecursionError):
         raise ProtocolError("invalid_json") from None
 
 
@@ -72,13 +72,18 @@ def read_jsonl(path):
     ]
 
 
-def verify_file(path, expected):
+def verified_bytes(path, expected):
+    """Return the exact captured buffer whose digest was checked."""
     try:
-        actual = sha_bytes(Path(path).read_bytes())
+        raw = Path(path).read_bytes()
     except OSError:
         raise ProtocolError("missing_input") from None
-    require(actual == expected, "input_hash_mismatch")
-    return actual
+    require(sha_bytes(raw) == expected, "input_hash_mismatch")
+    return raw
+
+
+def verify_file(path, expected):
+    return sha_bytes(verified_bytes(path, expected))
 
 
 def contained(root, relative):

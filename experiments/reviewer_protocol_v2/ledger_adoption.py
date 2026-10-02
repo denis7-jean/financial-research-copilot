@@ -3,6 +3,12 @@
 import ast
 import sys
 
+from experiments.reviewer_protocol_v2.procedure_evidence import (
+    rule_bindings,
+    interface_specifications,
+    freeze_roles,
+)
+
 from experiments.reviewer_protocol_v2.common import (
     ProtocolError,
     canonical,
@@ -15,7 +21,7 @@ from experiments.reviewer_protocol_v2.control_serialization import (
 )
 from experiments.reviewer_protocol_v2.selection import (
     exact_keys,
-    file_binding,
+    read_file_binding,
     hex256,
     jsonl_records,
     selection_bundle,
@@ -93,9 +99,7 @@ EXTRA_INPUTS = tuple(
 
 
 def read_binding(root, binding):
-    raw = file_binding(root, binding).read_bytes()
-    require(sha_bytes(raw) == binding["sha256"], "input_hash_mismatch")
-    return raw
+    return read_file_binding(root, binding)
 
 
 def _literal(source, name):
@@ -266,18 +270,69 @@ def _history(root, manifest_binding, expected_manifest_sha256, sources):
 
 
 def dependency_modules(sources):
-    """Recover current scoped dependency evidence; never historical SDK facts."""
+    """Scoped import evidence; unsupported dynamic loaders fail closed."""
+    declared = set()
+    packages = set()
+    for path in sources:
+        if path.startswith("main/experiments/"):
+            module = path.removeprefix("main/").removesuffix(".py").replace("/", ".")
+            if module.endswith(".__init__"):
+                module = module.removesuffix(".__init__")
+                packages.add(module)
+            declared.add(module)
     modules = set()
+    allowed_stdlib = {
+        "ast",
+        "collections",
+        "hashlib",
+        "json",
+        "math",
+        "pathlib",
+        "platform",
+        "re",
+        "sys",
+        "unicodedata",
+        "datetime",
+        "itertools",
+    }
+    prohibited = {"__import__", "exec", "eval", "compile", "getattr", "__builtins__"}
     for raw in sources.values():
         tree = ast.parse(raw.decode("utf-8", errors="strict"))
         for node in ast.walk(tree):
+            require(
+                not isinstance(node, ast.Name) or node.id not in prohibited,
+                "RUNTIME_DYNAMIC_LOADING",
+            )
+            require(
+                not isinstance(node, ast.Attribute)
+                or node.attr
+                not in {
+                    "__import__",
+                    "import_module",
+                    "load_module",
+                    "exec_module",
+                    "__dict__",
+                },
+                "RUNTIME_DYNAMIC_LOADING",
+            )
+            names = []
             if isinstance(node, ast.Import):
-                modules.update(alias.name.split(".")[0] for alias in node.names)
+                names = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom):
                 require(node.level == 0 and node.module, "RUNTIME_DEPENDENCY_IMPORT")
-                modules.add(node.module.split(".")[0])
-    modules.discard("experiments")
-    require(modules <= sys.stdlib_module_names, "RUNTIME_DEPENDENCY_NONSTDLIB")
+                names = [node.module]
+                if node.module in packages:
+                    names += [node.module + "." + alias.name for alias in node.names]
+            for name in names:
+                root = name.split(".")[0]
+                if root == "experiments":
+                    require(name in declared, "RUNTIME_REPOSITORY_CLOSURE")
+                else:
+                    require(
+                        root in sys.stdlib_module_names, "RUNTIME_DEPENDENCY_NONSTDLIB"
+                    )
+                    require(root in allowed_stdlib, "RUNTIME_UNSUPPORTED_LOADING")
+                    modules.add(root)
     return sorted(modules)
 
 
@@ -308,54 +363,14 @@ def _generating(root, raw, history, supplied):
     return value
 
 
-def _rules(root, procedure, roles, history, current_hashes):
-    exact_keys(procedure["rules"], RULE_ROLES, "RULE_EVIDENCE_SET")
-    code_hashes = set(history["sources"].values()) | current_hashes
-    for role, name in RULE_ROLES.items():
-        record = procedure["rules"][role]
-        exact_keys(
-            record,
-            ("original_evidence", "specification", "relationship_evidence"),
-            "RULE_EVIDENCE_SCHEMA",
-        )
-        evidence = record["original_evidence"]
-        raw = read_binding(root, evidence)
-        require(
-            evidence["path"] in history["inputs"]
-            and evidence["sha256"] == history["inputs"][evidence["path"]],
-            "RULE_ORIGINAL_EVIDENCE_BINDING",
-        )
-        require(
-            bool(raw)
-            and evidence["sha256"] not in code_hashes
-            and not evidence["path"].endswith(".py"),
-            "RULE_SOURCE_IS_NOT_SPECIFICATION",
-        )
-        require(
-            record["specification"] == roles[role]
-            and record["specification"]["sha256"] == evidence["sha256"],
-            "RULE_SPECIFICATION_BINDING",
-        )
-        witness = object_header(
-            read_binding(root, record["relationship_evidence"]),
-            "historical-rule-relationship",
-            (
-                "role",
-                "original_evidence",
-                "generating_source",
-                "specification",
-                "relation",
-            ),
-        )
-        require(
-            witness["role"] == role
-            and witness["original_evidence"] == evidence
-            and witness["generating_source"]
-            == dict(filename=name, sha256=history["sources"][name])
-            and witness["specification"] == roles[role]
-            and witness["relation"] == "IDENTICAL_EVIDENCE_BYTES",
-            "RULE_RELATIONSHIP_BINDING",
-        )
+def _v2_header(raw, name, keys):
+    value = object_bytes(raw)
+    exact_keys(value, ("schema", *keys))
+    require(
+        value["schema"] == "reviewer-protocol-v2-" + name + "-v2",
+        "adoption_encoding_version",
+    )
+    return value
 
 
 def _freeze(
@@ -389,7 +404,7 @@ def _freeze(
         == history["manifest"]["files"]["inventory.json"],
         "FREEZE_INVENTORY_BINDING",
     )
-    procedure = object_header(
+    procedure = _v2_header(
         values["historical_integrity_manifest"],
         "historical-adoption",
         (
@@ -447,7 +462,14 @@ def _freeze(
 
     require(executing_sources is not None, "CURRENT_VERIFICATION_EVIDENCE_MISSING")
     current = _executing_sources(root, executing_sources)
-    _rules(root, procedure, roles, history, set(current["files"].values()))
+    rule_bindings(
+        procedure,
+        roles,
+        history,
+        current,
+        lambda fb: read_binding(root, fb),
+        RULE_ROLES,
+    )
     exact_keys(
         procedure["current_bindings"],
         ("selection_bundle", "remaining_interfaces"),
@@ -465,23 +487,20 @@ def _freeze(
         values["selection_code_bundle"] == canonical(selection_binding),
         "ADOPTION_CURRENT_SELECTION_BINDING",
     )
-    interface = object_header(
+    interface = _v2_header(
         values["remaining_interfaces_specification"],
         "adoption-interface-binding",
-        ("specification", "verification_bundle"),
+        ("specifications", "verification_bundle"),
     )
     require(
         interface["verification_bundle"] == current
         and current["sha256"] != history["digest"],
         "ADOPTION_CURRENT_VERIFICATION_BINDING",
     )
-    specification = read_binding(root, interface["specification"])
-    require(
-        bool(specification)
-        and sha_bytes(specification)
-        not in set(current["files"].values()) | set(history["sources"].values()),
-        "INTERFACE_SOURCE_IS_NOT_SPECIFICATION",
+    interface_specifications(
+        interface["specifications"], lambda fb: read_binding(root, fb)
     )
+    freeze_roles(roles, values, history, current, lambda fb: read_binding(root, fb))
     require(
         procedure["proposed_runtime_dependency_lock"]
         == roles["runtime_dependency_lock"],
@@ -579,6 +598,8 @@ def verify_adoption(
                 ledger=ledger_binding["sha256"],
             ),
         )
+        if proposed_freeze1 is not None:
+            result["proposed_freeze_compatible"] = False
         require(selection_binding == selection_bundle(), "CURRENT_SELECTION_BINDING")
         require(
             history["digest"] != selection_binding["sha256"],
@@ -612,7 +633,8 @@ def verify_adoption(
         UnicodeError,
         ValueError,
         TypeError,
-        KeyError,
+        LookupError,
+        RecursionError,
         AttributeError,
         SyntaxError,
     ):

@@ -22,6 +22,20 @@ def fixture(root, mutate=None):
     if mutate:
         mutate(rows)
     binding, _ = bound_fixture(root, rows)
+    selection_spec = dict(
+        schema="reviewer-protocol-v2-selection-specification-v1",
+        seed=20261001,
+        strata=list(s.STRATUM_ENTRIES),
+        rank_domain="reviewer-protocol-v2-rank-v1",
+        external_id_domain="reviewer-protocol-v2-external-id-v1",
+        tie_breakers=["digest", "candidate_id_utf8", "source_utf8"],
+        threshold_hex=(0.9).hex(),
+        comparison="<",
+        shortfall="NO_PACKET",
+    )
+    spec_fb = binding["artifacts"]["selection_specification"]
+    (root / spec_fb["path"]).write_bytes(canonical(selection_spec))
+    spec_fb["sha256"] = sha_bytes(canonical(selection_spec))
     sources = {name: b"# Invented historical source.\n" for name in a.GENERATING_FILES}
 
     def put(path, raw):
@@ -433,7 +447,7 @@ def test_missing_encoding_evidence_and_freeze_mismatch(tmp_path):
     )
     result = adoption(f, proposed_freeze1=raw, expected_freeze1_sha256=sha_bytes(raw))
     assert result["historical_provenance_verified"] is True
-    assert result["code"] == "invalid_json"
+    assert result["code"] == "schema_keys"
     assert result["proposed_freeze_compatible"] is False
     assert (
         p.prepare(

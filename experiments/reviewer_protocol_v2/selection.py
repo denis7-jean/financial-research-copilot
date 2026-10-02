@@ -9,7 +9,7 @@ from pathlib import Path
 
 from experiments.reviewer_protocol_v2.common import (
     ProtocolError, canonical, check_runtime, contained, decode, question_hash,
-    require, sha_bytes, verify_file,
+    require, sha_bytes, verify_file, verified_bytes,
 )
 from experiments.reviewer_protocol_v2.eligibility import FIELDS, STRATA, reference_index
 from experiments.reviewer_protocol_v2.similarity import SOURCE_SHA256, cos, grams, verify_isolation
@@ -122,7 +122,18 @@ def file_binding(root, value):
     return path
 
 
+def read_file_binding(root, value):
+    exact_keys(value, ("path", "sha256"))
+    hex256(value["sha256"])
+    return verified_bytes(bound_path(root, value["path"]), value["sha256"])
+
+
 def verify_input_binding(root, binding, expected_sha256):
+    """Legacy path view; parsing consumers use captured verified buffers."""
+    return _verify_input_binding(root, binding, expected_sha256)[0]
+
+
+def _verify_input_binding(root, binding, expected_sha256):
     hex256(expected_sha256)
     exact_keys(binding, ("schema", "artifacts", "code", "runtime", "seed", "strata"))
     require(sha_bytes(canonical(binding)) == expected_sha256, "inputs_binding_hash")
@@ -138,7 +149,8 @@ def verify_input_binding(root, binding, expected_sha256):
             and binding["runtime"] == expected_runtime, "runtime_binding")
     names = ("population", "exposure_inventory", "eligibility_ledger", "selection_specification")
     exact_keys(binding["artifacts"], names)
-    paths = {name: file_binding(root, binding["artifacts"][name]) for name in names}
+    buffers = {name: read_file_binding(root, binding["artifacts"][name]) for name in names}
+    paths = {name: bound_path(root, binding["artifacts"][name]["path"]) for name in names}
     require(all(binding["artifacts"][n]["path"].startswith("heldout-external/") for n in names)
             and len(set(paths.values())) == 4, "artifact_paths")
     code = binding["code"]
@@ -151,14 +163,15 @@ def verify_input_binding(root, binding, expected_sha256):
         file_binding(root, code[name])
         require(code[name]["sha256"] == sha_bytes((SOURCE_ROOT / (PREFIX + filename)).read_bytes()),
                 "executing_module_hash")
-    historical = file_binding(root, code["historical_similarity_source"])
+    historical_raw = read_file_binding(root, code["historical_similarity_source"])
+    historical = bound_path(root, code["historical_similarity_source"]["path"])
     require(code["historical_similarity_source"]["sha256"] == SOURCE_SHA256, "historical_similarity_hash")
-    verify_isolation(historical)
+    verify_isolation(historical, historical_raw)
     exact_keys(code["selection_bundle"], ("files", "sha256"))
     require(canonical(code["selection_bundle"]) == canonical(selection_bundle()), "executing_bundle")
     for relative, digest in code["selection_bundle"]["files"].items():
         verify_file(bound_path(root, relative), digest)
-    return paths
+    return paths, buffers
 
 
 def jsonl_records(raw):
@@ -172,9 +185,9 @@ def jsonl_records(raw):
 
 
 def prepare_inputs(root, binding, expected_sha256):
-    paths = verify_input_binding(root, binding, expected_sha256)
-    population = jsonl_records(paths["population"].read_bytes())
-    rows = jsonl_records(paths["eligibility_ledger"].read_bytes())
+    _, buffers = _verify_input_binding(root, binding, expected_sha256)
+    population = jsonl_records(buffers["population"])
+    rows = jsonl_records(buffers["eligibility_ledger"])
     refs = reference_index(population)
     require(len(rows) == len(population), "ledger_population_size")
     seen = set()
@@ -308,7 +321,7 @@ def replay_receipt(rows, receipt, inputs_sha256):
 
 
 def select_bound_inputs(root, binding, expected_sha256):
-    """Return verified bytes only; no publishing or real-selection CLI interface."""
+    """Pure selection computation; caller authorization is outside this API."""
     rows = prepare_inputs(root, binding, expected_sha256)
     accepted, receipt = scan(rows, expected_sha256)
     from experiments.reviewer_protocol_v2.packet_serialization import build_external_outputs, validate_result

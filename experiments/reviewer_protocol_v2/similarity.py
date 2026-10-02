@@ -5,7 +5,7 @@ import math
 import re
 from collections import Counter
 from pathlib import Path
-from experiments.reviewer_protocol_v2.common import require, verify_file
+from experiments.reviewer_protocol_v2.common import require, verified_bytes, sha_bytes
 
 SOURCE_SHA256 = "752a65fa744f04ae6854b2c8429fad9c43d3fc365fe763fb5d6600e64d7586a4"
 THRESHOLD = 0.90
@@ -24,9 +24,10 @@ def cos(a, b):
     return num / den if den else 0.0
 
 
-def verify_isolation(path):
-    verify_file(path, SOURCE_SHA256)
-    historical = ast.parse(Path(path).read_text(encoding="utf-8"))
+def verify_isolation(path, raw=None):
+    raw = verified_bytes(path, SOURCE_SHA256) if raw is None else raw
+    require(sha_bytes(raw) == SOURCE_SHA256, "input_hash_mismatch")
+    historical = ast.parse(raw.decode("utf-8", errors="strict"))
     isolated = ast.parse(Path(__file__).read_text(encoding="utf-8"))
 
     def pure(tree):

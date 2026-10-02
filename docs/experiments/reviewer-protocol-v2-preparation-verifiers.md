@@ -1,5 +1,10 @@
 # Reviewer Protocol v2: offline preparation and adoption verification
 
+Historical milestone receipt: Claude's review through c845b31 did not accept its
+adoption/Freeze 1 coverage. The bounded correction and v2 encoding are specified in
+[review-remediation](reviewer-protocol-v2-review-remediation.md). Original digests
+and receipts below are retained as historical evidence, not current acceptance.
+
 The `184a256` milestone is accepted subject to deferred review. Its receipt below
 records that milestone's state and digest. The authorized synthetic-only follow-up
 defines the encoding in the following section **before implementation**. This

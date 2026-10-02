@@ -11,6 +11,7 @@ from experiments.reviewer_protocol_v2 import production_preparation as p
 from experiments.reviewer_protocol_v2 import selection as s
 from experiments.reviewer_protocol_v2.common import canonical, sha_bytes
 from tests.test_reviewer_v2_preparation import adoption, fixture
+from experiments.reviewer_protocol_v2 import procedure_evidence as e
 
 
 def complete_fixture(root):
@@ -49,6 +50,21 @@ def complete_fixture(root):
     roles["eligibility_exposure_code_bundle"] = put(
         "generating-bundle.json", generating
     )
+    decision = put(
+        "current-decisions.json",
+        dict(
+            schema="reviewer-protocol-v2-current-owner-decisions-v1",
+            record_reference="Invented owner record",
+            record_sha256="d" * 64,
+            historical_amendment=False,
+            approval_authenticated=False,
+            decisions=dict(
+                E01="METADATA_ONLY_NO_DISPOSITION_CHANGE",
+                rule_evidence="HISTORICAL_AND_CURRENT_SEPARATE",
+                runtime="EXACT_NINE_FIELD_BINDING",
+            ),
+        ),
+    )
     rules = {}
     for role, name in zip(
         a.RULE_ROLES,
@@ -61,31 +77,90 @@ def complete_fixture(root):
     ):
         path = "heldout-external/reviewer-protocol-v2-offline/" + name
         fb = dict(path=path, sha256=sha_bytes((root / path).read_bytes()))
-        roles[role] = fb
+        contract = e.rule_contract(role)
+        text = put(
+            role + "-normative-text.json",
+            dict(
+                schema="reviewer-protocol-v2-rule-text-evidence-v1",
+                role=role,
+                record_reference="Invented complete normative source",
+                contract_sha256=sha_bytes(canonical(contract)),
+                text="Invented specification evidence only; no approval is authenticated.",
+            ),
+        )
+        roles[role] = put(
+            role + "-specification.json",
+            dict(
+                schema="reviewer-protocol-v2-rule-specification-v1",
+                role=role,
+                contract=contract,
+                source_evidence=[text],
+                algorithm_evidence=text,
+                decision_evidence=decision,
+            ),
+        )
+        review = put(
+            role + "-review.json",
+            dict(
+                schema="reviewer-protocol-v2-review-evidence-v1",
+                subject_sha256=roles[role]["sha256"],
+                record_reference="Invented semantic review reference",
+                reviewer="Invented reviewer",
+                recorded_utc="2026-10-01T00:00:00Z",
+                note="Synthetic reviewed applicability declaration.",
+            ),
+        )
+        current_path = s.PREFIX + a.RULE_ROLES[role]
         witness = dict(
-            schema="reviewer-protocol-v2-historical-rule-relationship-v1",
+            schema="reviewer-protocol-v2-rule-applicability-v1",
             role=role,
-            original_evidence=fb,
-            generating_source=dict(
+            historical_implementation_sha256=generating["implementation_sha256"],
+            historical_source=dict(
                 filename=a.RULE_ROLES[role],
                 sha256=sources[a.RULE_ROLES[role]]["sha256"],
             ),
-            specification=fb,
-            relation="IDENTICAL_EVIDENCE_BYTES",
+            current_source=dict(
+                path=current_path,
+                sha256=sha_bytes(f["executing_sources"][current_path]),
+            ),
+            original_evidence=[fb],
+            specification=roles[role],
+            decision_evidence=decision,
+            semantic_review_evidence=review,
+            reconciliation="CURRENT_E01_METADATA_CLARIFICATION"
+            if role == "eligibility_specification"
+            else "UNCHANGED_POLICY",
         )
         rules[role] = dict(
-            original_evidence=fb,
-            specification=fb,
+            original_evidence=[fb],
+            specification=roles[role],
             relationship_evidence=put(role + "-relationship.json", witness),
         )
     roles["selection_code_bundle"] = put("selection-bundle.json", s.selection_bundle())
+    interface_specs = {}
+    for kind, contract in e.INTERFACE_CONTRACTS.items():
+        source = put(
+            kind + "-text.json",
+            dict(
+                schema="reviewer-protocol-v2-rule-text-evidence-v1",
+                role=kind,
+                record_reference="Invented complete interface source",
+                contract_sha256=sha_bytes(canonical(contract)),
+                text="Invented normative interface evidence.",
+            ),
+        )
+        interface_specs[kind] = put(
+            kind + "-interface.json",
+            dict(
+                schema="reviewer-protocol-v2-interface-specification-v1",
+                kind=kind,
+                contract=contract,
+                source_evidence=[source],
+            ),
+        )
     interfaces = dict(
-        schema="reviewer-protocol-v2-adoption-interface-binding-v1",
-        specification=put(
-            "interfaces-specification.txt",
-            b"Invented interface specification.\n",
-            raw=True,
-        ),
+        schema="reviewer-protocol-v2-adoption-interface-binding-v2",
+        specifications=interface_specs,
         verification_bundle=p.verification_bundle(f["executing_sources"]),
     )
     roles["remaining_interfaces_specification"] = put("interfaces.json", interfaces)
@@ -108,7 +183,7 @@ def complete_fixture(root):
     )
     parent = f["historical_manifest"]["path"].rsplit("/", 1)[0]
     procedure = dict(
-        schema="reviewer-protocol-v2-historical-adoption-v1",
+        schema="reviewer-protocol-v2-historical-adoption-v2",
         audit=dict(
             manifest=f["historical_manifest"],
             payloads={
@@ -131,6 +206,64 @@ def complete_fixture(root):
             remaining_interfaces=roles["remaining_interfaces_specification"],
         ),
         selection_inputs=inputs_fb,
+    )
+    test_hashes = {}
+    for test in e.TEST_PATHS:
+        raw = (s.SOURCE_ROOT / test).read_bytes()
+        target = root / test
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+        test_hashes[test] = sha_bytes(raw)
+    current = p.verification_bundle(f["executing_sources"])
+    roles["synthetic_test_manifest"] = put(
+        "test-manifest.json",
+        dict(
+            schema="reviewer-protocol-v2-synthetic-test-manifest-v1",
+            sources=current["files"],
+            tests=test_hashes,
+            code_bundle_sha256=current["sha256"],
+        ),
+    )
+    ledger = s.jsonl_records(history["payloads"]["population_ledger.jsonl"])
+    roles["definitive_heldout_exclusion_policy"] = put(
+        "exclusion-policy.json",
+        dict(
+            schema="reviewer-protocol-v2-definitive-exclusion-policy-v1",
+            population=roles["population"],
+            ledger=f["artifacts"]["eligibility_ledger"],
+            inventory=roles["exposure_inventory"],
+            context_groups_sha256=sha_bytes(
+                canonical(
+                    [
+                        {k: row[k] for k in ("source", "context_group", "cand_id")}
+                        for row in ledger
+                    ]
+                )
+            ),
+            direct_pair_only=True,
+            transitive=False,
+            threshold_hex=(0.9).hex(),
+            native_group=True,
+            eligible_disposition="SCREEN_PASS",
+            selection_comparison="<",
+            decision_evidence=decision,
+        ),
+    )
+    roles["design_approval_evidence"] = put(
+        "design-evidence.json",
+        dict(
+            schema="reviewer-protocol-v2-design-approval-evidence-v1",
+            actor="Invented owner",
+            recorded_utc="2026-10-01T00:00:00Z",
+            record_reference="Invented design record",
+            authority_evidence=decision,
+            subjects={
+                role: fb["sha256"]
+                for role, fb in roles.items()
+                if role
+                not in {"design_approval_evidence", "historical_integrity_manifest"}
+            },
+        ),
     )
     roles["historical_integrity_manifest"] = put("adoption.json", procedure)
     freeze = dict(
@@ -172,6 +305,10 @@ def replace_artifact(f, freeze, role, value):
         elif role == "remaining_interfaces_specification":
             procedure["current_bindings"]["remaining_interfaces"] = fb
         replace_artifact(f, freeze, "historical_integrity_manifest", procedure)
+    if role not in {"historical_integrity_manifest", "design_approval_evidence"}:
+        declaration = artifact(f, freeze, "design_approval_evidence")
+        declaration["subjects"][role] = fb["sha256"]
+        replace_artifact(f, freeze, "design_approval_evidence", declaration)
 
 
 def test_complete_positive_and_deterministic_bytes(tmp_path):
@@ -191,7 +328,14 @@ def test_complete_positive_and_deterministic_bytes(tmp_path):
         )
         assert inputs is not None, report
         p.validate_preparation(
-            f["root"], inputs, report, sha_bytes(inputs), sha_bytes(raw)
+            f["root"],
+            inputs,
+            report,
+            sha_bytes(inputs),
+            sha_bytes(raw),
+            verification_context=dict(
+                f, proposed_freeze1=raw, trusted_expected_freeze1_sha256=sha_bytes(raw)
+            ),
         )
         assert json.loads(report)["freeze1_sha256"] == sha_bytes(raw)
         outputs.append(
@@ -294,19 +438,21 @@ def test_altered_rule_witness_and_source_is_not_specification(tmp_path):
     rule = procedure["rules"]["eligibility_specification"]
     fb = rule["relationship_evidence"]
     witness = json.loads((tmp_path / fb["path"]).read_bytes())
-    witness["generating_source"]["sha256"] = s.selection_bundle()["sha256"]
+    witness["historical_source"]["sha256"] = s.selection_bundle()["sha256"]
     raw = canonical(witness)
     (tmp_path / fb["path"]).write_bytes(raw)
     fb["sha256"] = sha_bytes(raw)
     replace_artifact(f, freeze, "historical_integrity_manifest", procedure)
-    assert verify(f, freeze)["code"] == "RULE_RELATIONSHIP_BINDING"
-    rule["original_evidence"] = artifact(f, freeze, "eligibility_exposure_code_bundle")[
-        "sources"
-    ]["eligibility.py"]
+    assert verify(f, freeze)["code"] == "RULE_APPLICABILITY_BINDING"
+    rule["original_evidence"] = [
+        artifact(f, freeze, "eligibility_exposure_code_bundle")["sources"][
+            "eligibility.py"
+        ]
+    ]
     replace_artifact(f, freeze, "historical_integrity_manifest", procedure)
     assert verify(f, freeze)["code"] in {
         "RULE_ORIGINAL_EVIDENCE_BINDING",
-        "RULE_SOURCE_IS_NOT_SPECIFICATION",
+        "schema_keys",
     }
 
 
@@ -396,7 +542,7 @@ def test_no_writes_or_operational_calls(tmp_path, monkeypatch):
 def test_nested_path_escape(tmp_path, relative):
     f, freeze = complete_fixture(tmp_path)
     procedure = artifact(f, freeze, "historical_integrity_manifest")
-    procedure["rules"]["eligibility_specification"]["original_evidence"]["path"] = (
+    procedure["rules"]["eligibility_specification"]["original_evidence"][0]["path"] = (
         relative
     )
     replace_artifact(f, freeze, "historical_integrity_manifest", procedure)
@@ -431,9 +577,9 @@ def test_exact_relationship_and_closure_joins(tmp_path, mutation, code):
             "artifacts"
         ]["selection_specification"]
     elif mutation == "unbound_original":
-        procedure["rules"]["eligibility_specification"]["original_evidence"] = freeze[
-            "artifacts"
-        ]["selection_specification"]
+        procedure["rules"]["eligibility_specification"]["original_evidence"] = [
+            freeze["artifacts"]["selection_specification"]
+        ]
     elif mutation == "extra_closure":
         procedure["input_closure"]["heldout-external/invented-unrecorded"] = "0" * 64
         procedure["input_closure_sha256"] = sha_bytes(

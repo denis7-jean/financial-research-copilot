@@ -1,4 +1,7 @@
-"""Read-only binding preparation. No ranking, selection, publication or sealing."""
+"""Technical evidence verification only. Never operational approval or readiness."""
+
+import sys
+from pathlib import Path
 
 from experiments.reviewer_protocol_v2.common import (
     ProtocolError,
@@ -26,16 +29,18 @@ from experiments.reviewer_protocol_v2.selection import (
     runtime_binding,
     selection_bundle,
 )
+from experiments.reviewer_protocol_v2.owner_audit import OWNER_BUNDLE_PATHS
 from experiments.reviewer_protocol_v2.trial_interfaces import (
     INTERFACE_BUNDLE_PATHS,
     interface_bundle,
 )
 
 VERIFICATION_BUNDLE_PATHS = (
-    *INTERFACE_BUNDLE_PATHS,
+    *OWNER_BUNDLE_PATHS,
     PREFIX + "exposure.py",
     PREFIX + "ledger_adoption.py",
     PREFIX + "production_preparation.py",
+    PREFIX + "procedure_evidence.py",
 )
 
 
@@ -47,8 +52,20 @@ def verification_bundle(sources):
 
 
 def _executing_sources(root, sources):
+    """Compare origins and disk bytes, not loaded instructions or hostile processes."""
     exact_keys(sources, VERIFICATION_BUNDLE_PATHS, "executing_source_set")
     for path, raw in sources.items():
+        module_name = path.removeprefix("main/").removesuffix(".py").replace("/", ".")
+        if module_name.endswith(".__init__"):
+            module_name = module_name.removesuffix(".__init__")
+        module = sys.modules.get(module_name)
+        require(
+            module is not None
+            and module.__spec__ is not None
+            and Path(module.__spec__.origin).resolve()
+            == (SOURCE_ROOT / path).resolve(),
+            "executing_source_origin",
+        )
         require(
             type(raw) is bytes
             and raw == (SOURCE_ROOT / path).read_bytes()
@@ -121,6 +138,14 @@ def prepare(
             require(
                 digest == trusted_expected_inputs_sha256, "trusted_input_hash_mismatch"
             )
+        phase = "INPUT_SCHEMA"
+        from experiments.reviewer_protocol_v2.procedure_evidence import (
+            selection_specification,
+        )
+
+        selection_specification(
+            read_binding(root, artifacts["selection_specification"])
+        )
         phase = "IDENTITY_BINDING"
         rows = prepare_inputs(root, value, digest)
         phase = "INPUT_SCHEMA"
@@ -205,7 +230,8 @@ def prepare(
         UnicodeError,
         ValueError,
         TypeError,
-        KeyError,
+        LookupError,
+        RecursionError,
         AttributeError,
         SyntaxError,
     ):
@@ -227,8 +253,9 @@ def validate_preparation(
     report_raw,
     trusted_expected_inputs_sha256,
     trusted_expected_freeze1_sha256=None,
+    verification_context=None,
 ):
-    """Check completed report/binding bytes against a separately supplied expected hash."""
+    """Return explicit technical assessment; replay evidence when Freeze 1 is claimed."""
     hex256(trusted_expected_inputs_sha256)
     binding = object_bytes(binding_raw)
     exact_keys(binding, ("schema", "artifacts", "code", "runtime", "seed", "strata"))
@@ -251,4 +278,119 @@ def validate_preparation(
     )
     if trusted_expected_freeze1_sha256 is not None:
         hex256(trusted_expected_freeze1_sha256)
-    return binding
+    level = "BINDING_ONLY"
+    if trusted_expected_freeze1_sha256 is not None:
+        require(
+            type(verification_context) is dict
+            and verification_context.get("root") == root,
+            "preparation_replay_evidence_required",
+        )
+        proof = dict(verification_context)
+        require(
+            proof.get("trusted_expected_freeze1_sha256")
+            == trusted_expected_freeze1_sha256,
+            "preparation_replay_freeze_binding",
+        )
+        proof["trusted_expected_inputs_sha256"] = trusted_expected_inputs_sha256
+        replay_binding, replay_report = prepare(**proof)
+        require(
+            replay_binding == binding_raw and replay_report == report_raw,
+            "preparation_evidence_replay",
+        )
+        level = "EVIDENCE_REPLAYED"
+    return dict(
+        schema=schema("technical-preparation-assessment"),
+        binding=binding,
+        report_sha256=sha_bytes(report_raw),
+        verification_level=level,
+        approval_assessed=False,
+        operational_readiness=False,
+        freeze1_sha256=trusted_expected_freeze1_sha256,
+        inputs_sha256=trusted_expected_inputs_sha256,
+    )
+
+
+def selection_phase_predicate(
+    assessment,
+    authorization_raw,
+    trusted_authorization_sha256,
+    phase,
+    ledger_seal_sha256,
+    procedure_sha256,
+):
+    """Necessary structural predicate for future operational tools; executes nothing.
+
+    Phase/seal/trust must come from independently verified future operational
+    evidence. This pure predicate cannot authenticate approval or durable history.
+    """
+    from experiments.reviewer_protocol_v2.control_serialization import (
+        object_header,
+        relative_path,
+    )
+
+    try:
+        exact_keys(
+            assessment,
+            (
+                "schema",
+                "binding",
+                "report_sha256",
+                "verification_level",
+                "approval_assessed",
+                "operational_readiness",
+                "freeze1_sha256",
+                "inputs_sha256",
+            ),
+        )
+        hex256(assessment["inputs_sha256"])
+        hex256(assessment["report_sha256"])
+        hex256(trusted_authorization_sha256)
+        hex256(ledger_seal_sha256)
+        hex256(procedure_sha256)
+        require(
+            sha_bytes(authorization_raw) == trusted_authorization_sha256,
+            "authorization_trusted_hash",
+        )
+        grant = object_header(
+            authorization_raw,
+            "selection-authorization",
+            (
+                "operation",
+                "inputs_sha256",
+                "freeze1_sha256",
+                "ledger_seal_sha256",
+                "procedure_sha256",
+                "destination_policy",
+            ),
+        )
+        require(
+            phase == "FREEZE_1_LEDGER_SEALED"
+            and assessment["schema"] == schema("technical-preparation-assessment")
+            and assessment["verification_level"] == "EVIDENCE_REPLAYED"
+            and assessment["approval_assessed"] is False
+            and assessment["operational_readiness"] is False,
+            "selection_phase",
+        )
+        hex256(assessment["freeze1_sha256"])
+        require(
+            grant["operation"] in {"SELECTION", "SELECTION_AND_PUBLICATION"}
+            and grant["inputs_sha256"] == assessment["inputs_sha256"]
+            and grant["freeze1_sha256"] == assessment["freeze1_sha256"]
+            and grant["ledger_seal_sha256"] == ledger_seal_sha256
+            and grant["procedure_sha256"] == procedure_sha256,
+            "selection_phase_bindings",
+        )
+        exact_keys(grant["destination_policy"], ("path", "sha256"))
+        relative_path(grant["destination_policy"]["path"])
+        hex256(grant["destination_policy"]["sha256"])
+        return True
+    except (
+        ProtocolError,
+        OSError,
+        ValueError,
+        TypeError,
+        LookupError,
+        AttributeError,
+        RecursionError,
+    ):
+        return False
