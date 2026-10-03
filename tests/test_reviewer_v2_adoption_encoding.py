@@ -14,6 +14,14 @@ from tests.test_reviewer_v2_preparation import adoption, fixture
 from experiments.reviewer_protocol_v2 import procedure_evidence as e
 
 
+@pytest.fixture(autouse=True)
+def invented_normative_identity(monkeypatch):
+    """Synthetic-only anchor. Production has no parameter for replacing its pin."""
+    monkeypatch.setattr(
+        e, "NORMATIVE_DOCUMENT_SHA256", sha_bytes(b"Invented normative document.\n")
+    )
+
+
 def complete_fixture(root, mutate=None, historical_eligibility=None):
     f = fixture(root, mutate, historical_eligibility)
 

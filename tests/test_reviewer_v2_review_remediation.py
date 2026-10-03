@@ -14,6 +14,7 @@ from experiments.reviewer_protocol_v2 import selection as s
 from experiments.reviewer_protocol_v2 import similarity
 from experiments.reviewer_protocol_v2.common import ProtocolError, canonical, sha_bytes
 from tests.test_reviewer_v2_adoption_encoding import (
+    invented_normative_identity as invented_normative_identity,
     complete_fixture,
     verify,
     artifact,
@@ -282,11 +283,11 @@ def test_exclusion_policy_content(tmp_path, field, value):
 def test_origin_check_and_exact_runtime(tmp_path, monkeypatch):
     f, freeze = complete_fixture(tmp_path)
     module = sys.modules["experiments.reviewer_protocol_v2.owner_audit"]
-    monkeypatch.setattr(
-        module.__spec__, "origin", str(tmp_path / "invented-other-source.py")
-    )
-    assert verify(f, freeze)["code"] == "executing_source_origin"
-    monkeypatch.undo()
+    with monkeypatch.context() as origin_patch:
+        origin_patch.setattr(
+            module.__spec__, "origin", str(tmp_path / "invented-other-source.py")
+        )
+        assert verify(f, freeze)["code"] == "executing_source_origin"
     lock = artifact(f, freeze, "runtime_dependency_lock")
     lock["runtime"]["platform"] = "Invented updated OS"
     replace_artifact(f, freeze, "runtime_dependency_lock", lock)

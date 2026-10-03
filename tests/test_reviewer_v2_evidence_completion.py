@@ -25,6 +25,7 @@ from experiments.reviewer_protocol_v2.common import (
     sha_bytes,
 )
 from tests.test_reviewer_v2_adoption_encoding import (
+    invented_normative_identity as invented_normative_identity,
     complete_fixture,
     artifact,
     replace_artifact,
@@ -527,7 +528,7 @@ def test_mechanical_contract_matches_normative_literal_list():
     assert contract["text_evaluable"]["non_evaluable"]["matches"] == []
     assert "EMPTY_NORMALIZED_VIEW" in contract["text_evaluable"]["blocks"]
     assert (
-        contract["e06_evaluation"]["non_evaluable"]
+        contract["text_rule_evaluation"]["non_evaluable"]
         == "NOT_EVALUABLE_NO_MATCHES_INCLUDING_EMPTY_VIEW"
     )
 

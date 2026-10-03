@@ -20,6 +20,11 @@ from experiments.reviewer_protocol_v2.selection import (
     hex256,
 )
 
+NORMATIVE_DOCUMENT_ID = "reviewer-protocol-v2-current-rules-v1"
+NORMATIVE_DOCUMENT_SHA256 = (
+    "4a76c98044146d8a6f887e0c68df2975b595eec394224510a1508cfe7b66b0b7"
+)
+
 INTERFACE_CONTRACTS = {
     "control": dict(
         anchors=15,
@@ -104,6 +109,7 @@ TEST_PATHS = tuple(
         "adoption_encoding",
         "review_remediation",
         "evidence_completion",
+        "evidence_cleanup",
     )
 )
 
@@ -219,6 +225,7 @@ def rule_contract(role):
                 ],
                 blocks=[
                     "INVALID_JSON",
+                    "NONOBJECT_JSON",
                     "DUPLICATE_KEYS",
                     "MISSING_QUESTION",
                     "NONSTRING_QUESTION",
@@ -234,13 +241,24 @@ def rule_contract(role):
                     disposition="INPUT_INVALID",
                 ),
             ),
-            e06_evaluation=dict(
-                usable="ALL_REGISTERED_SUBRULES_INDEPENDENT_EVEN_ON_METADATA_INVALID_ROWS",
+            text_rule_evaluation=dict(
+                rules=["E01", "E02", "E03", "E04", "E05", "E06"],
+                usable="ALL_REGISTERED_TEXT_RULES_INDEPENDENT_EVEN_ON_METADATA_INVALID_ROWS",
                 non_evaluable="NOT_EVALUABLE_NO_MATCHES_INCLUDING_EMPTY_VIEW",
+            ),
+            e06_evaluation=dict(
                 bracketed="ANYWHERE_NO_OUTER_BOUNDARIES",
                 delimiter_forms="INDEPENDENT_PAIRED_DELIMITERS_INDEPENDENT_ZERO_OR_ONE_INNER_SPACE",
                 nested="PRESERVE_ALL_REGISTERED_SUBRULE_SPANS",
                 higher_precedence="PRESERVE_MATCHES",
+            ),
+            ledger_preservation=dict(
+                rule_ids="ASCENDING_RULE_ID_ORDER",
+                subrule_identifiers="PRESERVED",
+                normalized_match_spans="PRESERVED",
+                e07_reasons="PRESERVED",
+                winning_disposition="NEVER_ERASES_OTHER_FINDINGS",
+                e01_prevalence="REPORTED_SEPARATELY",
             ),
             rule_dispositions=dict(
                 E01="METADATA_ONLY",
@@ -436,8 +454,7 @@ def rule_bindings(
                 if role == "eligibility_specification"
                 else "UNCHANGED_POLICY"
             )
-            and witness["normative_document_id"]
-            == "reviewer-protocol-v2-current-rules-v1"
+            and witness["normative_document_id"] == NORMATIVE_DOCUMENT_ID
             and witness["historical_ledger_policy"]
             == (
                 "IDENTICAL_SOURCE_OR_IDENTIFIED_RECONCILIATION"
@@ -448,6 +465,11 @@ def rule_bindings(
         )
         document = witness["normative_document"]
         checked_read(document, read)
+        # Owner-chosen version identity; not approval authentication or rule authority.
+        require(
+            document["sha256"] == NORMATIVE_DOCUMENT_SHA256,
+            "RULE_NORMATIVE_DOCUMENT_IDENTITY",
+        )
         require(
             normative_document is None or document == normative_document,
             "RULE_NORMATIVE_DOCUMENT_JOIN",
