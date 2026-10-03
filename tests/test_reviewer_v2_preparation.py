@@ -17,7 +17,7 @@ from experiments.reviewer_protocol_v2.exposure import InventoryBuilder
 from tests.test_reviewer_v2_selection import bound_fixture, synthetic_rows
 
 
-def fixture(root, mutate=None):
+def fixture(root, mutate=None, historical_eligibility=None):
     rows = synthetic_rows()
     if mutate:
         mutate(rows)
@@ -42,6 +42,9 @@ def fixture(root, mutate=None):
     sources["eligibility.py"] = (
         s.SOURCE_ROOT / (s.PREFIX + "eligibility.py")
     ).read_bytes()
+
+    if historical_eligibility is not None:
+        sources["eligibility.py"] = historical_eligibility
 
     def put(path, raw):
         target = root / path

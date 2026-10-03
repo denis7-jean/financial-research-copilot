@@ -575,6 +575,7 @@ def _freeze(
         current,
         lambda fb: read_binding(root, fb),
         RULE_ROLES,
+        generating=generating,
     )
     exact_keys(
         procedure["current_bindings"],

@@ -216,8 +216,8 @@ A range matches its first reference.
 - `how {does,did} {this,that,it} compare`
 - `{explain,summarize} {this,that,these,those,it,them}`
 
-The brace form above summarizes the literal list below, transcribed by expansion
-of the accepted draft grammar (not from implementation). Count is 42:
+The brace form above summarizes S-576's normative literal list below
+(S-576 lines 283-329), independently verified against that literal source. Count is 42:
 
 - `explain it`
 - `explain that`
@@ -404,7 +404,7 @@ distinguish raw SCREEN_PASS from final unexposed SCREEN_PASS.
 - The inventory is *known* exposure only.
 
 **Sources:** S-576 §5 (lines 537–611). O-430 §7. O-051 Phase 2. O-526 §1: authoritative
-inventory accepted (15 / 48 / 63 / 1,480 / 0). I did not inspect it here.
+inventory accepted (15 / 48 / 63 / 1,480 / 0). The inventory was not inspected for this consolidation.
 
 ### 3.2 Native context group
 

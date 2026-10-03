@@ -8,7 +8,11 @@ from experiments.reviewer_protocol_v2.control_serialization import (
     object_bytes,
     relative_path,
 )
-from experiments.reviewer_protocol_v2.eligibility import PATTERNS
+from experiments.reviewer_protocol_v2.eligibility import PATTERNS, P05, FIELDS, STRATA
+from experiments.reviewer_protocol_v2.ledger_reconciliation import (
+    checked_read,
+    verify_reconciliation,
+)
 from experiments.reviewer_protocol_v2.selection import (
     SOURCE_ROOT,
     STRATUM_ENTRIES,
@@ -99,6 +103,7 @@ TEST_PATHS = tuple(
         "preparation",
         "adoption_encoding",
         "review_remediation",
+        "evidence_completion",
     )
 )
 
@@ -147,6 +152,96 @@ def rule_contract(role):
     if role == "eligibility_specification":
         return dict(
             normalization="NFKC_CASEFOLD_WHITESPACE_STRIP",
+            normalization_steps=[
+                dict(operation="UNICODE_NORMALIZE", form="NFKC"),
+                dict(operation="STR_CASEFOLD"),
+                dict(
+                    operation="RE_SUB", pattern=r"\s+", replacement=" ", flags="UNICODE"
+                ),
+                dict(operation="STR_STRIP", characters="PYTHON_UNICODE_WHITESPACE"),
+            ],
+            e05_phrases=sorted(P05),
+            e05_terminal=["?", "."],
+            e05_algorithm="Q_IN_P05_OR_ONE_TERMINAL_MARK_REMOVED_IN_P05",
+            e05_span="ENTIRE_NORMALIZED_Q_INCLUDING_PERMITTED_MARK",
+            e07_conditions=[
+                "1_NOT_UNIQUE_KEY_JSON_OBJECT",
+                "2_REQUIRED_FIELD_MISSING_OR_NONSTRING",
+                "3_INVALID_OR_UNKNOWN_CAND_ID",
+                "4_INVALID_EXACT_SOURCE_STRATUM_PAIR",
+                "5_METADATA_REFERENCE_MISMATCH",
+                "6_QUESTION_NOT_STRICT_UTF8",
+                "7_NORMALIZED_EMPTY_QUESTION",
+                "8_ORIGINAL_QUESTION_HASH_REFERENCE_MISMATCH",
+            ],
+            e07_inputs=dict(
+                required_fields=list(FIELDS),
+                reference_fields=[field for field in FIELDS if field != "question"]
+                + ["question_sha256"],
+                metadata_fields=[
+                    "source",
+                    "sampling_stratum",
+                    "source_revision",
+                    "context_group",
+                ],
+                cand_id_fullmatch=r"c_[0-9a-f]{10}",
+                source_stratum_pairs=[list(pair) for pair in STRATA],
+                reference="IMMUTABLE_INDEX_FROM_HASH_VERIFIED_FROZEN_PILOT",
+                reference_question_hash="SHA256_STRICT_ORIGINAL_UTF8_NO_ADDED_LF",
+                metadata="EXACT_UNNORMALIZED_UNCASEFOLDED",
+                extra_fields="ALLOWED",
+                json_constants="REJECT_NAN_AND_INFINITY",
+                prohibited_inputs=[
+                    "ROUTING_LABELS",
+                    "SOURCE_ANSWERS",
+                    "PROVISIONAL_LABELS",
+                ],
+            ),
+            e07_failure_scope=dict(
+                row="ANY_E07_CONDITION_INPUT_INVALID",
+                population_abort=[
+                    "POPULATION_FILE_HASH_MISMATCH",
+                    "DUPLICATE_INDEX_ID",
+                ],
+                abort_conversion="NEVER_PER_ROW_DISPOSITION",
+            ),
+            text_evaluable=dict(
+                all=[
+                    "VALID_UNIQUE_KEY_JSON_OBJECT",
+                    "STRING_QUESTION",
+                    "STRICT_UTF8_QUESTION",
+                    "NONEMPTY_NORMALIZED_VIEW",
+                ],
+                does_not_block=[
+                    "METADATA_FAULT",
+                    "UNKNOWN_ID",
+                    "QUESTION_HASH_MISMATCH",
+                ],
+                blocks=[
+                    "INVALID_JSON",
+                    "DUPLICATE_KEYS",
+                    "MISSING_QUESTION",
+                    "NONSTRING_QUESTION",
+                    "INVALID_UTF8_QUESTION",
+                    "EMPTY_NORMALIZED_VIEW",
+                ],
+                non_evaluable=dict(
+                    text_rules="E01_THROUGH_E06_NOT_EVALUABLE_NEVER_INFERRED",
+                    matches=[],
+                    empty_normalized_view="",
+                    unavailable_normalized_view=None,
+                    empty_reason="normalized_empty_question",
+                    disposition="INPUT_INVALID",
+                ),
+            ),
+            e06_evaluation=dict(
+                usable="ALL_REGISTERED_SUBRULES_INDEPENDENT_EVEN_ON_METADATA_INVALID_ROWS",
+                non_evaluable="NOT_EVALUABLE_NO_MATCHES_INCLUDING_EMPTY_VIEW",
+                bracketed="ANYWHERE_NO_OUTER_BOUNDARIES",
+                delimiter_forms="INDEPENDENT_PAIRED_DELIMITERS_INDEPENDENT_ZERO_OR_ONE_INNER_SPACE",
+                nested="PRESERVE_ALL_REGISTERED_SUBRULE_SPANS",
+                higher_precedence="PRESERVE_MATCHES",
+            ),
             rule_dispositions=dict(
                 E01="METADATA_ONLY",
                 E02="DEPENDENCE_EXCLUDED",
@@ -280,8 +375,12 @@ def specification(raw, role, read):
     return value
 
 
-def rule_bindings(procedure, roles, history, current, read, rule_roles):
+def rule_bindings(
+    procedure, roles, history, current, read, rule_roles, generating=None
+):
     exact_keys(procedure["rules"], rule_roles, "RULE_EVIDENCE_SET")
+    normative_document = None
+    reconciliation = None
     for role, name in rule_roles.items():
         record = procedure["rules"][role]
         exact_keys(
@@ -300,7 +399,7 @@ def rule_bindings(procedure, roles, history, current, read, rule_roles):
             )
         require(record["specification"] == roles[role], "RULE_SPECIFICATION_BINDING")
         spec = specification(read(record["specification"]), role, read)
-        witness = evidence_v2(
+        witness = evidence_header(
             read(record["relationship_evidence"]),
             "rule-applicability",
             (
@@ -315,7 +414,10 @@ def rule_bindings(procedure, roles, history, current, read, rule_roles):
                 "reconciliation",
                 "normative_document_id",
                 "historical_ledger_policy",
+                "normative_document",
+                "historical_ledger_reconciliation",
             ),
+            3,
         )
         current_path = "main/experiments/reviewer_protocol_v2/" + name
         require(
@@ -338,12 +440,26 @@ def rule_bindings(procedure, roles, history, current, read, rule_roles):
             == "reviewer-protocol-v2-current-rules-v1"
             and witness["historical_ledger_policy"]
             == (
-                "IDENTICAL_CORRECTED_ELIGIBILITY_SOURCE_ONLY"
+                "IDENTICAL_SOURCE_OR_IDENTIFIED_RECONCILIATION"
                 if role == "eligibility_specification"
                 else "NO_NEW_LEDGER_POLICY"
             ),
             "RULE_APPLICABILITY_BINDING",
         )
+        document = witness["normative_document"]
+        checked_read(document, read)
+        require(
+            normative_document is None or document == normative_document,
+            "RULE_NORMATIVE_DOCUMENT_JOIN",
+        )
+        normative_document = document
+        if role == "eligibility_specification":
+            reconciliation = witness["historical_ledger_reconciliation"]
+        else:
+            require(
+                witness["historical_ledger_reconciliation"] is None,
+                "RULE_RECONCILIATION_ROLE",
+            )
         read(witness["current_source"])
         review = evidence_header(
             read(witness["semantic_review_evidence"]),
@@ -358,8 +474,9 @@ def rule_bindings(procedure, roles, history, current, read, rule_roles):
                 "recorded_utc",
                 "note",
                 "shared_origin_reviews",
+                "normative_document",
             ),
-            3,
+            4,
         )
         require(
             review["subject_sha256"] == roles[role]["sha256"], "RULE_REVIEW_SUBJECT"
@@ -368,6 +485,10 @@ def rule_bindings(procedure, roles, history, current, read, rule_roles):
             review["contract_sha256"] == sha_bytes(canonical(spec["contract"])),
             "RULE_REVIEW_CONTRACT",
         )
+        require(
+            review["normative_document"] == document, "RULE_REVIEW_NORMATIVE_DOCUMENT"
+        )
+        checked_read(review["normative_document"], read)
         source_record(review, read)
         for key in ("record_reference", "reviewer", "note"):
             nonempty(review[key])
@@ -413,12 +534,22 @@ def rule_bindings(procedure, roles, history, current, read, rule_roles):
                     }
                 )
                 require(declaration[field] == expected, "RULE_REVIEW_SHARED_SECTIONS")
-    # A declaration alone cannot clear the ledger evidence implications of D8.
-    require(
+    equal = (
         history["sources"]["eligibility.py"]
-        == current["files"]["main/experiments/reviewer_protocol_v2/eligibility.py"],
-        "E03C_LEDGER_RECONCILIATION_REQUIRED",
+        == current["files"]["main/experiments/reviewer_protocol_v2/eligibility.py"]
     )
+    if reconciliation is not None:
+        require(generating is not None, "RECONCILIATION_GENERATING_EVIDENCE_MISSING")
+        verify_reconciliation(
+            checked_read(reconciliation, read),
+            history,
+            current,
+            generating,
+            procedure["generating_bundle"],
+            read,
+        )
+    else:
+        require(equal, "E03C_LEDGER_RECONCILIATION_REQUIRED")
 
 
 def interface_specifications(refs, read):

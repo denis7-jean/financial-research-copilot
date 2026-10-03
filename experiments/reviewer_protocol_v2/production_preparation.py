@@ -41,6 +41,7 @@ VERIFICATION_BUNDLE_PATHS = (
     PREFIX + "ledger_adoption.py",
     PREFIX + "production_preparation.py",
     PREFIX + "procedure_evidence.py",
+    PREFIX + "ledger_reconciliation.py",
 )
 
 

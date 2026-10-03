@@ -14,8 +14,8 @@ from tests.test_reviewer_v2_preparation import adoption, fixture
 from experiments.reviewer_protocol_v2 import procedure_evidence as e
 
 
-def complete_fixture(root):
-    f = fixture(root)
+def complete_fixture(root, mutate=None, historical_eligibility=None):
+    f = fixture(root, mutate, historical_eligibility)
 
     def put(name, value, raw=False):
         path = "heldout-external/invented-procedure/" + name
@@ -64,6 +64,9 @@ def complete_fixture(root):
                 runtime="EXACT_NINE_FIELD_BINDING",
             ),
         ),
+    )
+    normative_document = put(
+        "normative-document.md", b"Invented normative document.\n", raw=True
     )
     rules = {}
     for role, name in zip(
@@ -128,7 +131,8 @@ def complete_fixture(root):
         review = put(
             role + "-review.json",
             dict(
-                schema="reviewer-protocol-v2-review-evidence-v3",
+                schema="reviewer-protocol-v2-review-evidence-v4",
+                normative_document=normative_document,
                 subject_sha256=roles[role]["sha256"],
                 contract_sha256=sha_bytes(canonical(contract)),
                 record_reference="Invented semantic review reference",
@@ -151,7 +155,9 @@ def complete_fixture(root):
         )
         current_path = s.PREFIX + a.RULE_ROLES[role]
         witness = dict(
-            schema="reviewer-protocol-v2-rule-applicability-v2",
+            schema="reviewer-protocol-v2-rule-applicability-v3",
+            normative_document=normative_document,
+            historical_ledger_reconciliation=None,
             role=role,
             historical_implementation_sha256=generating["implementation_sha256"],
             historical_source=dict(
@@ -170,7 +176,7 @@ def complete_fixture(root):
             if role == "eligibility_specification"
             else "UNCHANGED_POLICY",
             normative_document_id="reviewer-protocol-v2-current-rules-v1",
-            historical_ledger_policy="IDENTICAL_CORRECTED_ELIGIBILITY_SOURCE_ONLY"
+            historical_ledger_policy="IDENTICAL_SOURCE_OR_IDENTIFIED_RECONCILIATION"
             if role == "eligibility_specification"
             else "NO_NEW_LEDGER_POLICY",
         )
