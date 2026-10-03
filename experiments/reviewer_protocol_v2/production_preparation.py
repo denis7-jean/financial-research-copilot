@@ -406,3 +406,186 @@ def selection_phase_predicate(
         RecursionError,
     ):
         return False
+
+
+def reconciliation_preflight(
+    root,
+    binding_raw,
+    report_raw,
+    authorization_raw,
+    verification_context,
+    *,
+    phase,
+    trusted_expectations=None,
+):
+    """Replay necessary technical conditions only; never authenticate or dispatch.
+
+    Expected hashes and the seal-to-ledger association must be established by
+    external trusted producers, which are not implemented. Caller declarations
+    cannot prove approval, phase history or sealing. No operational seal schema
+    is inferred from authorization-v2's opaque seal hash.
+    """
+    result = dict(
+        status="FAILED",
+        code=None,
+        hashes={},
+        approval_authenticated=False,
+        phase_history_authenticated=False,
+        ledger_sealing_authenticated=False,
+        operational_adoption_performed=False,
+        operational_dispatch_performed=False,
+        freeze1_readiness="NOT_ASSESSED",
+    )
+    stage = "PREFLIGHT_TRUST_FORMAT"
+    try:
+        require(trusted_expectations is not None, "PREFLIGHT_TRUST_REQUIRED")
+        hashes = (
+            "inputs_sha256",
+            "report_sha256",
+            "freeze1_sha256",
+            "procedure_sha256",
+            "authorization_sha256",
+            "ledger_seal_sha256",
+        )
+        exact_keys(
+            trusted_expectations, (*hashes, "sealed_ledger"), "PREFLIGHT_TRUST_SCHEMA"
+        )
+        for key in hashes:
+            hex256(trusted_expectations[key])
+        sealed = trusted_expectations["sealed_ledger"]
+        exact_keys(sealed, ("path", "sha256"), "PREFLIGHT_SEAL_BINDING_SCHEMA")
+        hex256(sealed["sha256"])
+        require(phase == "FREEZE_1_LEDGER_SEALED", "PREFLIGHT_PHASE")
+        stage = "PREFLIGHT_CONTEXT_MALFORMED"
+        exact_keys(
+            verification_context,
+            (
+                "root",
+                "artifacts",
+                "code_bindings",
+                "generating_sources",
+                "historical_manifest",
+                "expected_historical_manifest_sha256",
+                "executing_sources",
+                "proposed_freeze1",
+                "trusted_expected_freeze1_sha256",
+            ),
+            "PREFLIGHT_CONTEXT_SCHEMA",
+        )
+        context = verification_context
+        trust = trusted_expectations
+        require(context["root"] == root, "PREFLIGHT_CONTEXT_ROOT")
+        require(
+            context["trusted_expected_freeze1_sha256"] == trust["freeze1_sha256"],
+            "PREFLIGHT_CONTEXT_FREEZE_HASH",
+        )
+        stage = "PREFLIGHT_EVIDENCE_MALFORMED"
+        for raw, key, code in (
+            (binding_raw, "inputs_sha256", "PREFLIGHT_INPUT_HASH"),
+            (report_raw, "report_sha256", "PREFLIGHT_REPORT_HASH"),
+            (authorization_raw, "authorization_sha256", "PREFLIGHT_AUTHORIZATION_HASH"),
+            (context["proposed_freeze1"], "freeze1_sha256", "PREFLIGHT_FREEZE_HASH"),
+        ):
+            require(type(raw) is bytes and sha_bytes(raw) == trust[key], code)
+        binding = object_bytes(binding_raw)
+        report = object_bytes(report_raw)
+        exact_keys(
+            binding, ("schema", "artifacts", "code", "runtime", "seed", "strata")
+        )
+        exact_keys(
+            report, ("schema", "status", "inputs_sha256", "freeze1_sha256", "findings")
+        )
+        require(
+            report["schema"] == schema("production-preparation")
+            and report["status"] == "PREPARED"
+            and report["findings"] == []
+            and report["inputs_sha256"] == trust["inputs_sha256"]
+            and report["freeze1_sha256"] == trust["freeze1_sha256"],
+            "PREFLIGHT_REPORT_BINDING",
+        )
+        require(
+            binding["artifacts"] == context["artifacts"]
+            and binding["code"] == context["code_bindings"],
+            "PREFLIGHT_CONTEXT_INPUT_BINDING",
+        )
+        require(
+            sealed == binding["artifacts"]["eligibility_ledger"],
+            "PREFLIGHT_SEALED_LEDGER_BINDING",
+        )
+        freeze = object_bytes(context["proposed_freeze1"])
+        require(
+            freeze["artifacts"]["historical_integrity_manifest"]["sha256"]
+            == trust["procedure_sha256"],
+            "PREFLIGHT_PROCEDURE_BINDING",
+        )
+        stage = "PREFLIGHT_COMPATIBILITY_MALFORMED"
+        proof = verify_adoption(
+            root,
+            context["historical_manifest"],
+            context["expected_historical_manifest_sha256"],
+            context["generating_sources"],
+            context["artifacts"]["population"],
+            context["artifacts"]["eligibility_ledger"],
+            context["code_bindings"]["selection_bundle"],
+            context["proposed_freeze1"],
+            trust["freeze1_sha256"],
+            executing_sources=context["executing_sources"],
+            input_binding_raw=binding_raw,
+        )
+        # Only the existing verifier's sanitized local codes can reach this branch.
+        require(proof["code"] == "BINDINGS_VERIFIED_NOT_ADOPTED", proof["code"])
+        require(
+            proof["historical_provenance_verified"] is True
+            and proof["proposed_freeze_compatible"] is True
+            and proof["operational_adoption_performed"] is False,
+            "PREFLIGHT_COMPATIBILITY_REQUIRED",
+        )
+        stage = "PREFLIGHT_REPLAY_MALFORMED"
+        assessment = validate_preparation(
+            root,
+            binding_raw,
+            report_raw,
+            trust["inputs_sha256"],
+            trust["freeze1_sha256"],
+            verification_context=context,
+        )
+        require(
+            assessment["verification_level"] == "EVIDENCE_REPLAYED",
+            "PREFLIGHT_REPLAY_REQUIRED",
+        )
+        stage = "PREFLIGHT_AUTHORIZATION_MALFORMED"
+        require(
+            selection_phase_predicate(
+                assessment,
+                authorization_raw,
+                trust["authorization_sha256"],
+                phase,
+                trust["ledger_seal_sha256"],
+                trust["procedure_sha256"],
+            ),
+            "PREFLIGHT_AUTHORIZATION_BINDING",
+        )
+        result.update(
+            status="TECHNICAL_PREFLIGHT_VERIFIED_NOT_AUTHORIZED",
+            hashes={
+                **{key: trust[key] for key in hashes},
+                "ledger_sha256": sealed["sha256"],
+                "current_verification_bundle_sha256": verification_bundle(
+                    context["executing_sources"]
+                )["sha256"],
+            },
+        )
+    except ProtocolError as error:
+        result["code"] = str(error)
+    except (
+        OSError,
+        UnicodeError,
+        ValueError,
+        TypeError,
+        LookupError,
+        RecursionError,
+        AttributeError,
+        SyntaxError,
+    ):
+        result["code"] = stage
+    return result

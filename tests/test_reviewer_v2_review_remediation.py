@@ -778,3 +778,330 @@ def test_old_reconciliation_does_not_silently_cover_e03c(tmp_path, field, value)
 def test_dr3_remaining_loader_forms_documented_not_executed(raw):
     # Parse/inspect only. Never eval, exec, import, or run any probe.
     assert a.dependency_modules({"invented.py": raw}) == []
+
+
+@pytest.fixture
+def preflight_case(tmp_path, monkeypatch):
+    # Reuse reviewed test-local identity/TARGET fixtures, not validator replacements.
+    from tests.test_reviewer_v2_evidence_completion import reconciliation_fixture
+
+    context = reconciliation_fixture(tmp_path, monkeypatch)
+    f, freeze = context["f"], context["freeze"]
+    freeze_raw = canonical(freeze)
+    replay = dict(
+        f,
+        proposed_freeze1=freeze_raw,
+        trusted_expected_freeze1_sha256=sha_bytes(freeze_raw),
+    )
+    binding, report = p.prepare(**replay)
+    assert binding is not None, report
+    trust = dict(
+        inputs_sha256=sha_bytes(binding),
+        report_sha256=sha_bytes(report),
+        freeze1_sha256=sha_bytes(freeze_raw),
+        procedure_sha256=freeze["artifacts"]["historical_integrity_manifest"]["sha256"],
+        ledger_seal_sha256=sha_bytes(b"Opaque invented seal; no operational schema.\n"),
+        sealed_ledger=copy.deepcopy(f["artifacts"]["eligibility_ledger"]),
+    )
+    grant = dict(
+        schema="reviewer-protocol-v2-selection-authorization-v2",
+        operation="SELECTION",
+        **{key: value for key, value in trust.items() if key != "sealed_ledger"},
+        destination_policy=dict(
+            path="heldout-external/invented-destination-policy.json", sha256="d" * 64
+        ),
+    )
+    grant_raw = canonical(grant)
+    trust["authorization_sha256"] = sha_bytes(grant_raw)
+    args = dict(
+        root=tmp_path,
+        binding_raw=binding,
+        report_raw=report,
+        authorization_raw=grant_raw,
+        verification_context=replay,
+        phase="FREEZE_1_LEDGER_SEALED",
+        trusted_expectations=trust,
+    )
+    return args, context
+
+
+def guarded_preflight(args, monkeypatch):
+    from experiments.reviewer_protocol_v2 import (
+        eligibility,
+        packet_serialization,
+        trial_interfaces,
+    )
+
+    root = args["root"]
+    before = {
+        path.relative_to(root): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+    def forbidden(*unused_args, **unused_kwargs):
+        raise AssertionError("Forbidden selection/packet/classification/write hook")
+
+    with monkeypatch.context() as guards:
+        for module, names in (
+            (
+                s,
+                (
+                    "select",
+                    "select_bound_inputs",
+                    "scan",
+                    "ranking_key",
+                    "ranking_digest",
+                ),
+            ),
+            (packet_serialization, ("external_id", "build_external_outputs")),
+            (
+                trial_interfaces,
+                ("build_trial", "build_presentations", "build_schedule"),
+            ),
+            (eligibility, ("classify", "classify_json", "textual", "normalize")),
+        ):
+            for name in names:
+                guards.setattr(module, name, forbidden)
+        guards.setattr(Path, "write_bytes", forbidden)
+        guards.setattr(Path, "write_text", forbidden)
+        result = p.reconciliation_preflight(**args)
+    assert before == {
+        path.relative_to(root): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    assert result["approval_authenticated"] is False
+    assert result["phase_history_authenticated"] is False
+    assert result["ledger_sealing_authenticated"] is False
+    assert result["operational_dispatch_performed"] is False
+    assert result["operational_adoption_performed"] is False
+    assert result["freeze1_readiness"] == "NOT_ASSESSED"
+    return result
+
+
+def test_preflight_complete_reconciliation_replay_is_technical_only(
+    preflight_case, monkeypatch
+):
+    args, _ = preflight_case
+    first = guarded_preflight(args, monkeypatch)
+    second = guarded_preflight(args, monkeypatch)
+    assert first == second
+    assert first["status"] == "TECHNICAL_PREFLIGHT_VERIFIED_NOT_AUTHORIZED", first
+    assert first["code"] is None
+    assert (
+        first["hashes"]["ledger_sha256"]
+        == args["trusted_expectations"]["sealed_ledger"]["sha256"]
+    )
+    assert (
+        first["hashes"]["current_verification_bundle_sha256"]
+        == p.verification_bundle(args["verification_context"]["executing_sources"])[
+            "sha256"
+        ]
+    )
+    print(json.dumps({"synthetic_preflight_sha256": sha_bytes(canonical(first))}))
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "inputs_sha256",
+        "report_sha256",
+        "freeze1_sha256",
+        "procedure_sha256",
+        "authorization_sha256",
+        "ledger_seal_sha256",
+        "sealed_ledger",
+    ],
+)
+def test_preflight_requires_every_separate_trusted_binding(
+    preflight_case, monkeypatch, field
+):
+    args, _ = preflight_case
+    args["trusted_expectations"].pop(field)
+    result = guarded_preflight(args, monkeypatch)
+    assert result["code"] == "PREFLIGHT_TRUST_SCHEMA", result
+    assert result["status"] == "FAILED" and result["hashes"] == {}
+
+
+@pytest.mark.parametrize("trust", [None, True, {}])
+def test_preflight_self_declared_grant_hash_does_not_supply_trust(
+    preflight_case, monkeypatch, trust
+):
+    args, _ = preflight_case
+    assert (
+        sha_bytes(args["authorization_raw"])
+        == args["trusted_expectations"]["authorization_sha256"]
+    )
+    args["trusted_expectations"] = trust
+    result = guarded_preflight(args, monkeypatch)
+    assert result["code"] == (
+        "PREFLIGHT_TRUST_REQUIRED" if trust is None else "PREFLIGHT_TRUST_SCHEMA"
+    ), result
+
+
+@pytest.mark.parametrize(
+    "field,code",
+    [
+        ("inputs_sha256", "PREFLIGHT_INPUT_HASH"),
+        ("report_sha256", "PREFLIGHT_REPORT_HASH"),
+        ("freeze1_sha256", "PREFLIGHT_CONTEXT_FREEZE_HASH"),
+        ("procedure_sha256", "PREFLIGHT_PROCEDURE_BINDING"),
+        ("authorization_sha256", "PREFLIGHT_AUTHORIZATION_HASH"),
+        ("ledger_seal_sha256", "PREFLIGHT_AUTHORIZATION_BINDING"),
+    ],
+)
+def test_preflight_stale_trusted_hashes(preflight_case, monkeypatch, field, code):
+    args, _ = preflight_case
+    args["trusted_expectations"][field] = "0" * 64
+    assert guarded_preflight(args, monkeypatch)["code"] == code
+
+
+@pytest.mark.parametrize("phase", ["PRE_FREEZE_1", "FREEZE_1", True, None])
+def test_preflight_invalid_phase(preflight_case, monkeypatch, phase):
+    args, _ = preflight_case
+    args["phase"] = phase
+    assert guarded_preflight(args, monkeypatch)["code"] == "PREFLIGHT_PHASE"
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "inputs_sha256",
+        "report_sha256",
+        "freeze1_sha256",
+        "procedure_sha256",
+        "ledger_seal_sha256",
+    ],
+)
+def test_preflight_authorization_join_mismatch(preflight_case, monkeypatch, field):
+    args, _ = preflight_case
+    grant = json.loads(args["authorization_raw"])
+    grant[field] = "0" * 64
+    args["authorization_raw"] = canonical(grant)
+    args["trusted_expectations"]["authorization_sha256"] = sha_bytes(
+        args["authorization_raw"]
+    )
+    assert (
+        guarded_preflight(args, monkeypatch)["code"]
+        == "PREFLIGHT_AUTHORIZATION_BINDING"
+    )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("sha256", "0" * 64), ("path", "heldout-external/another-invented-ledger.jsonl")],
+)
+def test_preflight_seal_association_must_match_verified_ledger(
+    preflight_case, monkeypatch, field, value
+):
+    args, _ = preflight_case
+    args["trusted_expectations"]["sealed_ledger"][field] = value
+    assert (
+        guarded_preflight(args, monkeypatch)["code"]
+        == "PREFLIGHT_SEALED_LEDGER_BINDING"
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation,code",
+    [
+        ("missing", "E03C_LEDGER_RECONCILIATION_REQUIRED"),
+        ("wrong_subject", "RECONCILIATION_SUBJECT"),
+        ("stale_bundle", "RECONCILIATION_CURRENT_BUNDLE"),
+        ("stale_review", "RECONCILIATION_REVIEW_BINDING"),
+    ],
+)
+def test_preflight_actual_chain_reconciliation_failures(
+    preflight_case, monkeypatch, mutation, code
+):
+    args, context = preflight_case
+    f, freeze = context["f"], context["freeze"]
+    procedure = artifact(f, freeze, "historical_integrity_manifest")
+    rule = procedure["rules"]["eligibility_specification"]
+    witness = json.loads(context["read"](rule["relationship_evidence"]))
+    record = copy.deepcopy(context["record"])
+    if mutation == "missing":
+        witness["historical_ledger_reconciliation"] = None
+    else:
+        if mutation == "wrong_subject":
+            record["ledger"]["sha256"] = "0" * 64
+        elif mutation == "stale_bundle":
+            record["current_verification_bundle"]["sha256"] = "0" * 64
+        else:
+            review = json.loads(context["read"](record["independent_review"]))
+            review["subject_sha256"] = "0" * 64
+            record["independent_review"] = context["put"]("stale-review.json", review)
+        witness["historical_ledger_reconciliation"] = context["put"](
+            "mutated-contract.json", record
+        )
+    rule["relationship_evidence"] = write_evidence(
+        args["root"], rule["relationship_evidence"], witness
+    )
+    replace_artifact(f, freeze, "historical_integrity_manifest", procedure)
+    # Rebind only invented outer evidence so the real deep verifier sees the defect.
+    raw = canonical(freeze)
+    args["verification_context"]["proposed_freeze1"] = raw
+    args["verification_context"]["trusted_expected_freeze1_sha256"] = sha_bytes(raw)
+    args["trusted_expectations"].update(
+        freeze1_sha256=sha_bytes(raw),
+        procedure_sha256=freeze["artifacts"]["historical_integrity_manifest"]["sha256"],
+    )
+    report = json.loads(args["report_raw"])
+    report["freeze1_sha256"] = sha_bytes(raw)
+    args["report_raw"] = canonical(report)
+    args["trusted_expectations"]["report_sha256"] = sha_bytes(args["report_raw"])
+    assert guarded_preflight(args, monkeypatch)["code"] == code
+
+
+def test_preflight_tampered_current_source_bytes(preflight_case, monkeypatch):
+    args, _ = preflight_case
+    path = s.PREFIX + "production_preparation.py"
+    args["verification_context"]["executing_sources"][path] += (
+        b"# Invented stale supplied buffer.\n"
+    )
+    assert guarded_preflight(args, monkeypatch)["code"] == "executing_source_mismatch"
+
+
+@pytest.mark.parametrize(
+    "mutation,code",
+    [
+        ("freeze_bytes", "PREFLIGHT_FREEZE_HASH"),
+        ("report_bytes", "PREFLIGHT_REPORT_HASH"),
+        ("report_join", "PREFLIGHT_REPORT_BINDING"),
+        ("context_inputs", "PREFLIGHT_CONTEXT_INPUT_BINDING"),
+        ("fake_assessment", "PREFLIGHT_CONTEXT_SCHEMA"),
+        ("malformed_freeze", "PREFLIGHT_EVIDENCE_MALFORMED"),
+    ],
+)
+def test_preflight_malformed_or_mismatched_evidence(
+    preflight_case, monkeypatch, mutation, code
+):
+    args, _ = preflight_case
+    if mutation == "freeze_bytes":
+        args["verification_context"]["proposed_freeze1"] += b" "
+    elif mutation == "report_bytes":
+        args["report_raw"] += b" "
+    elif mutation == "report_join":
+        report = json.loads(args["report_raw"])
+        report["inputs_sha256"] = "0" * 64
+        args["report_raw"] = canonical(report)
+        args["trusted_expectations"]["report_sha256"] = sha_bytes(args["report_raw"])
+    elif mutation == "context_inputs":
+        args["verification_context"]["code_bindings"] = {}
+    elif mutation == "fake_assessment":
+        args["verification_context"]["verification_level"] = "EVIDENCE_REPLAYED"
+    else:
+        raw = canonical({"private_sentinel": "Never echo malformed payloads"})
+        args["verification_context"].update(
+            proposed_freeze1=raw, trusted_expected_freeze1_sha256=sha_bytes(raw)
+        )
+        args["trusted_expectations"]["freeze1_sha256"] = sha_bytes(raw)
+        report = json.loads(args["report_raw"])
+        report["freeze1_sha256"] = sha_bytes(raw)
+        args["report_raw"] = canonical(report)
+        args["trusted_expectations"]["report_sha256"] = sha_bytes(args["report_raw"])
+    result = guarded_preflight(args, monkeypatch)
+    assert result["code"] == code, result
+    assert result["status"] == "FAILED" and result["hashes"] == {}
+    assert "private_sentinel" not in canonical(result).decode()
