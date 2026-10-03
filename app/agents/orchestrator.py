@@ -6,9 +6,16 @@ from dotenv import load_dotenv
 
 from app.agents.qa_agent import QAAgent, QAResponse
 from app.agents.router import RouterAgent
+from app.agents.router_configuration import RouterConfiguration, build_router
 from app.agents.summarizer_agent import SummarizerAgent, SummaryResponse
 from app.errors import ServiceFailure, failure_from
-from app.observability import annotate, current_trace_id, record_failure, set_route, stage
+from app.observability import (
+    annotate,
+    current_trace_id,
+    record_failure,
+    set_route,
+    stage,
+)
 
 load_dotenv()
 
@@ -35,8 +42,14 @@ def _failure_result(failure: ServiceFailure, task_type: str, trace_id: str) -> d
 
 
 class CopilotOrchestrator:
-    def __init__(self):
-        self._router = RouterAgent()
+    def __init__(self, *, router_configuration=None, jev_transport=None):
+        # Preserve legacy construction/fixtures on the default Haiku path.
+        configuration = router_configuration or RouterConfiguration.from_environment()
+        self._router = (
+            RouterAgent()
+            if configuration.provider == "haiku" and jev_transport is None
+            else build_router(configuration, jev_transport=jev_transport)
+        )
         self._qa = QAAgent()
         self._summarizer = SummarizerAgent()
 
@@ -48,24 +61,36 @@ class CopilotOrchestrator:
                 decision = self._router.route(query, trace_id=trace_id)
             router_latency_ms = (time.monotonic() - start) * 1000
             set_route(task_type=decision.task_type, confidence=decision.confidence)
-            _log("orchestrator.routed", {
-                "trace_id": trace_id,
-                "intent": decision.task_type,
-                "confidence": decision.confidence,
-                "router_latency_ms": round(router_latency_ms, 1),
-            })
+            _log(
+                "orchestrator.routed",
+                {
+                    "trace_id": trace_id,
+                    "intent": decision.task_type,
+                    "confidence": decision.confidence,
+                    "router_latency_ms": round(router_latency_ms, 1),
+                },
+            )
 
             with stage("agent"):
-                agent_response = self._dispatch(query, decision.task_type, trace_id=trace_id)
+                agent_response = self._dispatch(
+                    query, decision.task_type, trace_id=trace_id
+                )
             if agent_response is None:
-                failure = ServiceFailure("orchestrator", "internal", "UnknownTaskType", decision.task_type)
-                return {**_failure_result(failure, decision.task_type, trace_id),
-                        "error": f"unknown task_type: {decision.task_type}"}
+                failure = ServiceFailure(
+                    "orchestrator", "internal", "UnknownTaskType", decision.task_type
+                )
+                return {
+                    **_failure_result(failure, decision.task_type, trace_id),
+                    "error": f"unknown task_type: {decision.task_type}",
+                }
 
-            _log("orchestrator.completed", {
-                "trace_id": trace_id,
-                "intent": decision.task_type,
-            })
+            _log(
+                "orchestrator.completed",
+                {
+                    "trace_id": trace_id,
+                    "intent": decision.task_type,
+                },
+            )
             return {
                 "task_type": decision.task_type,
                 "router_confidence": decision.confidence,
@@ -76,26 +101,40 @@ class CopilotOrchestrator:
         except Exception as e:
             return _failure_result(failure_from("orchestrator", e), "unknown", trace_id)
 
-    def process_direct(self, query: str, task_type: str, trace_id: str | None = None) -> dict:
+    def process_direct(
+        self, query: str, task_type: str, trace_id: str | None = None
+    ) -> dict:
         trace_id = _resolve_trace_id(trace_id)
         try:
             set_route(task_type=task_type, confidence=None, router_outcome="direct")
-            _log("orchestrator.routed", {
-                "trace_id": trace_id,
-                "intent": task_type,
-                "confidence": None,
-            })
+            _log(
+                "orchestrator.routed",
+                {
+                    "trace_id": trace_id,
+                    "intent": task_type,
+                    "confidence": None,
+                },
+            )
             with stage("agent"):
                 agent_response = self._dispatch(query, task_type, trace_id=trace_id)
             if agent_response is None:
-                failure = ServiceFailure("orchestrator", "internal", "UnknownTaskType", task_type)
+                failure = ServiceFailure(
+                    "orchestrator", "internal", "UnknownTaskType", task_type
+                )
                 result = _failure_result(failure, task_type, trace_id)
-                return {"error": "unknown task_type", "error_detail": result["error_detail"], "result": {}}
+                return {
+                    "error": "unknown task_type",
+                    "error_detail": result["error_detail"],
+                    "result": {},
+                }
 
-            _log("orchestrator.completed", {
-                "trace_id": trace_id,
-                "intent": task_type,
-            })
+            _log(
+                "orchestrator.completed",
+                {
+                    "trace_id": trace_id,
+                    "intent": task_type,
+                },
+            )
             return {
                 "task_type": task_type,
                 "router_confidence": None,
@@ -106,7 +145,9 @@ class CopilotOrchestrator:
         except Exception as e:
             return _failure_result(failure_from("orchestrator", e), task_type, trace_id)
 
-    def _dispatch(self, query: str, task_type: str, trace_id: str | None = None) -> QAResponse | SummaryResponse | None:
+    def _dispatch(
+        self, query: str, task_type: str, trace_id: str | None = None
+    ) -> QAResponse | SummaryResponse | None:
         if task_type == "qa":
             return self._qa.run(query, trace_id=trace_id)
         if task_type == "summarize":
@@ -122,6 +163,8 @@ if __name__ == "__main__":
     print("process() qa route:")
     print(r1)
 
-    r2 = orch.process_direct("Summarize the key risks in Goldman Sachs 2025 annual report", "summarize")
+    r2 = orch.process_direct(
+        "Summarize the key risks in Goldman Sachs 2025 annual report", "summarize"
+    )
     print("process_direct() summarize:")
     print(r2)
