@@ -52,3 +52,66 @@ All 337 protected raw hashes match the starting snapshot (SHA256 0a840d1f35a48bc
 Final router candidate inventory digest c65f0c6f52f03b24ea2b78213557578f25b389586053495e6c772daef1058535; test inventory e1298652dac73b049ecde3277e97107a5dd107a4a711a922ff4b1743b49a5602; in-memory source archive e0716a7abf463e1381aeef58adab57203fde971fb4b17591bc0e6d57caa9032f; archive manifest a8d07535142555f8774c686c4b36431b99e27c2acd83e9308f4e76401e124642; synthetic smoke 5d5c14509924ccda7889eed7b42851d38bd92ac802d8cde10e95db2464a44db8. Exact canonical map recipes and per-path hashes in final handoff/checkpoint. Existing v2 verification e2646384cb06948625b4a985e07c10428af98ff2e24a5e27f8a1af938ddb265e remains unchanged. No source work remains in this bounded candidate without decisions/review/externally authorized execution; the final handoff is the precise resume point. No background process/work is claimed.
 
 Local engineering commits: ad7fe23c8302983df3f9e360145739ec1270d303 (eight paths), f9a9d031b15eb42b7390d50ead4147f0262998a2 (seven paths, one existing log). Staged inventories/normalized bytes checked explicitly against validated files and final current maps. Delivery documentation only adds jev-upgrade-claude-handoff.md and this log checkpoint; terminal HEAD supplied in final receipt. Fifteen distinct scoped paths, all nineteen preexisting untracked files preserved/excluded. Next single task: Claude combined candidate review; independently, owner can settle exact live-run cost/privacy and operational producer policies. Actual wrapper assembly, full Freeze 1 evidence and broader qualified harness extension remain separately bounded work. No background waiting/work.
+
+## Bounded follow-up: streaming limit and accepted replacement completion
+
+The preceding sections describe the original autonomy window, not the current completion state. Owner separately authorized this follow-up at verified HEAD `f73914fa622fc3e64dbe03bda1b82f88ff0472aa`, same branch, preserving all nineteen preexisting untracked files. No AGENTS.md was added. Only the existing Jev adapter/test and these two combined documents change in Git. Private completion artifacts remain outside Git. No optional work or operational producer is added.
+
+### Task A: streamed decoded-response enforcement
+
+Local source/test commit: `1c0fe9a7dcb8e370ea53535e71292d76c56957b8`, exactly `app/agents/jev_router.py` and `tests/test_jev_candidate.py`. HTTPX context-managed streaming consumes `iter_bytes()` (HTTP-content-decoded bytes), rejects before appending a chunk that would exceed 65,536, stops pulling subsequent chunks and closes on success, oversized rejection, status rejection and read/transport failure. UTF-8 and existing strict JSON/schema validation occur only after a completed bounded response. Content-Length is not trusted. Binary mapping, threshold, one-attempt fallback, fixed-code error sanitization, cost/attempt accounting, exact MockTransport-only construction, Haiku default and disabled live/shadow remain unchanged. No retries or additional requests.
+
+Guarantee: accumulated bytes used for JSON decoding never exceed 65,536. A transport/HTTPX decoder may already have allocated or delivered an oversized chunk; no bound on transport allocations, total process memory or total wall-clock deadline is claimed.
+
+Eleven added synthetic cases cover split multibyte UTF-8, exact-limit bodies with absent/misleading headers, accumulated and single-chunk excess, unconsumed trailing chunks, compressed content at/exceeding the decoded limit, normal/status/oversize/read-failure closure, sanitized fallback and exactly one attempted mock request. Existing package tests cover success/failure/path protections and no source writes.
+
+Validation (existing environment/offline guard):
+
+```powershell
+.\.venv\Scripts\python.exe -B -m pytest tests/test_jev_candidate.py tests/test_router.py tests/test_agents.py tests/test_observability.py tests/test_api.py tests/test_router_bench.py tests/test_jev_candidate_tools.py -q --basetemp=.pytest_cache/jev-stream
+.\.venv\Scripts\python.exe -B -c "from tests.offline_guard import install; install(); import runpy; runpy.run_module('ruff',run_name='__main__')" check app/agents/jev_router.py tests/test_jev_candidate.py scripts/candidate_package.py tests/test_jev_candidate_tools.py
+.\.venv\Scripts\python.exe -B -c "from tests.offline_guard import install; install(); import runpy; runpy.run_module('ruff',run_name='__main__')" format --check app/agents/jev_router.py tests/test_jev_candidate.py scripts/candidate_package.py tests/test_jev_candidate_tools.py
+git diff --check
+git diff --cached --check
+```
+
+Results: **226 passed, 1 skipped, four existing warnings, 2.84s**; zero intercepted/outbound attempts. Skip is the existing Windows native-symlink privilege limitation; separate simulated escape tests pass. Warnings remain missing asyncio_mode plugin and three FAISS SWIG warnings. Ruff passes/four files already formatted; whitespace passes. No full-suite rerun or real-population regression. Codex source/diff self-review is not independent acceptance.
+
+Current metadata-only checkpoint `heldout-external/jev-upgrade-streaming/2026-10-03-f73914f/candidate-checkpoint.json`, raw SHA256 `ee13222c6483f9294c97f14fe8691ef2e1d4d0f4d4c7aa05c5313cf42433fadb`. Same 45-source/nine-test membership and canonical map recipe as before; current source inventory `06b9b27763d063baa7a5e49f700502257a0d7b094c9331e7709739cb1ec3c77f`, test inventory `7648c5eef955083fc1a301ef2d22a7922039b9ed3e8efc2568b58263f4247bce`. Source-only ZIP built twice in memory: `da108d44d9f5120852cf4a5ad43c0d799f3698ee4099dad323a7b2207c339fbc`; manifest `1992978b9b19344641741edfa8f37068ec48348452a8e4cb5381a66a7d700495`. Reproducible smoke stays `5d5c14509924ccda7889eed7b42851d38bd92ac802d8cde10e95db2464a44db8`. No saved/deployable ZIP, dependency installation or Linux runtime verification. Prior checkpoint and hashes remain preserved at their original bindings.
+
+### Task B: actual accepted subject, final joins and read-only chains
+
+Reverified actual report raw hash `7c1617ff4e5a936dd69b14c6b83a4caa7d20d68d819be364f5c37f3a1c5f57af` and actual raw/typed/index hashes `6d5d691a…`, `6392f170…`, `600fb54a…` (full values in combined handoff). Canonical schemas/bytes, ACCEPTED disposition, recorded UTC `2026-10-03T19:28:06Z`, reviewer/raw/index/subject/contract/lemma/counts joins all verified before assembly. Existing accepted subject remains `5ecea37ee945023f77266f6cc9d15ad5e8c7db6d3442c24f69a2112892e0cf78`. No new independent review record or approval was created.
+
+Exclusive-created private directory `heldout-external/reviewer-v2-reconciliation-completion/2026-10-03-f73914f/`:
+
+| File | Raw SHA256 |
+|---|---|
+| historical-ledger-reconciliation.json | `7d09419b16a7a37a7140f84282b003c4a7a597b83b950be64d319534c9c3a00e` |
+| rule-applicability-eligibility_specification.json | `3f48b05b279de950021251e21548f9a0fe5cf3e3ab33155f1e43eda3f9ff979a` |
+| completion-index.json | `9de570d789e8374d74347a2399ad850b34c68b2025dd4c7d5f9016be6cc8e6ec` |
+| technical-check-receipt.json | `a7bc3979cdeddc7c57ea12a88739650780051df353f31c2f051fbb75f533803a` |
+| preservation-before.json | `f13c496020701abda6735fd101727d398ad5d61e1c8f3a4771ba6ced5e45a8df` |
+| preservation-after.json | `428a6de3bb6b34256a6ad797bf21a674ac411791ff3931220f80cd1627ff7817` |
+| completion_driver.py | `c6108ad9c98bbc4469f52cfb389cd8aea85861015c4ed8f7eb30b511e694d985` |
+
+Final reconciliation changes only prescribed final-schema/review binding outside the accepted subject fields; `review_subject(final)` is exact accepted subject. Eligibility applicability changes only its reconciliation FB from the previously accepted version. Unchanged three semantic reviews and exposure/grouping applicability are reused, not rewritten. Existing `_history`, `_generating`, `_executing_sources`, direct `verify_reconciliation` and combined `rule_bindings` pass on genuine verified context. All 111 historical inputs (107 pins plus four recovered inputs) are hash-covered; counts-only check returns 104 rows and zero E03/E03c/union/normalized-empty-question rows. Current seventeen-source digest remains `e2646384cb06948625b4a985e07c10428af98ff2e24a5e27f8a1af938ddb265e`; historical sixteen-source digest remains `105be32bc90bbb55a7827050817572bca7d8bf62b6585f08085d948302a60efc`.
+
+Completed commands, both exit 0 under guard/zero intercepted/outbound attempts:
+
+```powershell
+Get-Content -Raw -LiteralPath '..\heldout-external\reviewer-v2-reconciliation-completion\2026-10-03-f73914f\completion_driver.py' | .\.venv\Scripts\python.exe -B - assemble
+Get-Content -Raw -LiteralPath '..\heldout-external\reviewer-v2-reconciliation-completion\2026-10-03-f73914f\completion_driver.py' | .\.venv\Scripts\python.exe -B - check
+```
+
+Subsequent replay uses **check only**, writes nothing and reproduces exact canonical completion-index/technical-receipt bytes. Exclusive assembly refuses overwrite. Direct result **TECHNICAL_RECONCILIATION_VERIFIED_NOT_ADOPTED**; combined binding chain passes. All **355** protected artifacts, including all 111 inputs, ten reports and prior private records, preserve exact hashes. No classifier/historical code execution, full v2 synthetic rerun, `_freeze`, `verify_adoption`, preparation, reconciliation_preflight or selection invocation. The task-local in-memory adapter is not a production preparation package/InputBinding/FreezeManifest.
+
+Diagnostics retained: initial metadata snapshot attempt applied an FB reader to protected data/ paths and stopped before writes; workspace-contained metadata reads corrected that without relaxing artifact validators. Initial assembly expected a reusable eligibility applicability entry absent by design from refresh metadata; it stopped before wrapper writes. Corrected transcription uses the pinned accepted old wrapper and changes only reconciliation FB. No evidence/pins were repaired or bypassed.
+
+### Consolidated stop and review handoff
+
+Task A is Codex implementation/self-review pending independent review. Task B uses actual Claude subject acceptance; Claude has not independently reviewed the newly assembled final joins. Hash joins do not authenticate approval or establish historical execution. No adoption occurred. Freeze 1 readiness remains unestablished. R4, S-576 complete:false, 37-check limitation and ledger-fidelity premise remain unchanged.
+
+Focused review: combined `41d146d..1c0fe9a` app/config/tools/CI delta and precise streaming guarantee/tests; separately inspect new final subject/schema/review joins and eligibility-only FB replacement. Unchanged protocol evidence remains valid at its bindings; no unrelated interface/test/procedure/runtime evidence was refreshed. Remaining work is independent review, owner live-run/privacy/budget/operational-policy decisions, authorized live-factory/spending enforcement implementation after those decisions, Linux/dependency/AWS verification and accepted qualification/phase operations. No justified additional implementation is included in this bounded task. Documentation-only updates do not require another test run.
+
+Scoped explicit-path documentation commit contains only this log and the existing combined handoff; terminal hash supplied in delivery. Private outputs/Claude reports/unrelated work excluded. No push, installs, live/model/provider/AWS/external calls, real preparation/bindings, adoption/sealing, ranking/selection/sampling, packets, freezes, owner labels or deployment. No background work is claimed.
