@@ -283,3 +283,64 @@ aws lambda update-alias --function-name <VERIFIED_FUNCTION> --name <VERIFIED_PRO
 If this project has no verified alias/version rollback mechanism, implement/review it first rather than assume these templates apply. Preserve old ZIPs/configuration and evidence; never substitute the source-only package or a guessed prior version. Offline tests do not prove a successful rollback.
 
 Scope receipt: prior synthetic candidate/streaming work and authorized replacement wrappers; new isolated smoke implementation/tests, official-document reads and one authorized non-inference AWS token-count operation, which stopped before any inference. Metadata preservation/explicit-path local commits. No push, install, production/live-default change, deployment, private-data transmission/tuning, downstream model calls, AWS resource/billing changes, actual preparation/InputBinding/FreezeManifest, adoption/sealing, classification, real ranking/selection/sampling/packets, owner labeling or freeze designation. Independent candidate/new final-join review remain separate; **Freeze 1 and deployment readiness remain unestablished**.
+
+
+## Successor smoke-02: exact capacity accounting and completed exploratory run
+
+This update supersedes only the prior smoke's monetary/counting prerequisite and next-run stop point. Baseline `4d631094854fbbdb8679d36ccb81f0ba41e39e25`, branch phase0/baseline-instrumentation-eval. Source/test commit **8104705eee79c444626865cb5952a82362be497d** changes exactly experiments/jev_candidate/live_smoke.py and tests/test_jev_live_smoke.py. Codex implementation/self-review; independent review remains pending. Documentation-only delivery commit hash is reported in chat.
+
+Owner explicitly authorized one fresh successor `2026-10-03-owner-routing-smoke-02`, gross inference ceilings $0.02 Jev/$1.33 Haiku/$1.35 combined, same six prerecorded questions/labels once per provider, sequential, zero retries, no downstream. Smoke-01 and its zero-inference result remain immutable. Live execution verified its original plan raw hash `5cf31613a34ecc87b6eabe92cd496644e4c89bc46443b699b26c36951f2f11ec` and exact cases plus both providers' complete prompt identity before dispatch. Inputs digest `21558d9dd2450cdc9b04d6f855149c71f2868ff21a3eebec3091e9aae7e0afa0`. This is an isolated owner-authorized exploratory path; production defaults and application live/shadow configuration are unchanged.
+
+Official reads recorded 2026-10-04T01:20:55Z: AWS Haiku 4.5 model card https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-haiku-4-5.html lists 200K context, exact `us.anthropic.claude-haiku-4-5-20251001-v1:0`, us-east-1 US geographic support and default Standard tier. https://platform.claude.com/docs/en/build-with-claude/context-windows explains input/output context accounting. Reserving 200000 input **plus** 256 output is deliberately conservative relative to total context; no extended context, additional model fields or tools. Current official AWS geographic table https://aws.amazon.com/jp/blogs/news/amazon-bedrock-now-supports-japan-cross-region-inference/ confirms $1.10/$5.50 per million for US geographic; https://aws.amazon.com/bedrock/pricing/ and https://docs.aws.amazon.com/bedrock/latest/userguide/service-tiers-inference.html consulted. TypeSafe https://docs.typesafe.ai/models confirms jev-1.13.0, 64K total input, $0.042/M input/free output. No tax/credit/free-tier assumption.
+
+CountTokens is removed from the runner, and its wire operation is rejected. No alternative counter endpoint added or called. Decimal-only isolated accounting reuses shared journal safety/fsync and ledger account structures without changing shared benchmark code. All money serializes as exact decimal strings in v2 plan/reservation/result records. Per-attempt reservations $0.002688 Jev/$0.221408 Haiku; full six-by-two worst case $0.016128/$1.328448/$1.344576. Pre-call reservation and durable call_started precede the single permitted dispatch. Known well-formed usage settles at verified rates; unknown/timeout/interruption retains the whole allowance. Well-formed out-of-bound usage and its actual computed charge are retained without clamping, then stop further calls; malformed usage is sanitized and retains the allowance. No floating epsilon, downward rounding or CountTokens equality check remains. Haiku prompt/Converse target/default tier/maxTokens 256, adapter streamed parsing, schema/route checks, thresholds and fallback behavior are unchanged. Boto3 total_max_attempts=1, HTTPX retries=0 and redirects=false; existing endpoint/dispatch/downstream controls remain.
+
+Final validation **262 passed, 1 skipped, 4 existing warnings, 3.39s**, offline guard **0 intercepted/outbound attempts**. Skip is the existing Windows symlink privilege limitation; warnings are asyncio_mode/FAISS. Focused first run 31 passed/1 failed: its assertion confused an input-bound breach with monetary overrun when output use was below its allowance. Corrected expectation and added actual charge-overrun case. Subsequent integrated checkpoint 260 passed/1 skipped; final added missing Haiku usage/exact ceiling tests yielded 262. No real-population regression or Reviewer v2 tests ran. Ruff check/format and whitespace clean. Staged normalized bytes matched validated source/test bytes. Tests cover complete schedule and exact decimal settlement; nanodollar-below caps before dispatch; full unknown retention; malformed/missing/out-of-bound usage; interrupted/failed calls; no counting; no retries; no downstream calls; prompt identity; duplicate claims; streaming failure/closure and import purity. Focused-only tripwire probe intercepted one attempted network access before module preloading; none sent, and final integrated guard count is zero.
+
+```powershell
+.\.venv\Scripts\python.exe -B -m pytest tests/test_jev_live_smoke.py tests/test_jev_candidate.py tests/test_router.py tests/test_agents.py tests/test_observability.py tests/test_api.py tests/test_router_bench.py tests/test_jev_candidate_tools.py -q --basetemp=.pytest_cache/jev-successor-final
+.\.venv\Scripts\python.exe -B -c "from tests.offline_guard import install; install(); import runpy; runpy.run_module('ruff',run_name='__main__')" check experiments/jev_candidate/live_smoke.py tests/test_jev_live_smoke.py
+.\.venv\Scripts\python.exe -B -c "from tests.offline_guard import install; install(); import runpy; runpy.run_module('ruff',run_name='__main__')" format --check experiments/jev_candidate/live_smoke.py tests/test_jev_live_smoke.py
+git diff --check
+git diff --cached --check
+# Actual single successor execution, completed; do not repeat this command.
+.\.venv\Scripts\python.exe -B -m experiments.jev_candidate.live_smoke --execute-owner-smoke
+```
+
+Actual run **COMPLETED**, six Jev and six Bedrock inference attempts, twelve total; no CountTokens/diagnostic inference/retry/replacement/shadow/downstream call. No stop conditions or fallback. All twelve chosen routes match the prerecorded labels. Scores below are Jev's chosen-route probability and Haiku's self-reported confidence; no calibration inference. Latencies are client-observed, including local dispatch/provider handling, **not Lambda latency**.
+
+| Case | Provider | Chosen route | Fallback | Score | Client ms | Input/output tokens | Usage-estimated USD |
+|---|---|---|---|---|---|---|---|
+| Q1 | typesafe | qa | False | 1.0 | 315.188 | 407/33 | $0.000017094 |
+| Q1 | bedrock | qa | False | 0.95 | 928.363 | 214/48 | $0.0004994 |
+| Q2 | typesafe | qa | False | 1.0 | 109.154 | 405/33 | $0.00001701 |
+| Q2 | bedrock | qa | False | 0.95 | 849.910 | 214/56 | $0.0005434 |
+| Q3 | typesafe | qa | False | 1.0 | 118.123 | 403/33 | $0.000016926 |
+| Q3 | bedrock | qa | False | 0.95 | 821.599 | 214/48 | $0.0004994 |
+| S1 | typesafe | summarize | False | 1.0 | 136.806 | 407/35 | $0.000017094 |
+| S1 | bedrock | summarize | False | 0.95 | 934.841 | 216/56 | $0.0005456 |
+| S2 | typesafe | summarize | False | 1.0 | 104.936 | 405/35 | $0.00001701 |
+| S2 | bedrock | summarize | False | 0.95 | 934.953 | 214/56 | $0.0005434 |
+| S3 | typesafe | summarize | False | 1.0 | 116.149 | 405/35 | $0.00001701 |
+| S3 | bedrock | summarize | False | 0.95 | 959.444 | 215/55 | $0.000539 |
+
+Total reported tokens Jev 2432 input/204 output, Haiku 1287 input/319 output. Usage-estimated inference charges Jev **$0.000102144**, Haiku **$0.0031702**, combined **$0.003272344**; retained unknown reservations **$0**, outstanding **$0**, reservations exceeded **0**. Remaining ceilings $0.019897856/$1.3268298/$1.346727656. These estimates are not provider invoices. Spend stayed in the earlier small-request range, far below the capacity allowance. Jev's earlier 410-input-token estimate was $0.00010332 for six requests, close to observed charge. No exact pre-run Haiku expectation existed because original counting failed; the 52-output-token historical assumption is close to this run's descriptive mean of 53.17 output tokens. No p95/heldout accuracy/Lambda/deployment claim.
+
+Private directory **C:/Projects/AWS Project/heldout-external/jev-isolated-live-smoke/2026-10-03-owner-routing-smoke-02/**. Raw hashes:
+
+| File | SHA-256 |
+|---|---|
+| plan.json | `363b401465ac9963b03c9d097dcfee15c259242965719660a99e1c83e558c001` |
+| reservations.json | `9f51ba8da74e123bc087abd87ef9386305eb71581595143d03511cb07f88c246` |
+| result.json | `1bda6a377431d8138a1defe86266ce7d14c98824a345833ba9f998a9331d8a12` |
+| run.journal.jsonl | `4c2332a7d012de88cb33d9630ee5deec2c548eafe51a4fa86205d3165bfb723c` |
+| source-inventory.json | `36474468191434a058315d915b02074042e19435b21d13099406de4811028230` |
+| completion-index.json | `24a75d888e9df6932336b7f4a64bf02515a6459d4113038f5a5c957de4f61d40` |
+
+The journal has 26 events: run_started, twelve call_started/call_completed pairs, run_finished; no redacted events. Source inventory is the exact 56-path combined candidate/control/tool/guard/test map; digest `f34b8fcd9523319047276c6165ff4c37a019c21e61eb855095cabb3ce4fe2d73` (sorted compact ASCII JSON relative-main-path/raw-hash map plus LF). Changed raw source `34272576c008de0f8d112ba31ac4c4dc726d11f5dde60fe250231a51ac62d0d7`, test `ac4564eab20d0904ce4d2496442401c70857e2dc03d18a77365f6be05477ba8a`. App source/deployment package inputs unchanged; no package rebuild or deployment check claimed.
+
+Durable metadata snapshot **C:/Projects/AWS Project/heldout-external/jev-live-smoke-preservation/2026-10-03-4d63109-successor/** covers **367** protected artifacts, including historical inputs/artifacts, reports, prior private wrappers and all four smoke-01 records. before SHA `b0b417f8d9fd97981b916c34fa4c7172b12bf6351bb5b5e181396c95e19d3777`, after SHA `9164b47550cbb596dd0b4f6855724a29233234182fa1d488644b3801637e655f`; every protected raw hash unchanged. Initial metadata script used an incorrect map key and stopped before creating/writing files; corrected to existing protected_files schema. Current Reviewer v2 sources/bundle remain unchanged at **e2646384cb06948625b4a985e07c10428af98ff2e24a5e27f8a1af938ddb265e**; no evidence refresh/replay or protocol changes.
+
+Focused Claude handoff: review combined router/streaming candidate, prior actual final reconciliation joins, and now `8104705eee79c444626865cb5952a82362be497d` isolated successor accounting delta. Inspect exact Decimal serialization/caps/overrun preservation, predecessor hash/prompt joins, blocked counting endpoint, reservations before dispatch, one-wire/zero-retry controls and real journal/usage settlement. Acceptance of prior subjects does not cover this code. Actual results are **EXPLORATORY_SMOKE_NOT_QUALIFICATION**. Six cases do not establish heldout accuracy, calibrated confidence, meaningful p95 improvement, Lambda behavior, qualification or deployment readiness. Live run authorization is consumed; no repeat grant inferred.
+
+Remaining path: independent review and owner disposition of combined candidate/final joins; separately authorized qualified evaluation following accepted Reviewer v2 prerequisite/phase order; Linux/dependency and AWS deployment configuration verification with explicit operational authorization; deployment/rollback authorization only after required evidence/gates. Current production Haiku default and disabled application live/shadow remain. No additional owner decision is needed for this completed smoke, but it grants no qualification/deployment/freeze approval. No push/install/AWS resource/IAM/billing change/private-data use/adoption/selection/packets/freezes. No background work.
