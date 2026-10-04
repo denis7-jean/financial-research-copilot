@@ -9,6 +9,18 @@ on:
 # Billable checks require separate owner run/cost authorization.
 # Passing offline CI does not establish qualification or deployment readiness.
 jobs:
+  packaging-contract:
+    # Synthetic wheel/installer checks, NOT Lambda-native build/import evidence.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install packaging test tools only
+        run: pip install pytest==9.0.3 boto3==1.42.96 httpx==0.28.1 python-dotenv==1.2.2 packaging==25.0
+      - name: Guarded synthetic packaging checks
+        run: python -B -m pytest tests/test_lambda_package.py -q
   offline:
     runs-on: ubuntu-latest
     steps:
