@@ -19,6 +19,7 @@ ENDPOINT = "https://api.typesafe.ai/v1/systemone"
 THRESHOLD = 0.6
 CONNECT_TIMEOUT_S = 2.0
 READ_TIMEOUT_S = 5.0
+MAX_RESPONSE_BYTES = 65_536
 # Historical benchmark price assumptions, not a verified bill/current quotation.
 INPUT_USD_PER_MTOK = 0.042
 MAX_INPUT_TOKENS = 64_000
@@ -130,25 +131,32 @@ class JevRouterAgent:
         try:
             request = payload(query)
             attempted = True
-            response = self._http.post(ENDPOINT, json=request)
-            status = response.status_code
-            if status != 200:
-                kind = {
-                    401: "access_denied",
-                    403: "access_denied",
-                    429: "throttled",
-                    529: "unavailable",
-                }.get(status, "unavailable" if status >= 500 else "configuration")
-                code = "http_failure"
-            elif len(response.content) > 65_536:
-                code = "response_too_large"
-            else:
-                body = json.loads(
-                    response.content.decode("utf-8"),
-                    object_pairs_hook=_unique_object,
-                    parse_constant=_nonfinite,
-                )
-                fields = validate_response(body)
+            with self._http.stream("POST", ENDPOINT, json=request) as response:
+                status = response.status_code
+                if status != 200:
+                    kind = {
+                        401: "access_denied",
+                        403: "access_denied",
+                        429: "throttled",
+                        529: "unavailable",
+                    }.get(status, "unavailable" if status >= 500 else "configuration")
+                    code = "http_failure"
+                else:
+                    bounded = bytearray()
+                    # iter_bytes applies HTTP content decoding. Count the bytes
+                    # used for JSON, ignoring absent/misleading Content-Length.
+                    # A delivered/decoded chunk may already be allocated; only
+                    # our accumulated body is bounded. No total deadline implied.
+                    for chunk in response.iter_bytes():
+                        if len(chunk) > MAX_RESPONSE_BYTES - len(bounded):
+                            raise JevOutputError("response_too_large")
+                        bounded.extend(chunk)
+                    body = json.loads(
+                        bounded.decode("utf-8"),
+                        object_pairs_hook=_unique_object,
+                        parse_constant=_nonfinite,
+                    )
+                    fields = validate_response(body)
         except httpx.TimeoutException:
             code, kind = "timeout", "timeout"
         except httpx.HTTPError:

@@ -1,6 +1,7 @@
 """Invented HTTP and agent fixtures only; no heldout content or provider calls."""
 
 import copy
+import gzip
 import json
 import os
 import subprocess
@@ -344,3 +345,119 @@ def test_haiku_invalid_confidence_falls_back_without_provider_text(monkeypatch, 
         assert router.route("invented").task_type == "qa"
     assert len(fake.converse_calls) == 1
     assert "private-output" not in json.dumps(trace.to_record())
+
+
+class InventedStream(httpx.SyncByteStream):
+    def __init__(self, chunks, failure=None):
+        self.chunks = chunks
+        self.failure = failure
+        self.consumed = 0
+        self.closed = False
+
+    def __iter__(self):
+        for chunk in self.chunks:
+            self.consumed += 1
+            yield chunk
+        if self.failure:
+            raise self.failure
+
+    def close(self):
+        self.closed = True
+
+
+def streamed_call(stream, headers=None, status=200):
+    attempts = []
+
+    def handler(request):
+        attempts.append(request)
+        return httpx.Response(status, stream=stream, headers=headers)
+
+    agent = j.JevRouterAgent(transport=httpx.MockTransport(handler))
+    try:
+        with request_trace("invented_stream") as trace:
+            decision = agent.route("invented query")
+    finally:
+        agent.close()
+    record = trace.to_record()
+    assert len(attempts) == 1 and trace.route["router_attempts"] == 1
+    assert len(record["model_calls"]) == 1
+    assert stream.closed
+    assert "invented-private-marker" not in json.dumps(record)
+    return decision, trace.route
+
+
+def test_streamed_valid_json_split_inside_multibyte_character():
+    value = body()
+    value["padding"] = "invented-private-marker-é"
+    raw = json.dumps(value, ensure_ascii=False).encode("utf-8")
+    cut = raw.index("é".encode("utf-8")) + 1
+    stream = InventedStream([raw[:13], raw[13:cut], raw[cut:]])
+    decision, route = streamed_call(stream)
+    assert decision.task_type == "summarize" and route["router_outcome"] == "model"
+    assert stream.consumed == 3
+
+
+@pytest.mark.parametrize("declared", [None, "1", "999999999"])
+def test_streamed_exact_limit_ignores_length_header(declared):
+    raw = json.dumps(body()).encode("utf-8")
+    raw += b" " * (j.MAX_RESPONSE_BYTES - len(raw))
+    headers = {} if declared is None else {"Content-Length": declared}
+    stream = InventedStream([raw[:11], raw[11:]])
+    decision, route = streamed_call(stream, headers)
+    assert decision.task_type == "summarize" and route["router_outcome"] == "model"
+    assert stream.consumed == 2
+
+
+@pytest.mark.parametrize("single_chunk", [False, True])
+def test_streamed_oversize_stops_before_next_chunk(single_chunk):
+    chunks = (
+        [b" " * (j.MAX_RESPONSE_BYTES + 1)]
+        if single_chunk
+        else [b" " * j.MAX_RESPONSE_BYTES, b"x"]
+    )
+    stream = InventedStream(chunks + [b"must-not-be-consumed"])
+    decision, route = streamed_call(stream, {"Content-Length": "1"})
+    assert decision.task_type == "qa" and decision.confidence == 0.5
+    assert route["router_error_type"] == "response_too_large"
+    assert route["router_outcome"] == "fallback_schema_error"
+    assert route["router_cost_basis"] == "unknown"
+    assert stream.consumed == len(chunks)
+
+
+@pytest.mark.parametrize("oversize", [False, True])
+def test_streamed_limit_applies_after_http_content_decoding(oversize):
+    raw = json.dumps(body()).encode("utf-8")
+    raw += b" " * (j.MAX_RESPONSE_BYTES + int(oversize) - len(raw))
+    compressed = gzip.compress(raw, mtime=0)
+    assert len(compressed) < j.MAX_RESPONSE_BYTES
+    stream = InventedStream([compressed])
+    decision, route = streamed_call(
+        stream, {"Content-Encoding": "gzip", "Content-Length": str(len(compressed))}
+    )
+    assert decision.task_type == ("qa" if oversize else "summarize")
+    if oversize:
+        assert route["router_error_type"] == "response_too_large"
+
+
+@pytest.mark.parametrize(
+    "failure,code",
+    [
+        (httpx.ReadTimeout("invented-private-marker"), "timeout"),
+        (httpx.ReadError("invented-private-marker"), "transport_failure"),
+    ],
+    ids=["timeout", "read-error"],
+)
+def test_streamed_mid_read_failure_closes_and_sanitizes(failure, code):
+    stream = InventedStream([b'{"model":'], failure)
+    decision, route = streamed_call(stream)
+    assert decision.task_type == "qa" and decision.confidence == 0.5
+    assert route["router_error_type"] == code
+    assert route["router_outcome"] == "fallback_invoke_error"
+    assert stream.consumed == 1
+
+
+def test_streamed_http_rejection_closes_without_reading_body():
+    stream = InventedStream([b"invented-private-marker"])
+    decision, route = streamed_call(stream, status=429)
+    assert decision.task_type == "qa" and route["router_error_type"] == "http_failure"
+    assert stream.consumed == 0
