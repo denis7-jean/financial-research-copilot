@@ -30,6 +30,10 @@ from packaging.version import Version
 
 MAX_CODE_BYTES = 250 * 1024 * 1024
 MAX_ZIP_BYTES = 50 * 1024 * 1024
+# Exact optional CLI, excluded from the Lambda runtime subset only. This
+# digest is the script's bytes in the acquired, raw-hash-verified wheel.
+# New versions/scripts require another explicit policy review.
+JMESPATH_CLI_SHA256 = "3c33be32db89ef63e1efceabd80c34e70679ab6d86260b9ebfd1b4c415e8388f"
 RUNTIME_IMPORTS = {
     "boto3": "boto3",
     "botocore": "botocore",
@@ -206,6 +210,49 @@ def declarations(raw):
     return result
 
 
+def optional_script(name, version, filename, content, files, prefix):
+    if (name, str(version), filename) != (
+        "jmespath",
+        "1.1.0",
+        "jmespath-1.1.0.data/scripts/jp.py",
+    ):
+        raise PackageError("wheel_data_scheme")
+    if (
+        sha(content) != JMESPATH_CLI_SHA256
+        or not content.startswith(b"#!python\n")
+        or prefix + "/entry_points.txt" in files
+    ):
+        raise PackageError("optional_script_policy")
+    # Check the excluded file's original RECORD binding before discarding it.
+    try:
+        rows = list(csv.reader(io.StringIO(files[prefix + "/RECORD"].decode())))
+    except (KeyError, UnicodeError, csv.Error) as error:
+        raise PackageError("optional_script_record") from error
+    matching = [row for row in rows if row and row[0] == filename]
+    digest = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).rstrip(b"=")
+    if matching != [[filename, "sha256=" + digest.decode(), str(len(content))]]:
+        raise PackageError("optional_script_record")
+    return {
+        "wheel_path": filename,
+        "sha256": sha(content),
+        "reason": "OPTIONAL_JMESPATH_CLI_NOT_USED_BY_LAMBDA",
+        "installer_paths": ["bin/jp.py", "Scripts/jp.py"],
+    }
+
+
+def excluded_script_output(raw, expected_hash):
+    # Wheel installation may rewrite only the #!python line. Verify the rest
+    # rather than trusting or shipping arbitrary installer script output.
+    first, separator, body = raw.partition(b"\n")
+    if (
+        not separator
+        or first.removesuffix(b"\r")
+        not in (b"#!python", b"#!" + os.fsencode(sys.executable))
+        or sha(b"#!python\n" + body) != expected_hash
+    ):
+        raise PackageError("excluded_script_output_mismatch")
+
+
 def inspect_wheel(path, expected, target):
     raw = safe_file(path).read_bytes()
     if not re.fullmatch(r"[0-9a-f]{64}", str(expected)) or sha(raw) != expected:
@@ -218,6 +265,7 @@ def inspect_wheel(path, expected, target):
     if not filename_tags.intersection(allowed):
         raise PackageError("wheel_target")
     files = {}
+    excluded = []
     total = 0
     with zipfile.ZipFile(path) as archive:
         seen = set()
@@ -231,6 +279,11 @@ def inspect_wheel(path, expected, target):
             seen.add(info.filename)
             if stat.S_ISLNK(info.external_attr >> 16):
                 raise PackageError("archive_symlink")
+            if ".data/scripts/" in info.filename and (
+                info.is_dir()
+                or stat.S_IFMT(info.external_attr >> 16) not in (0, stat.S_IFREG)
+            ):
+                raise PackageError("wheel_script_type")
             if info.is_dir():
                 continue
             total += info.file_size
@@ -282,6 +335,11 @@ def inspect_wheel(path, expected, target):
     for filename, content in files.items():
         parts = list(PurePosixPath(filename).parts)
         if parts[0].endswith(".data"):
+            if len(parts) == 3 and parts[1] == "scripts":
+                excluded.append(
+                    optional_script(name, version, filename, content, files, prefix)
+                )
+                continue
             if len(parts) < 3 or parts[1] not in ("purelib", "platlib"):
                 raise PackageError("wheel_data_scheme")
             filename = "/".join(parts[2:])
@@ -298,6 +356,10 @@ def inspect_wheel(path, expected, target):
         ):
             raise PackageError("wheel_startup_or_private_file")
         installed[filename] = content
+    if any(
+        path in installed for record in excluded for path in record["installer_paths"]
+    ):
+        raise PackageError("package_collision")
     return {
         "filename": path.name,
         "sha256": expected,
@@ -305,6 +367,7 @@ def inspect_wheel(path, expected, target):
         "version": str(version),
         "requires_dist": metadata.get_all("Requires-Dist", []),
         "files": installed,
+        "excluded_files": excluded,
     }
 
 
@@ -337,6 +400,13 @@ def resolve_wheels(wheelhouse, lock, declared, target):
             if name in installed:
                 raise PackageError("package_collision")
             installed[name] = content
+    if any(
+        path in installed
+        for wheel in wheels.values()
+        for record in wheel["excluded_files"]
+        for path in record["installer_paths"]
+    ):
+        raise PackageError("package_collision")
     env = default_environment()
     env.update(
         python_version="3.11",
@@ -582,6 +652,12 @@ def assemble(
             *wheel_paths,
         ]
         installer(command, stage)
+        excluded_outputs = {
+            path: record["sha256"]
+            for wheel in wheels.values()
+            for record in wheel["excluded_files"]
+            for path in record["installer_paths"]
+        }
         actual = {}
         for path in stage.rglob("*"):
             no_links(path)
@@ -591,6 +667,9 @@ def assemble(
             safe_name(name)
             raw = safe_file(path).read_bytes()
             if name not in installed:
+                if name in excluded_outputs:
+                    excluded_script_output(raw, excluded_outputs[name])
+                    continue
                 # Pip bookkeeping/entry-point wrappers are excluded, never executed.
                 if name.startswith(("bin/", "Scripts/")) or name.endswith(
                     (
@@ -624,13 +703,21 @@ def assemble(
             "target": target,
             "builder_sha256": sha(safe_file(__file__).read_bytes()),
             "record_policy": "REGENERATED_FOR_SHIPPED_FILES_ONLY",
+            "installation_policy": "RUNTIME_SUBSET_WITH_DECLARED_OPTIONAL_CLI_EXCLUSIONS",
             "requirements_sha256": sha(requirements),
             "declared_dependencies": declared,
             "wheel_lock_sha256": sha(canonical(wheel_lock)),
             "resolved_inspected_wheels": [
                 {
                     k: r[k]
-                    for k in ("filename", "sha256", "name", "version", "requires_dist")
+                    for k in (
+                        "filename",
+                        "sha256",
+                        "name",
+                        "version",
+                        "requires_dist",
+                        "excluded_files",
+                    )
                 }
                 for r in sorted(wheels.values(), key=lambda r: r["name"])
             ],

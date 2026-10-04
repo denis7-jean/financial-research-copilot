@@ -1,7 +1,9 @@
 """Invented wheels/workspaces only; installers are stubs, never pip or AWS."""
 
 import ast
+import base64
 import copy
+import csv
 import io
 import json
 from pathlib import Path
@@ -41,15 +43,16 @@ def wheel(
     files=None,
     python=">=3.11",
     wheel_tag=None,
+    version="1.0",
 ):
-    filename = f"{name}-1.0-{tag}.whl"
-    metadata = f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\nRequires-Python: {python}\n"
+    filename = f"{name}-{version}-{tag}.whl"
+    metadata = f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\nRequires-Python: {python}\n"
     metadata += "".join(f"Requires-Dist: {r}\n" for r in requires)
     entries = {
         f"{name}/__init__.py": b"# invented, never executed\n",
-        f"{name}-1.0.dist-info/METADATA": metadata.encode(),
-        f"{name}-1.0.dist-info/WHEEL": f"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: {wheel_tag or tag}\n".encode(),
-        f"{name}-1.0.dist-info/RECORD": b"",
+        f"{name}-{version}.dist-info/METADATA": metadata.encode(),
+        f"{name}-{version}.dist-info/WHEEL": f"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: {wheel_tag or tag}\n".encode(),
+        f"{name}-{version}.dist-info/RECORD": b"",
     }
     entries.update(files or {})
     stream = io.BytesIO()
@@ -616,3 +619,260 @@ def test_reparse_point_rejected_without_junction_api():
             return SimpleNamespace(st_file_attributes=0x400)
 
     assert lp.is_link(InventedPath())
+
+
+SCRIPT_PATH = "jmespath-1.1.0.data/scripts/jp.py"
+SCRIPT = b"#!python\n# invented optional CLI, never executed\n"
+
+
+def jmespath_fixture(house, monkeypatch, files=None):
+    # Invented bytes, with the real distribution/version/layout. The policy's
+    # digest is rebound only inside this synthetic test, never production code.
+    monkeypatch.setattr(lp, "JMESPATH_CLI_SHA256", lp.sha(SCRIPT))
+    payload = {
+        f"jmespath/{name}.py": b"# invented library, never executed\n"
+        for name in (
+            "__init__",
+            "ast",
+            "compat",
+            "exceptions",
+            "functions",
+            "lexer",
+            "parser",
+            "visitor",
+        )
+    }
+    payload[SCRIPT_PATH] = SCRIPT
+    payload.update(files or {})
+    stream = io.StringIO(newline="")
+    writer = csv.writer(stream, lineterminator="\n")
+    for name, raw in sorted(payload.items()):
+        digest = base64.urlsafe_b64encode(lp.hashlib.sha256(raw).digest()).rstrip(b"=")
+        writer.writerow((name, "sha256=" + digest.decode(), str(len(raw))))
+    payload["jmespath-1.1.0.dist-info/RECORD"] = stream.getvalue().encode()
+    return wheel(house, name="jmespath", version="1.1.0", files=payload)
+
+
+def test_exact_jmespath_optional_cli_inspection(invented, monkeypatch):
+    _, house, _, _, _, _ = invented
+    entry = jmespath_fixture(house, monkeypatch)
+    inspected = lp.inspect_wheel(house / entry["filename"], entry["sha256"], TARGET)
+    assert SCRIPT_PATH not in inspected["files"]
+    assert len([n for n in inspected["files"] if n.startswith("jmespath/")]) == 8
+    assert inspected["excluded_files"] == [
+        {
+            "wheel_path": SCRIPT_PATH,
+            "sha256": lp.sha(SCRIPT),
+            "reason": "OPTIONAL_JMESPATH_CLI_NOT_USED_BY_LAMBDA",
+            "installer_paths": ["bin/jp.py", "Scripts/jp.py"],
+        }
+    ]
+
+
+@pytest.mark.parametrize("script_path", [None, "bin/jp.py", "Scripts/jp.py"])
+def test_optional_cli_subset_manifest_and_record(
+    invented, tmp_path, monkeypatch, script_path
+):
+    root, house, lock, _, _, build = invented
+    entry = jmespath_fixture(house, monkeypatch)
+    lock["wheels"] = [entry]
+    (root / "requirements-lambda.txt").write_bytes(b"jmespath==1.1.0\n")
+
+    def installer(command, stage):
+        expected = lp.inspect_wheel(house / entry["filename"], entry["sha256"], TARGET)
+        for name, data in expected["files"].items():
+            dest = stage / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+        if script_path:
+            dest = stage / script_path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(
+                b"#!"
+                + lp.os.fsencode(sys.executable)
+                + (b"\r\n" if script_path == "Scripts/jp.py" else b"\n")
+                + SCRIPT.split(b"\n", 1)[1]
+            )
+
+    assert build(installer=installer) == build("second.zip", installer=installer)
+    with zipfile.ZipFile(tmp_path / "new.zip") as archive:
+        names = archive.namelist()
+        assert not any(".data/" in n or n.endswith("jp.py") for n in names)
+        for name in names:
+            if name.startswith("jmespath/"):
+                assert archive.read(name) == b"# invented library, never executed\n"
+        manifest = json.loads(archive.read("lambda-build-manifest.json"))
+        assert (
+            manifest["installation_policy"]
+            == "RUNTIME_SUBSET_WITH_DECLARED_OPTIONAL_CLI_EXCLUSIONS"
+        )
+        assert (
+            manifest["resolved_inspected_wheels"][0]["excluded_files"][0]["wheel_path"]
+            == SCRIPT_PATH
+        )
+        rows = list(
+            csv.reader(
+                io.StringIO(archive.read("jmespath-1.1.0.dist-info/RECORD").decode())
+            )
+        )
+        assert {row[0] for row in rows} == {
+            n for n in names if n.startswith(("jmespath/", "jmespath-1.1.0.dist-info/"))
+        }
+        for name, digest, size in rows:
+            if name.endswith("/RECORD"):
+                assert (digest, size) == ("", "")
+            else:
+                data = archive.read(name)
+                assert (
+                    digest
+                    == "sha256="
+                    + base64.urlsafe_b64encode(lp.hashlib.sha256(data).digest())
+                    .rstrip(b"=")
+                    .decode()
+                )
+                assert int(size) == len(data)
+                assert manifest["file_sha256"][name] == lp.sha(data)
+
+
+@pytest.mark.parametrize(
+    "mode,code",
+    [
+        ("altered_script", "excluded_script_output_mismatch"),
+        ("bad_shebang", "excluded_script_output_mismatch"),
+        ("missing_library", "missing_installed_file"),
+        ("altered_library", "installed_file_mismatch"),
+        ("unrelocated_script", "unexpected_installed_file"),
+    ],
+)
+def test_optional_cli_installer_verification(
+    invented, tmp_path, monkeypatch, mode, code
+):
+    root, house, lock, _, _, build = invented
+    entry = jmespath_fixture(house, monkeypatch)
+    lock["wheels"] = [entry]
+    (root / "requirements-lambda.txt").write_bytes(b"jmespath==1.1.0\n")
+
+    def installer(command, stage):
+        expected = lp.inspect_wheel(house / entry["filename"], entry["sha256"], TARGET)
+        for name, data in expected["files"].items():
+            dest = stage / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+        if mode == "missing_library":
+            (stage / "jmespath/parser.py").unlink()
+        elif mode == "altered_library":
+            (stage / "jmespath/parser.py").write_bytes(b"altered")
+        else:
+            dest = stage / (
+                SCRIPT_PATH if mode == "unrelocated_script" else "bin/jp.py"
+            )
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(
+                SCRIPT + b"altered"
+                if mode == "altered_script"
+                else b"#!unreviewed\n" + SCRIPT.split(b"\n", 1)[1]
+            )
+
+    rejects(code, lambda: build(installer=installer))
+    assert not (tmp_path / "new.zip").exists()
+    assert (root / "deployment.zip").read_bytes() == b"invented previous artifact"
+
+
+@pytest.mark.parametrize(
+    "files,code",
+    [
+        ({"jmespath-1.1.0.data/scripts/../escape.py": b""}, "unsafe_archive_path"),
+        ({"jmespath-1.1.0.data/scripts/nested/jp.py": b""}, "wheel_data_scheme"),
+        ({"jmespath-1.1.0.data/scripts/other.py": b""}, "wheel_data_scheme"),
+        ({"jmespath-1.1.0.data/headers/header.h": b""}, "wheel_data_scheme"),
+        ({"jmespath-1.1.0.data/purelib/bin/jp.py": b""}, "package_collision"),
+        ({"jmespath-1.1.0.data/purelib/Scripts/jp.py": b""}, "package_collision"),
+        ({SCRIPT_PATH: b"MZ executable"}, "non_linux_native"),
+        ({SCRIPT_PATH: b"#!python\n# unreviewed change\n"}, "optional_script_policy"),
+        (
+            {
+                "jmespath-1.1.0.dist-info/entry_points.txt": b"[console_scripts]\njp = anything:run\n"
+            },
+            "optional_script_policy",
+        ),
+    ],
+)
+def test_optional_script_policy_rejections(invented, monkeypatch, files, code):
+    _, house, _, calls, _, _ = invented
+    entry = jmespath_fixture(house, monkeypatch, files)
+    rejects(
+        code,
+        lambda: lp.inspect_wheel(house / entry["filename"], entry["sha256"], TARGET),
+    )
+    assert not calls
+
+
+@pytest.mark.parametrize(
+    "record", [b"", b"wrong", (SCRIPT_PATH + ",sha256=wrong,1\n").encode()]
+)
+def test_optional_script_original_record_binding(invented, monkeypatch, record):
+    _, house, _, _, _, _ = invented
+    entry = jmespath_fixture(house, monkeypatch)
+    # Rebuild the invented archive without duplicate entries.
+    path = house / entry["filename"]
+    with zipfile.ZipFile(path) as archive:
+        files = {n: archive.read(n) for n in archive.namelist()}
+    files["jmespath-1.1.0.dist-info/RECORD"] = record
+    entry = wheel(house, name="jmespath", version="1.1.0", files=files)
+    rejects(
+        "optional_script_record",
+        lambda: lp.inspect_wheel(path, entry["sha256"], TARGET),
+    )
+
+
+def test_optional_script_collision_across_distributions(invented, monkeypatch):
+    root, house, lock, calls, _, build = invented
+    lock["wheels"] = [
+        jmespath_fixture(house, monkeypatch),
+        wheel(house, files={"bin/jp.py": b"collision"}),
+    ]
+    (root / "requirements-lambda.txt").write_bytes(b"jmespath==1.1.0\ndemo==1.0\n")
+    rejects("package_collision", build)
+    assert not calls
+
+
+def test_script_exclusion_not_applied_to_other_distribution(invented):
+    _, house, _, _, _, _ = invented
+    entry = wheel(house, files={"demo-1.0.data/scripts/jp.py": SCRIPT})
+    rejects(
+        "wheel_data_scheme",
+        lambda: lp.inspect_wheel(house / entry["filename"], entry["sha256"], TARGET),
+    )
+
+
+@pytest.mark.parametrize(
+    "kind,code",
+    [
+        ("link", "archive_symlink"),
+        ("fifo", "wheel_script_type"),
+        ("directory", "wheel_script_type"),
+    ],
+)
+def test_optional_script_requires_regular_archive_file(
+    invented, monkeypatch, kind, code
+):
+    _, house, _, _, _, _ = invented
+    entry = jmespath_fixture(house, monkeypatch)
+    path = house / entry["filename"]
+    with zipfile.ZipFile(path) as archive:
+        entries = {n: archive.read(n) for n in archive.namelist()}
+    import stat
+
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, raw in entries.items():
+            info = zipfile.ZipInfo(name)
+            if name == SCRIPT_PATH:
+                info.create_system = 3
+                mode = {
+                    "link": stat.S_IFLNK,
+                    "fifo": stat.S_IFIFO,
+                    "directory": stat.S_IFDIR,
+                }[kind]
+                info.external_attr = (mode | 0o644) << 16
+            archive.writestr(info, raw)
+    rejects(code, lambda: lp.inspect_wheel(path, lp.sha(path.read_bytes()), TARGET))
