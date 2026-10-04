@@ -3,6 +3,7 @@ import os
 import time
 
 import boto3
+from botocore.exceptions import ClientError, ParamValidationError
 from dotenv import load_dotenv
 
 from app.errors import ServiceFailure, failure_from
@@ -34,6 +35,21 @@ _USER_PROMPT_TEMPLATE = (
 )
 
 
+def _sdk_attempts(response: object) -> int | None:
+    """SDK-reported attempts, not a send-hook measurement of every failure.
+
+    Strict built-in types keep malformed metadata extraction non-throwing.
+    None follows the trace's existing explicit-unknown JSON null convention.
+    """
+    if type(response) is not dict:
+        return None
+    metadata = response.get("ResponseMetadata")
+    if type(metadata) is not dict:
+        return None
+    retries = metadata.get("RetryAttempts")
+    return 1 + retries if type(retries) is int and retries >= 0 else None
+
+
 class RouterAgent:
     def __init__(self):
         self._client = boto3.client("bedrock-runtime", region_name="us-east-1")
@@ -48,7 +64,7 @@ class RouterAgent:
         start = time.monotonic()
         set_route(
             router_provider="haiku",
-            router_attempts=1,
+            router_attempts=None,
             router_cost_usd=None,
             router_cost_basis="unknown",
         )
@@ -59,6 +75,13 @@ class RouterAgent:
                 messages=[{"role": "user", "content": [{"text": prompt}]}],
             )
         except Exception as e:
+            set_route(
+                router_attempts=0
+                if isinstance(e, ParamValidationError)  # SDK rejects before dispatch.
+                else _sdk_attempts(e.response)
+                if isinstance(e, ClientError)
+                else None
+            )
             self.latency_ms = (time.monotonic() - start) * 1000
             return self._fallback(
                 "fallback_invoke_error", failure_from("router", e), trace_id
@@ -67,6 +90,8 @@ class RouterAgent:
             self.latency_ms = (time.monotonic() - start) * 1000
             set_route(router_latency_ms=round(self.latency_ms, 3))
 
+        # Preserve SDK metadata even if usage/output parsing subsequently fails.
+        set_route(router_attempts=_sdk_attempts(response))
         record_converse_usage("router", self._model_id, response)
         usage = response.get("usage") if isinstance(response, dict) else None
         if (

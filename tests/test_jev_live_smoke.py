@@ -56,6 +56,7 @@ class FakeBedrock:
                 "outputTokens": 257 if self.failure == "output-bound" else 20,
             },
             "serviceTier": {"type": "default"},
+            "ResponseMetadata": {"RetryAttempts": 0},
         }
 
     def close(self):
@@ -452,6 +453,38 @@ def test_missing_haiku_usage_keeps_full_reservation(tmp_path):
     assert len(state.aws.requests) == len(state.jev_requests) == 1
     assert result["accounting"]["providers"]["bedrock"]["committed_usd"] == Decimal(
         "0.221408"
+    )
+
+
+@pytest.mark.parametrize(
+    "metadata", [None, {"RetryAttempts": True}, {"RetryAttempts": 1}]
+)
+def test_runner_stops_on_unknown_or_multiple_sdk_attempts(tmp_path, metadata):
+    configure, state = factory()
+
+    def unexpected_attempts(permit):
+        values = configure(permit)
+        original = state.aws.converse
+
+        def response(**kwargs):
+            value = original(**kwargs)
+            if metadata is None:
+                del value["ResponseMetadata"]
+            else:
+                value["ResponseMetadata"] = metadata
+            return value
+
+        state.aws.converse = response
+        return values
+
+    result = s.execute(tmp_path / "invented", unexpected_attempts, INVENTORY)
+    assert result["status"] == "STOPPED"
+    assert result["stop_code"] == "unexpected_activity"
+    assert len(state.aws.requests) == len(state.jev_requests) == 1
+    # Usage is known and settled before the existing attempt gate; that gate
+    # must still stop the batch rather than coercing unknown metadata to one.
+    assert result["accounting"]["providers"]["bedrock"]["committed_usd"] == Decimal(
+        "0.00044"
     )
 
 
