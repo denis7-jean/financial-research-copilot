@@ -434,3 +434,73 @@ Review `4a1e714..cb58a99`: explicit target/lock closure and markers; raw archive
 Smallest next engineering task: under a separate dependency-download authorization, resolve **only** the observed Python 3.11/x86_64 conservative Linux wheel closure using existing pins, inspect/hash actual wheels and produce the supplied complete lock; report unavailable wheels or conflicting metadata instead of inventing replacement versions. Do not install/build/deploy in that acquisition task. Afterwards actual dependency assembly, exact attached-layer content/size/native/shadowing inspection and matching Linux/Lambda import/link checks need their own scope. Layer retention/allocation or >50 MiB delivery changes require concrete reviewed choices once sizes are known. Qualification, owner enablement/cost grants, rollback verification and production authorization remain prior blockers.
 
 Scope receipt: two exact-target AWS metadata reads; scoped local code/test/CI/doc changes; invented fixtures/stubbed installers and existing offline guard; explicit-path local commits only. No dependencies downloaded/installed or real deployment artifact built/qualified; no invocation/inference, push/remote CI, resource/IAM/billing change, production/default/router/answer change, private-evidence refresh, Reviewer v2 operation or deployment. All nineteen preexisting untracked entries preserved. Freeze 1 and deployment readiness remain unestablished.
+
+## Dependency acquisition and exact-layer inspection: incomplete closure
+
+Baseline **5a91fa93dd10e07f88bf639f86af5c949b29b333**, same branch and confirmed financial-copilot/us-east-1/python3.11/x86_64/ZIP/root lambda_handler.handler target. This is an acquisition/static-inspection delta, not application implementation, independent acceptance or a build. Only this document and the existing work log change in Git. Requirements, packager, source/test bundles, protected artifacts and all nineteen preexisting untracked entries remain unchanged. Downloads and metadata are retained exclusively outside Git at `C:\Projects\AWS Project\dependency-acquisition\2026-10-04-5a91fa9`.
+
+### Target, resolution and concrete blockers
+
+Official [Lambda runtime documentation](https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtimes.html) identifies Python 3.11 as Amazon Linux 2. AWS's [runtime comparison](https://aws.amazon.com/blogs/compute/introducing-the-amazon-linux-2023-runtime-for-aws-lambda/) identifies AL2 glibc 2.26, versus AL2023 glibc 2.34. [Packaging compatibility tags](https://packaging.python.org/en/latest/specifications/platform-compatibility-tags/) specify manylinux glibc minimums. These are documented target requirements, not an executed observation of this function's libraries. Windows Python, generic Ubuntu and matching filenames alone do not prove Lambda compatibility.
+
+Credential-free, bounded, no-redirect/no-retry HTTPX acquisition used only official pypi.org and files.pythonhosted.org metadata/wheels. No pip install, source distribution, setup hook, downloaded-code execution or host-marker resolver was used. Markers were evaluated explicitly for CPython 3.11/Linux/posix/x86_64 with no requested extras; patch/kernel-specific facts are not invented. The `3.11.0` marker placeholder is a minor-bound representation, not an observed Lambda patch version. All 26 direct release pins were preserved. Actual wheel METADATA/WHEEL, Requires-Python/Dist, extras/markers, CRC, paths and raw SHA256 were inspected. Two unconstrained transitive dependencies resolved to annotated-doc 0.0.5 and typing-inspection 0.4.4; no version-constraint conflicts were found.
+
+**No complete lock was generated.** Successfully downloaded 26 wheels (24 direct plus two transitive), totaling **19,049,578 compressed bytes** and **32,127,232 raw wheel-member bytes**. Every raw hash matches official PyPI. Twenty-five pass the unchanged packager's static inspector. Full closure remains blocked by:
+
+| Binding | Exact failure / smallest prerequisite |
+|---|---|
+| faiss-cpu==1.13.2 | Published Linux x86_64 wheel is cp310-abi3-manylinux_2_27/2_28: ABI3 can cover Python 3.11, but glibc >=2.27 cannot support AL2 2.26. No compatible binary found; no alternative pin substituted. |
+| numpy==2.4.4 | Published cp311 x86_64 wheel is manylinux_2_27/2_28, likewise beyond AL2. No compatible binary found. |
+| jmespath==1.1.0 | Valid py3-none-any wheel is acquired, but scripts/lambda_package.py rejects optional `.data/scripts/jp.py` with `wheel_data_scheme`. This is a packager-policy limitation, not unavailable or ABI-incompatible JMESPath. |
+
+Exact official sources: [FAISS files](https://pypi.org/project/faiss-cpu/1.13.2/#files), [NumPy files](https://pypi.org/project/numpy/2.4.4/#files), [PyPI metadata API](https://docs.pypi.org/api/json/). Only digest-verified PEP 658 metadata was downloaded for the two incompatible wheels; their binaries were not fetched. FAISS metadata requires NumPy >=1.25.0,<3 and packaging, satisfied as version constraints by the declarations; availability/platform compatibility is the blocker. Native Pydantic Core 2.46.3 is ELF64 x86_64/cp311, maximum observed required GLIBC_2.14; system shared-library resolution remains unexecuted.
+
+Minimal reproduction, read-only and guarded, of the separate packager restriction (not repaired here):
+
+```python
+from pathlib import Path
+from scripts.lambda_package import inspect_wheel, target_contract
+inspect_wheel(Path(r'C:\Projects\AWS Project\dependency-acquisition\2026-10-04-5a91fa9\wheels\jmespath-1.1.0-py3-none-any.whl'), 'a5663118de4908c91729bea0acadca56526eb2698e83de10cd116ae0f4e97c64', target_contract('python3.11', 'manylinux2014_x86_64', 'x86_64', 'lambda_handler.handler'))
+# PackageError: wheel_data_scheme
+```
+
+### Bound layer contents and allocation
+
+Retrieved only `arn:aws:lambda:us-east-1:981265949354:layer:financial-copilot-deps:2`. Download completed **2026-10-04T20:14:24.191472+00:00**. Two bounded GetLayerVersion metadata calls, one archive transfer: initial overly specific S3 bucket-name validation stopped before transfer; a fresh response was checked against the exact ARN/hash and official service-provided HTTPS S3 endpoint. Signed URLs and raw sensitive AWS responses were not persisted or printed; no identity switch or other AWS operation.
+
+Archive `financial-copilot-deps-v2.zip`: **77,353,934 bytes**, raw SHA256 **5b0ab565a55780e5460421652bb1bb1c6fdf36400770491725eab7030676e3f6**, equal to expected AWS base64 **Wwq1ZaVXgOVGBCFlK7G7HG/fNkAHcEkXJeq3AwZ24/Y=**. Before decompression, bounded paths/count/member/total size were validated; subsequent streaming reads verified every member's CRC/hash/size. No extraction or import. **1,658 entries**, sole root `python/`, **235,542,530 unpacked bytes**, no unsafe/duplicate paths, symlinks or encrypted members.
+
+Distributions: NumPy **1.26.4**, FAISS-cpu **1.7.4**, PyMuPDF **1.23.8**, PyMuPDFb **1.23.7**. First two conflict with declared versions; last two are indexing dependencies excluded from current application runtime declarations. Thirty-three ELF native files are 64-bit little-endian x86_64, cp311 where indicated, with maximum observed required GLIBC_2.17. External NEEDED libraries include libc/libm/libpthread/librt/libdl/libutil/libz/libgcc_s/libstdc++ and the loader. Actual target resolution, CPU dispatch (including FAISS AVX2 variant) and imports remain untested. Distinct FAISS/NumPy copies share libgfortran and libquadmath basenames but have unequal hashes; duplicate fitz/fitz_new libmupdf copies have equal hashes. Loader-order compatibility is unresolved, not a confirmed execution failure.
+
+[AWS import precedence](https://docs.aws.amazon.com/lambda/latest/dg/python-package.html) places /var/task before layer paths. Function-bundled FAISS/NumPy would shadow older regular layer packages; partial packages must not assume file-by-file fallback into layers. Layer metadata/runtime declaration alone did not prove contents, and the inspected old versions cannot replace declared pins without separate approval.
+
+[AWS quotas](https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html): direct ZIP upload 50 MiB compressed; larger uploads use S3; total unpacked code plus layers is 250 MiB (262,144,000 bytes). Existing layer leaves **26,601,470 bytes**. Just the immutable nonmetadata/non-.data payload of 25 accepted wheels is **31,247,974 bytes**, a known lower bound. Combined lower bound **266,790,504 bytes** exceeds the ceiling by **4,646,504 bytes**, before application files, other metadata, JMESPath or missing FAISS/NumPy. No function ZIP was assembled, and these are not its final sizes.
+
+Recommended allocation is conditional **complete function-bundled closure, with explicit omission/detachment of this old layer in a later reviewed and authorized target change**, avoiding unused PDF payload and mixed versions. No precise current layer/function split satisfies the preserved pins. This recommendation cannot proceed until native version/runtime decisions and compatibility evidence are resolved. Nothing was removed, attached, published or deployed. Future >50 MiB compressed delivery, if needed, requires a separately authorized S3 path; aggregate unpacked limits still apply.
+
+### Evidence, replay and focused next task
+
+All paths below are under the outside-Git task directory. `completion-index.json` binds 78 retained raw artifacts (wheels, official metadata, sanitized layer metadata, archive, static reports and local inspection helpers). Index excludes itself and the later technical receipt to avoid self/circular hashes. Reports preserve limitations rather than naming the partial set a lock.
+
+| Record | Schema / raw SHA256 |
+|---|---|
+| completion-index.json | lambda-dependency-acquisition-completion-v1 / **9d1fa15812cc78eb5618b59e689797a580155d81d3ea053b027807962c07ab24** |
+| dependency-acquisition-final.json | lambda-dependency-acquisition-final-v1 / **b708fba864f80dac66a1b960030da3a00c55653cbbea9e954edcb957aceee608** |
+| layer-static-inspection.json | lambda-layer-static-inspection-v1 / **371a6b3ed07292d3a8a09b3676263409d94a70a0646c7b6affb4bbc60c9fea23** |
+| technical-check-receipt.json | lambda-acquisition-technical-check-v1 / **396140188bbbdfc46b4b3013fe43cce9a54c90041ba13c50d191fdc689754c05** |
+| jmespath-packager-reproduction.json | **db0074a5dd8a9c5ee8c335eaf75043ed43a35634f01ff2c0cfbd9cc2a6f9bbeb** |
+| read_only_replay.py | **4011c70282290d401eec979940aa8cdce4171061ba0603cbb7d579b7515dcd44** |
+
+Executed reproducible static replay:
+
+```powershell
+.\.venv\Scripts\python.exe -B 'C:\Projects\AWS Project\dependency-acquisition\2026-10-04-5a91fa9\read_only_replay.py'
+```
+
+Result **STATIC_REPLAY_PASSED_NOT_QUALIFIED**: 78 artifact hash bindings, complete layer CRC/hash/size checks, 25 unchanged-packager wheel successes, exact JMESPath `wheel_data_scheme` rejection, incomplete closure `dependency_closure` rejection; existing offline guard reports zero network attempts. No application or downloaded code imported. A prior local helper diagnostic accidentally reran static inspection and hit exclusive FileExistsError before overwriting any record; function-only ELF reader and final replay avoid that side effect. No full pytest suite is warranted by acquisition/documentation only; whitespace and explicit staged-byte/prefix checks apply to this doc delta.
+
+Preservation: 446 non-document baseline paths rehashed with zero changes; app/packager/pins, preexisting untracked entries, old ZIPs, all protected evidence/smoke/review records remain unchanged. Packaging digest **af857f29fb63de2499bb715a383741380e182a3cb438cb264909cf7476f1b83e**, Reviewer v2 digest **e2646384cb06948625b4a985e07c10428af98ff2e24a5e27f8a1af938ddb265e**, legacy deployment.zip **0c1e890d60eadbc08e88cd532f97b94bb8c7d853dcfb0429e0231e62631dabe0** remain at their prior identities; no old inventories refreshed.
+
+Single smallest independent offline implementation task, under new scope: narrowly support safe exclusion of optional wheel `.data/scripts` payload in the existing packager, with the verified JMESPath fixture and synthetic regressions; retain rejection of other unsupported schemes, unsafe paths and runtime omission. No broad framework rewrite. Separately, owner must choose approved AL2-compatible FAISS/NumPy pins or a reviewed runtime migration before a complete lock can exist; this task supplied neither substitution nor approval. After those prerequisites: reacquire/hash the revised closure, complete lock, then separately authorized assembly and matching Lambda/Linux import/link/startup checks. Independent packaging/candidate review, qualification and operational deployment gates remain.
+
+Scope receipt: official metadata/docs and 26 binary-wheel downloads, two exact-layer metadata reads/one archive download, bounded static inspection and guarded replay, two appended docs/local commit only. No installation, source build, dependency assembly, downloaded-code execution, real deployable artifact, application import, inference/invocation, production/default change, AWS mutation, push, Reviewer v2 change or historical evidence refresh. Static identity/metadata compatibility is not Linux importability or deployment readiness.
