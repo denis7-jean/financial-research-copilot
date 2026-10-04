@@ -115,3 +115,48 @@ Task A is Codex implementation/self-review pending independent review. Task B us
 Focused review: combined `41d146d..1c0fe9a` app/config/tools/CI delta and precise streaming guarantee/tests; separately inspect new final subject/schema/review joins and eligibility-only FB replacement. Unchanged protocol evidence remains valid at its bindings; no unrelated interface/test/procedure/runtime evidence was refreshed. Remaining work is independent review, owner live-run/privacy/budget/operational-policy decisions, authorized live-factory/spending enforcement implementation after those decisions, Linux/dependency/AWS verification and accepted qualification/phase operations. No justified additional implementation is included in this bounded task. Documentation-only updates do not require another test run.
 
 Scoped explicit-path documentation commit contains only this log and the existing combined handoff; terminal hash supplied in delivery. Private outputs/Claude reports/unrelated work excluded. No push, installs, live/model/provider/AWS/external calls, real preparation/bindings, adoption/sealing, ranking/selection/sampling, packets, freezes, owner labels or deployment. No background work is claimed.
+
+## Owner-authorized isolated exploratory smoke: implementation and required stop
+
+Verified baseline `8f4e9859d27d368233cd6bd20f08133b82d4ee8f`, same branch and nineteen unrelated untracked paths. The owner superseded the external-call prohibition only for official-document reads and six invented questions once per Jev/pinned Haiku, sequentially, zero retries, inference ceilings $0.02/$0.03/$0.05. No deployment, application live/shadow enablement, qualification or Reviewer v2 changes. Normally configured .env/environment TypeSafe and AWS signing credentials checked for presence, model/region printed only; no values printed or unrelated credential discovery.
+
+Official price/model/tier preparation recorded `2026-10-04T00:41:03Z`: TypeSafe models https://docs.typesafe.ai/models confirms jev-1.13.0, $0.042/M input/free output, 64K request limit. AWS model card https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-haiku-4-5.html confirms the configured US geographic inference ID `us.anthropic.claude-haiku-4-5-20251001-v1:0`, us-east-1 and Standard/default tier. Official AWS geographic table https://aws.amazon.com/jp/blogs/news/amazon-bedrock-now-supports-japan-cross-region-inference/ gives $1.10/$5.50/M for US geographic versus $1/$5 global. Pricing and service-tier/count-token references are retained in plan/handoff. No credits/free coverage assumed. CountTokens is free and exact for supported identical prompts, with a documented limitation for some CRIS-only Anthropic runtime models.
+
+Source/test local commit `8373c34eb4a60c3c6524233c26302eb436c7d09d`, exactly two new paths: experiments/jev_candidate/live_smoke.py and tests/test_jev_live_smoke.py. The dedicated opt-in CLI uses an exclusive fixed run claim, no resume/resend. Candidate Jev still accepts exact MockTransport only; the isolated bridge returns a real streaming HTTPX response so its actual payload/stream/parser/route implementation is exercised. Only the isolated runner has real transport/credential wiring. Haiku inherits RouterAgent.route, with isolated boto3 constructor, maxTokens 256, default Standard serviceTier, standard performanceConfig, total_max_attempts=1. Haiku app constructor/default/prompt/threshold unchanged. HTTPX retries=0, redirects=false; explicit official endpoint guards plus one dispatch/wire permit; downstream tripwire; no test guard lift or monkeypatch. Candidate router_live=False remains app configuration metadata; runner actual_live independently indicates external-mode configuration. No universal sandbox or total-deadline claim.
+
+Existing Ledger reserves before dispatch; existing RunJournal fsyncs call_started before paid call. Unknown billable usage retains full reservation, failures count, and any required stop ends all providers. Fixed six-by-two schedule sends only invented questions and existing router system/options; complete prompt/expected route/commit/source hash/model/price/limits recorded before preflight. Source map checks executing workspace bytes against commit, distinguishing CRLF normalization. Jev reservation $0.002688 per attempt ($0.016128 for six); historical expected estimate $0.00010332 total. Haiku needs exact CountTokens complete system/messages plus 256 output at $1.10/$5.50. For verified <=2048 input, six conditional maximum reservations $0.0219648; combined $0.0380928. No successful count means no actual Haiku reservation/expected estimate is established.
+
+Validation commands:
+
+```powershell
+.\.venv\Scripts\python.exe -B -m pytest tests/test_jev_live_smoke.py tests/test_jev_candidate.py tests/test_router.py tests/test_agents.py tests/test_observability.py tests/test_api.py tests/test_router_bench.py tests/test_jev_candidate_tools.py -q --basetemp=.pytest_cache/jev-live-integrated
+.\.venv\Scripts\python.exe -B -c "from tests.offline_guard import install; install(); import runpy; runpy.run_module('ruff',run_name='__main__')" check experiments/jev_candidate/live_smoke.py tests/test_jev_live_smoke.py
+.\.venv\Scripts\python.exe -B -c "from tests.offline_guard import install; install(); import runpy; runpy.run_module('ruff',run_name='__main__')" format --check experiments/jev_candidate/live_smoke.py tests/test_jev_live_smoke.py
+git diff --check
+git diff --cached --check
+```
+
+Final formatted implementation: **248 passed, 1 skipped, four existing warnings, 3.38s**, zero intercepted/outbound attempts. Initial focused run 114 passed before added config/tripwire/import tests. Existing Windows symlink skip and asyncio_mode/FAISS warnings unchanged. Synthetic success, monetary/request limits, unknown-cost failure retention, no replacement calls, re-entry rejection, exact prompts/output/tier, missing settings, stream closure/early stop, endpoint/duplicate-wire rejection, downstream rejection and import purity covered. Codex diff/self-review, not independent acceptance. Staged two explicit paths; staged normalized bytes matched validated workspace bytes.
+
+One actual command outside pytest, no diagnostic inference:
+
+```powershell
+.\.venv\Scripts\python.exe -B -m experiments.jev_candidate.live_smoke --execute-owner-smoke
+```
+
+Run `2026-10-03-owner-routing-smoke-01` **STOPPED** at first Q1 `token_count_preflight`, sanitized `ValidationException`, nonzero exit. One Bedrock non-inference CountTokens operation; no counts returned. **Zero Jev/Haiku inference attempts**, no routes/scores/usage/inference latency, no downstream agents, no retries or replacement calls. Strict input-cost prerequisite failed, so no inference followed. Server message was intentionally not retained; the exact rejection reason beyond operation/code is unestablished. Runtime CRIS token-count support limitation is a possible explanation, not a verified cause. This claim remains consumed and is not rerun. Committed inference cost/retained unknown reservations $0; remaining ceilings $0.02 Jev/$0.03 Haiku/$0.05 total. No empirical accuracy/connectivity/Lambda/performance conclusions.
+
+Exact six invented cases are in plan and combined handoff; expected Q1/Q2/Q3 qa, S1/S2/S3 summarize. Private directory heldout-external/jev-isolated-live-smoke/2026-10-03-owner-routing-smoke-01/:
+
+| File | Raw SHA256 |
+|---|---|
+| plan.json | `5cf31613a34ecc87b6eabe92cd496644e4c89bc46443b699b26c36951f2f11ec` |
+| result.json | `68f26dac5d2313d79bb655a2b96466a4fb458e221324a15f5978dfe025646cfc` |
+| run.journal.jsonl | `7a781da0c0b99e8e37f1654e4e44253daedb475092d1c1729220053f68f421c5` |
+| source-inventory.json | `b20e668b9f41b5cf0d717f832c74adc0e6a479c463d120688e798baa41edac03` |
+
+The exact 56-path combined app/control/tool/guard/benchmark/test map (previous 45+9 plus two) digest `f3b543ff404d0293a4189df4cacfc5bf99e73b92cbde3c1cddc2b5836bbf0605`; sorted compact ASCII JSON relative-main-path/raw-hash map plus LF, distinct namespace from old absolute-path maps. App sources/source-only Lambda package unchanged; isolated runner excluded from that package. No new deployment artifact.
+
+Durable metadata preservation under heldout-external/jev-live-smoke-preservation/2026-10-03-8f4e985/: before `83e20b6792ed999efc6c239f1440900c3e8c2f5bbbe32a4cfb13a938fa01a6b8`, after `dfbe00778e4df107184e331c95d9ccaa6b2cb4c30d6da81c3aee1960ab5f6332`. All 363 protected hashes match (prior 355 plus completion seven/checkpoint one). All seventeen current verifier source hashes match; digest remains `e2646384cb06948625b4a985e07c10428af98ff2e24a5e27f8a1af938ddb265e`. Existing actual replacement wrappers/reviews unchanged, no repeat historical replay or new protocol evidence.
+
+Stop/resume point: combined candidate/streaming/isolated runner and final joins await independent review. Another run requires a supported defensible pinned-Haiku cost-bound path plus a new owner grant after this required stop. Do not infer permission to repeat, change endpoints/models/tier or relax the prerequisite. Review the separate cost recalculation, permits, journal, CountTokens failure and no-inference evidence; existing v2 phase/qualification blockers remain. Documentation-only delivery adds no further tests or run attempts. Scope-only local commits, no push/install/deployment/default change/AWS resource changes/private data/adoption/selection/freeze. No background work.
