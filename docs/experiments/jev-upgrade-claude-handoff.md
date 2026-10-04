@@ -558,3 +558,58 @@ Before approving a pin change: independently review this recommendation/maintena
 Current five-file packaging digest **5470c4fef2e19213a4d3ee0f67f21bc9f40e2fce9818f619984d2b69a716dd5f**, same sorted compact ASCII relative-path/raw-SHA256 map plus LF recipe. Changed helper **697e981f986bd56e8e8c49a52bf6a362705dd4933a14b521facf87f9cbdd5d21**; test **50a7eeb20b10bd14d3fb708e7e4f5e667839143dc0982d76318c37561c00bb4d**. Prior packaging receipts/digest remain historical. Reviewer v2 digest **e2646384cb06948625b4a985e07c10428af98ff2e24a5e27f8a1af938ddb265e** unchanged. Rehash checks: 444 prior protected/unrelated paths and 261 current baseline paths (overlapping sets), zero differences; includes all 80 prior acquisition files. Prior nineteen untracked entries preserved.
 
 Claude delta-review focus: exact version/path/content/RECORD exclusion gate; installer shebang normalization and collision checks; explicit subset manifest and shipped RECORD; synthetic coverage/static real-wheel result; evidence versus recommendation distinctions, maintenance/ABI/index uncertainties. This packaging delta is separate from router/smoke/v2 review. Scope receipt: two source/test changes and two appended docs, synthetic/stubbed checks and official metadata/docs only; no dependency changes, additional binary downloads, installs, native/application execution, real assembly/build, AWS/model calls, layer/configuration change, deployment/push or v2/evidence refresh. Stop after this repair/recommendation.
+
+## B-1 SDK attempt telemetry correction (pending narrow independent review)
+
+Owner task baseline **bc560feb02c57c7f36dd0f147a5a9d28832d0cbb**, branch phase0/baseline-instrumentation-eval, matched. Actual consolidated Claude report docs/experiments/jev-upgrade-claude-consolidated-review.md, raw SHA256 **cee98d216e60fcc22186d234e8228cbd2d41ce58c5a9433fb73359db5888a78e**, remains unchanged and untracked. That report accepts scopes A, C and D at their exact reviewed bindings and accepts B except B-1. This appended delta supersedes the earlier pending-review wording only for those reviewed scopes; it does not claim Claude accepted this fix or authorize qualification/deployment.
+
+Separate implementation/test commit **9ae51946c9f7bfa346d7acde38b7813bd7b0666a** changes three files:
+
+- app/agents/router.py: replace unconditional 1 with SDK-reported attempts from successful response or ClientError.response, captured before usage/output parsing. Exact built-in nonnegative int RetryAttempts yields 1 + retries; bool, string, float, negative, missing/non-object metadata yields None, serialized as existing JSON null. Extraction never invokes custom mapping methods. Reset unknown on every route call; an SDK ParamValidationError that rejects parameters before dispatch records factual zero. Transport failures without usable metadata remain unknown. No production send hook or universal failure-measurement claim.
+- tests/test_router.py: real botocore retry decisions, signing and response/error parsing with an in-process before-send stub; explicit test-only legacy five-attempt cap, invented credentials, isolated absent config/credentials paths, temporarily cleared AWS_MAX_ATTEMPTS/AWS_RETRY_MODE, local sleep stub, restored hooks/environment. The existing DNS/socket/HTTP guard stays active. Tests cover no retry, throttling/success, exhaustion, malformed final output, strict malformed metadata, ClientError metadata, unknown transport failure, per-call reset, schema-failure preservation, factual pre-dispatch zero and non-throwing extraction. Assertions cover fallback and sanitized logging.
+- tests/test_jev_live_smoke.py: successful fake SDK responses now supply realistic RetryAttempts=0. Three new cases prove the unchanged isolated runner stops on missing metadata, bool or two reported attempts, with no following requests. Its existing known-usage settlement precedes this gate and remains unchanged. The runner source is not modified; no consumer coerces unknown to one or zero. Observability already preserves null; the existing runner's ==1 gate correctly fails closed.
+
+Reproduced B-1 before implementation using the real retry machinery:
+
+| Explicit synthetic policy/case | Observed stub sends | Before telemetry | Fixed telemetry |
+|---|---:|---:|---:|
+| No retry, successful output | 1 | 1 | 1 |
+| Two throttles, then success | 3 | 1 | 3 |
+| Exhausted test-only five-attempt cap | 5 | 1 | 5 |
+| Two throttles, then malformed model output | 3 | 1 | 3 |
+
+Five is the fixture's verified policy, not a universal production configuration. SDK metadata is the count's evidence, not a measurement of every possible send/failure. Constructor/client retry configuration, environment behavior, model/prompt, output schema, threshold, fallback, classification, pricing/usage logic, Haiku default and Jev restrictions are unchanged. Optional B-2/B-3/B-4 findings are not amended.
+
+Exact commands:
+
+```powershell
+# Intentional pre-fix reproduction: 3 failed, 1 passed, 20 deselected.
+.\.venv\Scripts\python.exe -B -m pytest tests/test_router.py -k sdk_retry_sends_match_attempt_telemetry -q --tb=short --basetemp 'C:\Projects\AWS Project\.b1-router-tests-01'
+# Final formatted implementation bytes, before staging/commit:
+.\.venv\Scripts\python.exe -B -m pytest tests/test_router.py tests/test_observability.py tests/test_jev_candidate.py tests/test_jev_live_smoke.py -q --tb=short --basetemp 'C:\Projects\AWS Project\.b1-router-tests-05'
+.\.venv\Scripts\python.exe -B -c "from tests.offline_guard import install; install(); import runpy; runpy.run_module('ruff',run_name='__main__')" check app/agents/router.py tests/test_router.py tests/test_jev_live_smoke.py
+.\.venv\Scripts\python.exe -B -c "from tests.offline_guard import install; install(); import runpy; runpy.run_module('ruff',run_name='__main__')" format --check app/agents/router.py tests/test_router.py tests/test_jev_live_smoke.py
+git diff --check
+git diff --cached --check
+```
+
+Final result: **169 passed, 4 warnings, 2.28s**, Python 3.13.12, zero intercepted/outbound network attempts. Warnings are existing unknown asyncio_mode plus three SWIG deprecations. Intermediate integrated runs exposed missing retry metadata in old runner fakes (153 passed/12 failed) and an incorrect new-test expectation of retained reservation despite known usage (166 passed/3 failed); only test fixtures/assertions changed to reflect the existing SDK/accounting behavior. Final tests, Ruff and formatting/whitespace checks pass, no unresolved test failure. Staging was explicit-path only; staged bytes equal validated working bytes after Git's CRLF-to-LF normalization. No broad suite, historical replay, real-population test or live smoke was run.
+
+New metadata-only inventory outside Git: **C:\Projects\AWS Project\jev-b1-telemetry\candidate-source-inventory.json**, raw SHA256 **9fa958da4a42b99ae134a2ff18a72192ba342da8df53d5308d3a79f1a85befe9**. Groups use SHA256(sorted compact ASCII JSON relative-path/raw-file-SHA256 map plus LF). This is candidate source identity, not a package manifest or build:
+
+| New binding | SHA256 |
+|---|---|
+| app/agents/router.py raw bytes | **177d1f5e99a547d25b69f90d39856ea5fdfc97160c15ca36dc58e737b0a34e18** |
+| tests/test_router.py raw bytes | **18bd2e6d95907067ef825664702153900338ca21d4973c6030c63d59dbda41db** |
+| tests/test_jev_live_smoke.py raw bytes | **b03b58cb7d2736e02b1dbbe242b026da285569c04b6ff64ff6c3493a9cec3b57** |
+| Three-file B-1 delta | **0ad6463b4534c830d5e706042db1b77a9e6f3612c9c44f323333ccbac021fe16** |
+| 16 app sources enumerated by unchanged packager SOURCE_NAMES | **a446220cb3bd58c80c9ed2864620e7e9a3508f83ccf9e9cb5187d80140349420** |
+| Current 56-path combined app/control/tool/guard/benchmark/test map, same path set as smoke-02 | **ccd8f85b9f40f0cf98429444eb5e65bc7f724cd1460dbda68bdefb48a38c3ae8** |
+| Unchanged five-file packaging digest | **5470c4fef2e19213a4d3ee0f67f21bc9f40e2fce9818f619984d2b69a716dd5f** |
+| Unchanged 17-source Reviewer v2 verification digest | **e2646384cb06948625b4a985e07c10428af98ff2e24a5e27f8a1af938ddb265e** |
+
+Old smoke inventories/results/claims, source-only package receipts and protocol evidence remain bound to their historical bytes. App source identity changes for a future candidate; no artifact was built or historical receipt rewritten. Reproduction helper C:\Projects\AWS Project\jev-b1-telemetry\inventory_check.py reads hashes only, with the guard active; its output files use exclusive creation and are not overwritten on re-entry. It imports only guard/pure verifier constants, calls no preparation or evidence-verification entry point.
+
+Preservation: **533 distinct protected/unrelated files unchanged**, union of 271 retained current-baseline entries and 441 retained prior-preservation entries; sets overlap. The sole additional authorized exception in the 272-entry baseline is the isolated runner's test fixture file, not its source or evidence. Original maps remain untouched. New preservation-after.json SHA256 **ce20eb7c47233648de9596ea992919dfe7366136aecf68d9a2152991b239a870** in the same directory; before raw hash **9fe57bcbb5ac5e174d1fe32ca7ec8a3c4997a303be4e63adaa50c47710420546**, extra-before raw hash **a769702ccf35755bb2efe7efce403b8aa6ab39cd91cf6b5c1638ff6527fa04b2**. All twenty preexisting untracked entries, including the actual consolidated review, remain preserved and excluded from staging.
+
+Focused Claude B-1 follow-up: inspect the three-file implementation/test delta, strict SDK count/unknown/pre-dispatch semantics and preservation before parse/schema failure; replay the four real-retry stub cases with guards/config restoration; inspect unchanged runner gate and realistic fake metadata. Codex implementation/self-review only, independent acceptance pending. Existing pin/target, native import/index, qualification and operational authorization requirements remain; this task resolves none of those or the optional findings. Scope receipt: three source/test files and two appended documents, offline tests/hash metadata and scoped local commits only. No AWS/provider calls, inference, downloads/install, build/deployment, production/retry/routing change, push, Reviewer v2 modification/evidence refresh or historical evidence mutation. Stop after B-1 delivery.
