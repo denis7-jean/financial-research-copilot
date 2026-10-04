@@ -344,3 +344,93 @@ Durable metadata snapshot **C:/Projects/AWS Project/heldout-external/jev-live-sm
 Focused Claude handoff: review combined router/streaming candidate, prior actual final reconciliation joins, and now `8104705eee79c444626865cb5952a82362be497d` isolated successor accounting delta. Inspect exact Decimal serialization/caps/overrun preservation, predecessor hash/prompt joins, blocked counting endpoint, reservations before dispatch, one-wire/zero-retry controls and real journal/usage settlement. Acceptance of prior subjects does not cover this code. Actual results are **EXPLORATORY_SMOKE_NOT_QUALIFICATION**. Six cases do not establish heldout accuracy, calibrated confidence, meaningful p95 improvement, Lambda behavior, qualification or deployment readiness. Live run authorization is consumed; no repeat grant inferred.
 
 Remaining path: independent review and owner disposition of combined candidate/final joins; separately authorized qualified evaluation following accepted Reviewer v2 prerequisite/phase order; Linux/dependency and AWS deployment configuration verification with explicit operational authorization; deployment/rollback authorization only after required evidence/gates. Current production Haiku default and disabled application live/shadow remain. No additional owner decision is needed for this completed smoke, but it grants no qualification/deployment/freeze approval. No push/install/AWS resource/IAM/billing change/private-data use/adoption/selection/packets/freezes. No background work.
+
+
+## Separate packaging delta: explicit target, offline wheelhouse, synthetic validation
+
+Baseline **4a1e7146b083501e7429a76b8f67701dbe920bcb**; branch `phase0/baseline-instrumentation-eval`. Packaging implementation/test commit **cb58a99eb5ef8221e95c5cc1b68dfb7aeba17666**. This is Codex implementation/self-review pending independent review, separate from smoke source baseline **8104705eee79c444626865cb5952a82362be497d** and the exploratory smoke-02 evidence. No application or Reviewer v2 source changes. Prior sections and inventories retain their original subjects; this section does not refresh them.
+
+### Actual target metadata observation
+
+Observed **2026-10-04T03:17:42.207956+00:00**. Explicit local references (README deployment section and Visa migration runbook) identify `financial-copilot` in `us-east-1`. Used normally configured credentials without exposing their values. Exactly two read-only AWS operations: Lambda `GetFunctionConfiguration(FunctionName='financial-copilot')`, then `GetLayerVersion` for its exact attached version. Endpoint `https://lambda.us-east-1.amazonaws.com`, connect/read timeouts 2/8 seconds, `total_max_attempts=1`, no alternate identity. No STS, GetFunction, code/layer download, URL following, invocation or mutation.
+
+| Observed field | Value |
+|---|---|
+| Runtime / architecture / package | python3.11 / x86_64 / Zip |
+| Handler | lambda_handler.handler |
+| Memory / timeout / ephemeral storage | 512 MiB / 30 s / 512 MiB |
+| Function CodeSize | 5,475,624 bytes (compressed code, not current source identity) |
+| Function CodeSha256 (AWS base64) | a4NBKw1a8jd3wlvvVeBc33v0J7tqLXnqsYUnO+6U0YI= |
+| Configuration RevisionId | 5ce50a73-c488-4c52-8f84-c15c8fa2e542 |
+| Attached layer version | arn:aws:lambda:us-east-1:981265949354:layer:financial-copilot-deps:2 |
+| Layer CodeSize | 77,353,934 bytes (compressed archive) |
+| Layer CodeSha256 (AWS base64) | Wwq1ZaVXgOVGBCFlK7G7HG/fNkAHcEkXJeq3AwZ24/Y= |
+| Layer compatible runtime / architecture declaration | python3.11 / architecture not supplied |
+
+Metadata confirms the repository's Python 3.11/ZIP assumptions and resolves x86_64. Root `lambda_handler.handler` differs from the source-only diagnostic's `app.lambda_handler.handler`; the repaired path explicitly supports either and the observed target requires the root copy. Neither handler nor runtime was changed. Layer contents, unpacked size, native compatibility, shadowing and actual importability remain unverified. The Linux platform string below is an explicit conservative build declaration, not an AWS-observed OS/glibc version.
+
+### Five implementation/test files
+
+- `scripts/package_lambda.ps1`: replace host-pip/destructive overwrite/eval-copy procedure with mandatory runtime, platform, architecture, handler, wheelhouse, lock, layer-metadata and new ZIP path arguments; invoke one focused helper and reject its nonzero exit. No deployment step.
+- `scripts/lambda_package.py`: offline target/wheel/archive/source validation, isolated staging and exclusive atomic new-output publication. Does not import app, inspect credentials, contact AWS or resolve/download dependencies.
+- `requirements-lambda.txt`: 26 runtime declarations reused exactly from existing pins. Includes boto3/botocore, FAISS/NumPy, FastAPI/Pydantic/Mangum and the shipped HTTPX adapter dependencies. Omits pytest/Ruff, uvicorn, unused model frameworks, evaluation and PyMuPDF indexing dependencies. It is NOT a resolved lock or evidence of Linux wheel availability.
+- `tests/test_lambda_package.py`: 50 invented-workspace/wheel cases; all installers stubbed. No actual dependency assembly or app startup.
+- `.github/workflows/eval-ci.yml`: separate Ubuntu/Python 3.11 guarded packaging-contract tests using test tools only. No package build, provider call or deployment job; not run remotely. Ubuntu tests alone will not establish Lambda-native compatibility.
+
+### Build input and byte contracts (future use only)
+
+`lambda-wheel-lock-v1` is a strict JSON object with exactly `schema`, `target`, `wheels`. `target` has exactly runtime/platform/architecture/handler and must equal the caller's explicit target. Each wheel entry has exactly `filename` (single local .whl basename) and lowercase raw-byte `sha256`. The lock must name the complete dependency closure including transitive artifacts; duplicates, unrelated distributions, incompatible versions or missing artifacts fail. The helper does not create a lock, invent wheel hashes or authenticate its author/approval. Every actual wheel is hashed and inspected, then copied and rehashed into owned staging before pip receives those exact paths.
+
+Only explicit `python3.11` plus matching `manylinux2014_x86_64` / `manylinux_2_17_x86_64` (or explicitly declared arm64 equivalents) is supported. No host inference. Wheel filename tags, WHEEL tags, METADATA identity/Requires-Python, target-specific Requires-Dist closure and ELF class/endian/machine/ABI checks must agree. Patch/kernel-specific markers without target facts fail closed; unselected extras don't expand the runtime closure. Windows PE/.pyd/.dll, Mach-O, wrong ABI/machine, unsafe/duplicate paths, symlinks, startup .pth/customization files and package collisions fail. Header checks do not establish glibc/shared-library/CPU feature compatibility.
+
+Layer metadata is an explicit JSON list: each object has exactly `arn`, `code_size_bytes`, `code_sha256` (AWS base64 SHA256), `compatible_runtimes`, `compatible_architectures` (lists or null). It describes caller-supplied metadata, not verified contents. No runtime dependency is omitted for a layer. With any layer, aggregate unpacked size is UNRESOLVED_LAYER_CONTENTS, not passed; layer compressed size is reported separately. A no-layer declaration is not a change to the deployed target.
+
+The installer command uses `python -B -m pip --isolated --disable-pip-version-check install --no-index --no-deps --only-binary=:all: --no-compile --no-warn-script-location --platform <explicit> --python-version 3.11 --implementation cp --abi cp311 --target <owned staging> <exact hash-verified wheel paths>`. Subprocess exit/300-second timeout checked; captured installer output never printed. No source-build or network fallback. Installed payload must match inspected bytes; pip host launchers/bookkeeping are excluded. Dist-info RECORD is regenerated as sorted CSV for shipped files only, with urlsafe SHA256 and byte sizes, avoiding host paths after library relocation.
+
+Exactly 16 allowlisted application source files are copied, plus an identical root handler when required. `build_index.py`, arbitrary extra app files, eval/private data, .env, caches and bytecode are excluded. AST parses against Python 3.11, mapped runtime imports must have declarations/modules, and source/requirements bytes are rechecked after installation. No app initialization/import test is performed by this builder.
+
+`lambda-build-manifest-v1` inside the ZIP binds builder hash, target, declarations/requirements hash, canonical lock hash, resolved inspected wheel names/versions/raw hashes/requires_dist, source/file raw hashes and size/layer/check limitations. JSON: sorted keys, compact separators, UTF-8, finite numbers, trailing LF. ZIP: sorted paths, timestamp 1980-01-01, 0644 files, DEFLATE. Artifact SHA256 is reported separately to avoid a circular self-hash. Output/result status always **NOT_QUALIFIED_LINUX_EXECUTION_REQUIRED**. Code alone exceeding 250 MiB unpacked or 50 MiB compressed direct-upload envelope fails; the builder does not silently introduce S3 delivery or claim a layer solves the limit. A reviewed alternative delivery/allocation may be necessary after actual wheel size inspection.
+
+The output must be a new .zip path with an existing parent; `deployment.zip` and all existing paths are rejected. Same-filesystem hard-link publication occurs only after validation/ZIP integrity checks and is exclusive even if another writer races. No overwrite fallback. Only the helper's owned temporary staging is removed. No real build command was executed in this task.
+
+Future command template, **not executed**, requiring separately authorized real wheel acquisition/lock and target/layer inputs:
+
+```powershell
+.\scripts\package_lambda.ps1 -Runtime python3.11 -Platform manylinux2014_x86_64 -Architecture x86_64 -Handler lambda_handler.handler -Wheelhouse <VERIFIED_LOCAL_WHEELHOUSE> -WheelLock <COMPLETE_HASH_LOCK_JSON> -LayersMetadata <EXACT_TARGET_LAYER_METADATA_JSON> -OutputZip <NEW_EXCLUSIVE_ZIP_PATH>
+```
+
+### Final validation and preservation
+
+On final implementation bytes:
+
+```powershell
+.\.venv\Scripts\python.exe -B -m pytest tests/test_lambda_package.py tests/test_jev_candidate_tools.py -q --tb=short --basetemp 'C:\Projects\AWS Project\.lambda-packaging-tests-07'
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B -m pytest tests/test_lambda_package.py -q --tb=short --basetemp 'C:\Projects\AWS Project\.lambda-packaging-tests-08'
+.\.venv\Scripts\python.exe -B -c "from tests.offline_guard import install; install(); import runpy; runpy.run_module('ruff', run_name='__main__')" check scripts/lambda_package.py tests/test_lambda_package.py
+.\.venv\Scripts\python.exe -B -c "from tests.offline_guard import install; install(); import runpy; runpy.run_module('ruff', run_name='__main__')" format --check scripts/lambda_package.py tests/test_lambda_package.py
+git diff --check
+```
+
+Repo Python 3.13.12: **64 passed, 2 skipped, 1 warning, 2.04 s** (new packaging + existing source-only tools). Skips: two Windows symlink-privilege cases; warning: existing asyncio_mode plugin absence. Existing Windows Python 3.11.15: **49 passed, 1 skipped, 1.53 s**, no warnings (packaging only). Offline guard active, zero intercepted/outbound attempts in both. PowerShell AST parser: zero errors, without invoking the wrapper. Ruff check/format and staged whitespace passed; explicit staged inventory exactly five files, normalized staged bytes matched validation. No broad/v2/real-population suite, historical replay, Linux execution, remote CI or smoke rerun.
+
+Earlier default pytest temporary path access failed at fixture setup (3 passed/35 errors), fixed by fresh task-owned workspace basetemp paths without guard changes. First runnable checkpoint exposed ZIP separator normalization (36 passed/1 failed/1 skipped); corrected raw-entry validation/fixture, then passed. Later self-review added target marker/extras handling, launcher exclusion, shipped RECORD checks and a Python 3.11 Windows reparse-point guard; final results above supersede checkpoints. A too-long preservation-check command failed before process creation; bounded read-only batches verified **441 unchanged paths**, including the **367** existing protected artifacts, smoke-02 six records, all application/v2 sources, legacy ZIP and preexisting untracked files. Only allowed packaging/document paths differ; no historical inventory rewritten. Temporary fixtures are disposable, not deployment artifacts.
+
+Packaging-only five-file map digest: **af857f29fb63de2499bb715a383741380e182a3cb438cb264909cf7476f1b83e**. Recipe: SHA256 of sorted compact ASCII JSON relative-main-path/raw-file-SHA256 map plus LF. Per-file hashes:
+
+| File | Raw SHA256 |
+|---|---|
+| .github/workflows/eval-ci.yml | aaa9025acfc30b7e80748fcbf96e280c968af5b5afd8abdb182272ead70f6fee |
+| requirements-lambda.txt | 8f80976d5b65d73aec075259129b3bbc3f5dba2a5ff075a0a8448fc3f0795d74 |
+| scripts/lambda_package.py | 35987f3d1ac22a83a8a13532648a72d0efb5e3572e9f48ae52190f63e98d6712 |
+| scripts/package_lambda.ps1 | d5fa9a82c8c77c721ae004447b7da8ec4d7290af69bba7ee0824e78ec463a3ff |
+| tests/test_lambda_package.py | 2332dd56eacf856818ff712c706cad8b8324b0319898f37351496816e8349072 |
+
+Legacy deployment.zip remains **0c1e890d60eadbc08e88cd532f97b94bb8c7d853dcfb0429e0231e62631dabe0**. Current Reviewer v2 binding remains **e2646384cb06948625b4a985e07c10428af98ff2e24a5e27f8a1af938ddb265e**. The old source-only diagnostic/package and smoke inventories remain at their old bindings; they were not relabeled or rebuilt. CI/tooling has this separate delta identity. No actual dependency/deployment artifact exists for the new path yet.
+
+### Focused independent-review and next-task handoff
+
+Review `4a1e714..cb58a99`: explicit target/lock closure and markers; raw archive/native checks; installed-byte/RECORD transformation; fixed app allowlist/layout and stale-source detection; failure-safe exclusive publication/cleanup; layer/size limitations and non-deployable status; synthetic tests and offline Python 3.11 CI separation. This is additional packaging delta review, not inherited acceptance from routing smoke or prior v2 reviews. Prior combined router/streaming/Decimal smoke and reconciliation final-join review remain separate.
+
+Smallest next engineering task: under a separate dependency-download authorization, resolve **only** the observed Python 3.11/x86_64 conservative Linux wheel closure using existing pins, inspect/hash actual wheels and produce the supplied complete lock; report unavailable wheels or conflicting metadata instead of inventing replacement versions. Do not install/build/deploy in that acquisition task. Afterwards actual dependency assembly, exact attached-layer content/size/native/shadowing inspection and matching Linux/Lambda import/link checks need their own scope. Layer retention/allocation or >50 MiB delivery changes require concrete reviewed choices once sizes are known. Qualification, owner enablement/cost grants, rollback verification and production authorization remain prior blockers.
+
+Scope receipt: two exact-target AWS metadata reads; scoped local code/test/CI/doc changes; invented fixtures/stubbed installers and existing offline guard; explicit-path local commits only. No dependencies downloaded/installed or real deployment artifact built/qualified; no invocation/inference, push/remote CI, resource/IAM/billing change, production/default/router/answer change, private-evidence refresh, Reviewer v2 operation or deployment. All nineteen preexisting untracked entries preserved. Freeze 1 and deployment readiness remain unestablished.
