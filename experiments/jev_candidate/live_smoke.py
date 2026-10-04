@@ -6,6 +6,7 @@ fakes. The dedicated CLI refuses pytest/its guard and never lifts that guard.
 
 import argparse
 import contextlib
+from decimal import Decimal
 import hashlib
 import io
 import json
@@ -21,28 +22,42 @@ import httpx
 
 from experiments.router_bench.persistence import RunJournal
 from experiments.router_bench.safety import (
+    BudgetExhausted,
     DownstreamTripwire,
     Ledger,
     LiveAuthorization,
     SecretValue,
+    Reservation,
     contains_registered_secret,
 )
 
-RUN_ID = "2026-10-03-owner-routing-smoke-01"
+RUN_ID = "2026-10-03-owner-routing-smoke-02"
+PREDECESSOR_RUN_ID = "2026-10-03-owner-routing-smoke-01"
+PREDECESSOR_PLAN_SHA256 = (
+    "5cf31613a34ecc87b6eabe92cd496644e4c89bc46443b699b26c36951f2f11ec"
+)
 MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 REGION = "us-east-1"
 AWS_ENDPOINT = "https://bedrock-runtime.us-east-1.amazonaws.com"
 MAX_OUTPUT = 256
-CAPS = {"typesafe": 0.02, "bedrock": 0.03, "total": 0.05}
-PRICES = {"typesafe": [0.042, 0.0], "bedrock": [1.10, 5.50]}
-PRICE_RETRIEVED_UTC = "2026-10-04T00:41:03Z"
+MAX_INPUT = {"typesafe": 64000, "bedrock": 200000}
+CAPS = {
+    "typesafe": Decimal("0.02"),
+    "bedrock": Decimal("1.33"),
+    "total": Decimal("1.35"),
+}
+PRICES = {
+    "typesafe": [Decimal("0.042"), Decimal("0")],
+    "bedrock": [Decimal("1.10"), Decimal("5.50")],
+}
+PRICE_RETRIEVED_UTC = "2026-10-04T01:20:55Z"
 PRICE_SOURCES = [
     "https://docs.typesafe.ai/models",
     "https://aws.amazon.com/bedrock/pricing/",
     "https://aws.amazon.com/jp/blogs/news/amazon-bedrock-now-supports-japan-cross-region-inference/",
     "https://docs.aws.amazon.com/bedrock/latest/userguide/service-tiers-inference.html",
     "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-haiku-4-5.html",
-    "https://docs.aws.amazon.com/bedrock/latest/userguide/count-tokens.html",
+    "https://platform.claude.com/docs/en/build-with-claude/context-windows",
 ]
 CASES = (
     ("Q1", "What was the fictional Maple Bank's net revenue in 2025?", "qa"),
@@ -87,13 +102,99 @@ def canonical(value):
             separators=(",", ":"),
             ensure_ascii=True,
             allow_nan=False,
+            default=decimal_json,
         )
         + "\n"
     ).encode()
 
 
+def decimal_json(value):
+    if isinstance(value, Decimal):
+        return format(value, "f")
+    raise TypeError("unsupported_artifact_type")
+
+
+class ExactJournal(RunJournal):
+    def event(self, event_type, /, **fields):
+        # Reuse the existing journal safety scan/fsync with exact money strings.
+        super().event(event_type, **json.loads(canonical(fields)))
+
+
 def digest(raw):
     return hashlib.sha256(raw).hexdigest()
+
+
+class ExactLedger(Ledger):
+    """Isolated decimal accounting; shared benchmark behavior stays unchanged.
+
+    Dollar amounts serialize as exact decimal strings, without float rounding.
+    Unknown outcomes retain the full reservation; overruns are recorded, not clamped.
+    """
+
+    def __post_init__(self):
+        self.cost_caps = {k: Decimal(str(v)) for k, v in self.cost_caps.items()}
+        super().__post_init__()
+        for account in self.accounts.values():
+            account.committed_usd = account.reserved_usd = Decimal("0")
+
+    def reserve(self, provider, worst_case_usd):
+        amount = Decimal(str(worst_case_usd))
+        account = self.accounts[provider]
+        require(amount.is_finite() and amount > 0, "invalid_reservation")
+        if (
+            account.requests >= account.max_requests
+            or account.committed_usd + account.reserved_usd + amount
+            > account.max_cost_usd
+            or self._total_exposure() + amount > self.total_cap
+        ):
+            raise BudgetExhausted("request_or_cost_cap")
+        account.requests += 1
+        account.reserved_usd += amount
+        return Reservation(provider, amount)
+
+    def settle(self, reservation, actual_usd):
+        require(not reservation.settled, "already_settled")
+        account = self.accounts[reservation.provider]
+        charged = (
+            reservation.amount_usd if actual_usd is None else Decimal(str(actual_usd))
+        )
+        require(charged.is_finite() and charged >= 0, "invalid_charge")
+        account.reserved_usd -= reservation.amount_usd
+        account.worst_case_charges += int(actual_usd is None)
+        exceeded = actual_usd is not None and charged > reservation.amount_usd
+        account.reservations_exceeded += int(exceeded)
+        account.committed_usd += charged
+        reservation.settled = True
+        return charged, exceeded
+
+    def summary(self):
+        result = super().summary()
+        for provider, account in self.accounts.items():
+            result["providers"][provider].update(
+                committed_usd=account.committed_usd,
+                outstanding_reservations_usd=account.reserved_usd,
+                remaining_usd=account.max_cost_usd
+                - account.committed_usd
+                - account.reserved_usd,
+            )
+        result["total_committed_usd"] = sum(
+            a.committed_usd for a in self.accounts.values()
+        )
+        result["total_remaining_usd"] = self.total_cap - self._total_exposure()
+        return result
+
+
+def charge(provider, incoming, outgoing):
+    return (incoming * PRICES[provider][0] + outgoing * PRICES[provider][1]) / Decimal(
+        1000000
+    )
+
+
+def capacity_reservations():
+    return {
+        "typesafe": charge("typesafe", MAX_INPUT["typesafe"], 0),
+        "bedrock": charge("bedrock", MAX_INPUT["bedrock"], MAX_OUTPUT),
+    }
 
 
 def write(path, value):
@@ -231,7 +332,6 @@ def agents(client, jev_client, key, permit):
 class AwsWireGuard:
     def __init__(self, permit):
         self.permit = permit
-        self.count_calls = 0
 
     def __call__(self, request, **kwargs):
         url = urlsplit(request.url)
@@ -243,14 +343,8 @@ class AwsWireGuard:
             "aws_endpoint",
         )
         path = unquote(url.path)
-        if path == "/model/" + MODEL + "/count-tokens":
-            require(
-                self.permit.active is None and self.count_calls < 6, "extra_token_count"
-            )
-            self.count_calls += 1
-        else:
-            require(path == "/model/" + MODEL + "/converse", "aws_operation")
-            self.permit.wire()
+        require(path == "/model/" + MODEL + "/converse", "aws_operation")
+        self.permit.wire()
 
 
 def validate_settings(settings):
@@ -365,11 +459,11 @@ def source_inventory():
 
 def execute(directory, factory, inventory, *, live=False):
     """Fixed schedule; factory injection is for invented offline tests only."""
-    directory.mkdir(parents=True, exist_ok=False)  # claim before auth/counting
-    journal = RunJournal(str(directory / "run.journal.jsonl"))
+    directory.mkdir(parents=True, exist_ok=False)  # claim before auth/preflight
+    journal = ExactJournal(str(directory / "run.journal.jsonl"))
     permit = Permit()
-    ledger = Ledger({"bedrock": 6, "typesafe": 6}, dict(CAPS))
-    results, counts = [], {}
+    ledger = ExactLedger({"bedrock": 6, "typesafe": 6}, dict(CAPS))
+    results = []
     status = "STOPPED"
     code = None
     phase = "configuration"
@@ -385,21 +479,42 @@ def execute(directory, factory, inventory, *, live=False):
             prices=PRICES,
             source_hash=inventory["sha256"],
             candidate_commit=inventory["head"],
+            predecessor_run_id=PREDECESSOR_RUN_ID,
         )
         write(directory / "source-inventory.json", inventory)
         client, external, key = factory(permit)
         instructions = prompts()
+        original_hash = None
+        if live:
+            predecessor = directory.parent / PREDECESSOR_RUN_ID / "plan.json"
+            require(not predecessor.is_symlink(), "predecessor_path")
+            raw = predecessor.read_bytes()
+            original_hash = digest(raw)
+            require(original_hash == PREDECESSOR_PLAN_SHA256, "predecessor_plan_hash")
+            original = json.loads(raw)
+            require(
+                canonical(original["cases"]) == canonical(CASES)
+                and canonical(original["complete_prompts"]) == canonical(instructions),
+                "predecessor_input_mismatch",
+            )
         write(
             directory / "plan.json",
             {
-                "schema": "isolated-routing-smoke-plan-v1",
+                "schema": "isolated-routing-smoke-plan-v2",
                 "run_id": RUN_ID,
+                "predecessor_run_id": PREDECESSOR_RUN_ID,
+                "predecessor_plan_sha256": original_hash,
+                "inputs_sha256": digest(
+                    canonical({"cases": CASES, "prompts": instructions})
+                ),
                 "cases": CASES,
                 "complete_prompts": instructions,
                 "models": {"typesafe": "jev-1.13.0", "bedrock": MODEL},
                 "region": REGION,
                 "tier": "default_standard",
                 "haiku_max_output_tokens": MAX_OUTPUT,
+                "haiku_reserved_input_tokens": MAX_INPUT["bedrock"],
+                "capacity_basis": "200K total context; reserving 200000 input plus 256 output is deliberately conservative; no extended context or tools",
                 "jev_max_input_tokens": 64000,
                 "ceilings_usd": CAPS,
                 "prices_per_million": PRICES,
@@ -409,43 +524,25 @@ def execute(directory, factory, inventory, *, live=False):
                 "candidate_commit": inventory["head"],
                 "retries": 0,
                 "provider_order_per_case": ["typesafe", "bedrock"],
-                "evidence_class": "EXPLORATORY_NOT_QUALIFICATION",
+                "evidence_class": "EXPLORATORY_SMOKE_NOT_QUALIFICATION",
+                "authorization_scope": "Owner successor grant: six fixed invented questions once per pinned provider; no downstream, retries, deployment or production enablement",
                 "actual_live": live,
             },
         )
-        # Official CountTokens is non-inference, free, and matches billed inputs
-        # for identical Converse system/messages. Failure stops before inference.
-        phase = "token_count_preflight"
-        for cid, _, _ in CASES:
-            journal.event("token_count_started", case_id=cid)
-            count = client.count_tokens(
-                modelId=MODEL, input={"converse": instructions[cid]["haiku"]}
-            )["inputTokens"]
-            require(type(count) is int and 0 < count <= 2048, "input_token_bound")
-            counts[cid] = count
-            journal.event("token_count_completed", case_id=cid, input_tokens=count)
-        reservations = {
-            cid: {
-                "typesafe": 64000 * PRICES["typesafe"][0] / 1e6,
-                "bedrock": (
-                    counts[cid] * PRICES["bedrock"][0]
-                    + MAX_OUTPUT * PRICES["bedrock"][1]
-                )
-                / 1e6,
-            }
-            for cid, _, _ in CASES
-        }
+        phase = "capacity_reservation_preflight"
+        reservations = {cid: capacity_reservations() for cid, _, _ in CASES}
         write(
             directory / "reservations.json",
             {
-                "schema": "isolated-routing-smoke-reservations-v1",
-                "counts": counts,
+                "schema": "isolated-routing-smoke-reservations-v2",
+                "input_bounds": MAX_INPUT,
+                "haiku_output_bound": MAX_OUTPUT,
                 "per_request_usd": reservations,
                 "expected_cost_usd": {
-                    "typesafe": 6 * 410 * 0.042 / 1e6,
-                    "bedrock": sum((v * 1.1 + 52 * 5.5) / 1e6 for v in counts.values()),
+                    "typesafe": 6 * charge("typesafe", 410, 0),
+                    "bedrock": None,
                 },
-                "expectation_basis": "Haiku exact CountTokens + historical 52 output; Jev historical 410 input, not guaranteed",
+                "expectation_basis": "Reservations are capacity allowances, not expected spend or invoices. Jev historical input estimate only; Haiku input count unavailable.",
                 "worst_case_total_usd": {
                     p: sum(r[p] for r in reservations.values())
                     for p in ("typesafe", "bedrock")
@@ -453,7 +550,10 @@ def execute(directory, factory, inventory, *, live=False):
             },
         )
         require(
-            sum(r["bedrock"] for r in reservations.values()) <= CAPS["bedrock"]
+            all(
+                sum(r[p] for r in reservations.values()) <= CAPS[p]
+                for p in ("bedrock", "typesafe")
+            )
             and sum(sum(r.values()) for r in reservations.values()) <= CAPS["total"],
             "plan_budget",
         )
@@ -497,24 +597,18 @@ def execute(directory, factory, inventory, *, live=False):
                         if len(calls) == 1
                         else (None, None)
                     )
-                    valid_usage = (
+                    well_formed_usage = (
                         all(type(v) is int and v >= 0 for v in usage) and usage[0] > 0
                     )
-                    if valid_usage:
+                    valid_usage = well_formed_usage
+                    if well_formed_usage:
                         valid_usage = (
-                            usage[0] <= 64000
+                            usage[0] <= MAX_INPUT[provider]
                             if provider == "typesafe"
-                            else usage[0] == counts[cid] and usage[1] <= MAX_OUTPUT
+                            else usage[0] <= MAX_INPUT[provider]
+                            and usage[1] <= MAX_OUTPUT
                         )
-                    cost = (
-                        (
-                            usage[0] * PRICES[provider][0]
-                            + usage[1] * PRICES[provider][1]
-                        )
-                        / 1e6
-                        if valid_usage
-                        else None
-                    )
+                    cost = charge(provider, *usage) if well_formed_usage else None
                     _, exceeded = ledger.settle(active, cost)
                     active = None
                     raw_label = trace.route.get(
@@ -537,8 +631,9 @@ def execute(directory, factory, inventory, *, live=False):
                         "fallback": outcome != "model",
                         "outcome": outcome,
                         "client_latency_ms": round(latency, 3),
-                        "input_tokens": usage[0] if valid_usage else None,
-                        "output_tokens": usage[1] if valid_usage else None,
+                        "input_tokens": usage[0] if well_formed_usage else None,
+                        "output_tokens": usage[1] if well_formed_usage else None,
+                        "usage_within_bounds": valid_usage,
                         "cost_usd": cost,
                         "retained_unknown_reservation_usd": amount
                         if cost is None
@@ -601,14 +696,16 @@ def execute(directory, factory, inventory, *, live=False):
                 except Exception:
                     status, code = "STOPPED", "resource_close_failure"
         report = {
-            "schema": "isolated-routing-smoke-result-v1",
+            "schema": "isolated-routing-smoke-result-v2",
             "run_id": RUN_ID,
             "status": status,
             "stop_code": code,
             "last_phase": phase,
             "results": results,
             "accounting": ledger.summary(),
-            "token_counts": counts,
+            "input_bounds": MAX_INPUT,
+            "predecessor_run_id": PREDECESSOR_RUN_ID,
+            "evidence_class": "EXPLORATORY_SMOKE_NOT_QUALIFICATION",
             "actual_live": live,
             "qualification": False,
             "deployment": False,
@@ -639,7 +736,7 @@ def main():
         "run_path",
     )
     report = execute(directory, configure_live, source_inventory(), live=True)
-    print(json.dumps(report, sort_keys=True, allow_nan=False))
+    print(canonical(report).decode().strip())
     return 0 if report["status"] == "COMPLETED" else 2
 
 
