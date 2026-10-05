@@ -8,15 +8,29 @@ param(
     [Parameter(Mandatory)][string]$Wheelhouse,
     [Parameter(Mandatory)][string]$WheelLock,
     [Parameter(Mandatory)][string]$LayersMetadata,
-    [Parameter(Mandatory)][string]$OutputZip,
+    [Parameter(Mandatory)][ValidateSet("direct", "s3")][string]$DeliveryMode,
+    [Parameter(Mandatory)][ValidateSet("complete-function-no-layers")][string]$Allocation,
+    [switch]$Preflight,
+    [string]$OutputZip,
     [string]$Python = ""
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 if (-not $Python) { $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe" }
-& $Python -B (Join-Path $PSScriptRoot "lambda_package.py") `
-    --root $ProjectRoot --runtime $Runtime --platform $Platform `
-    --architecture $Architecture --handler $Handler --wheelhouse $Wheelhouse `
-    --wheel-lock $WheelLock --layers-metadata $LayersMetadata --output $OutputZip
+$PackageArguments = @(
+    "-B", (Join-Path $PSScriptRoot "lambda_package.py"),
+    "--root", $ProjectRoot, "--runtime", $Runtime, "--platform", $Platform,
+    "--architecture", $Architecture, "--handler", $Handler, "--wheelhouse", $Wheelhouse,
+    "--wheel-lock", $WheelLock, "--layers-metadata", $LayersMetadata,
+    "--delivery-mode", $DeliveryMode, "--allocation", $Allocation
+)
+if ($Preflight) {
+    if ($OutputZip) { throw "Preflight does not accept an output artifact path." }
+    $PackageArguments += "--preflight"
+} else {
+    if (-not $OutputZip) { throw "Assembly requires an exclusive output artifact path." }
+    $PackageArguments += @("--output", $OutputZip)
+}
+& $Python @PackageArguments
 if ($LASTEXITCODE -ne 0) { throw "Lambda package validation/assembly failed; no existing artifact replaced." }

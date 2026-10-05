@@ -30,6 +30,7 @@ from packaging.version import Version
 
 MAX_CODE_BYTES = 250 * 1024 * 1024
 MAX_ZIP_BYTES = 50 * 1024 * 1024
+COMPLETE_FUNCTION_ALLOCATION = "complete-function-no-layers"
 # Exact optional CLI, excluded from the Lambda runtime subset only. This
 # digest is the script's bytes in the acquired, raw-hash-verified wheel.
 # New versions/scripts require another explicit policy review.
@@ -645,8 +646,240 @@ def shipped_records(wheels, actual):
         actual[record] = stream.getvalue().encode()
 
 
+def packaging_policy(delivery_mode, allocation, layers):
+    if delivery_mode not in ("direct", "s3"):
+        raise PackageError("delivery_mode")
+    if allocation not in (None, COMPLETE_FUNCTION_ALLOCATION):
+        raise PackageError("dependency_allocation")
+    if allocation == COMPLETE_FUNCTION_ALLOCATION and layers:
+        raise PackageError("allocation_layers_conflict")
+    if delivery_mode == "s3" and allocation != COMPLETE_FUNCTION_ALLOCATION:
+        raise PackageError("s3_allocation_required")
+    return {
+        "delivery_mode": delivery_mode,
+        "dependency_allocation": allocation or "LEGACY_UNRESOLVED",
+        "compressed_zip_limit_bytes": MAX_ZIP_BYTES
+        if delivery_mode == "direct"
+        else None,
+        "aggregate_uncompressed_limit_bytes": MAX_CODE_BYTES,
+        "network_operation": "NONE",
+    }
+
+
+def native_link_gate():
+    # A declared future gate, never evidence that a build has passed it.
+    return {
+        "policy": "ENTRY_POINT_DEFAULT_ENVIRONMENT_AND_ACTUAL_IMPORTS_V1",
+        "required_packages": ["numpy", "faiss", "pydantic_core"],
+        "extension_scope": "SHIPPED_CPYTHON_ENTRY_POINTS_LOADED_BY_REQUIRED_IMPORTS_AND_NATIVE_CHECKS",
+        "dependency_resolution": "ENTRY_POINT_TRANSITIVE_TREES_IN_UNCHANGED_RUNTIME_LIBRARY_ENVIRONMENT",
+        "actual_imports": "HASH_BOUND_CANDIDATE_ORIGINS_AND_VERSIONS_IN_FRESH_PROCESSES",
+        "cpu_checks": "DEFAULT_GENERIC_AND_ADDITIONAL_HOST_SUPPORTED_VARIANTS_ONLY",
+        "internal_library_standalone_ldd": "DIAGNOSTIC_ONLY_NOT_ACCEPTANCE_GATE",
+        "vendored_directory_ld_library_path": "DIAGNOSTIC_ONLY_NOT_ACCEPTANCE_WORKAROUND",
+        "application_startup": "SEPARATE_REQUIRED_GATE",
+        "status": "NOT_RUN_FOR_THIS_ARTIFACT",
+    }
+
+
+def manifest_entries(
+    sources,
+    requirements,
+    declared,
+    wheels,
+    actual,
+    wheel_lock,
+    target,
+    layer_info,
+    policy,
+):
+    entries = dict(actual)
+    for name, raw in sources.items():
+        if name in entries:
+            raise PackageError("package_collision")
+        entries[name] = raw
+    manifest = {
+        "schema": "lambda-build-manifest-v1",
+        "status": "NOT_QUALIFIED_LINUX_EXECUTION_REQUIRED",
+        "target": target,
+        "builder_sha256": sha(safe_file(__file__).read_bytes()),
+        "record_policy": "REGENERATED_FOR_SHIPPED_FILES_ONLY",
+        "installation_policy": "RUNTIME_SUBSET_WITH_DECLARED_FILE_EXCLUSIONS"
+        if any(
+            record["reason"] == "NUMPY_PRECOMPILED_CACHE_SOURCE_RETAINED"
+            for wheel in wheels.values()
+            for record in wheel["excluded_files"]
+        )
+        else "RUNTIME_SUBSET_WITH_DECLARED_OPTIONAL_CLI_EXCLUSIONS",
+        "requirements_sha256": sha(requirements),
+        "declared_dependencies": declared,
+        "wheel_lock_sha256": sha(canonical(wheel_lock)),
+        "resolved_inspected_wheels": [
+            {
+                key: record[key]
+                for key in (
+                    "filename",
+                    "sha256",
+                    "name",
+                    "version",
+                    "requires_dist",
+                    "excluded_files",
+                )
+            }
+            for record in sorted(wheels.values(), key=lambda record: record["name"])
+        ],
+        "source_sha256": {name: sha(raw) for name, raw in sorted(sources.items())},
+        "file_sha256": {name: sha(raw) for name, raw in sorted(entries.items())},
+        "layer_evidence": layer_info,
+        "packaging_policy": policy,
+        "native_link_gate": native_link_gate(),
+        "code_payload_uncompressed_bytes": sum(map(len, entries.values())),
+        "aggregate_uncompressed_size_status": "UNRESOLVED_LAYER_CONTENTS"
+        if layer_info["layers"]
+        else "CODE_ONLY",
+        "validation": {
+            "wheel_tags_and_native_headers": "PASSED",
+            "linux_import_and_link": "NOT_RUN",
+            "layer_content_and_shadowing": "NOT_RUN"
+            if layer_info["layers"]
+            else "NO_LAYERS_DECLARED",
+        },
+        "artifact_hash_recipe": "SHA256 of final ZIP raw bytes (reported separately; no self-hash)",
+    }
+    entries["lambda-build-manifest.json"] = canonical(manifest)
+    if sum(map(len, entries.values())) > MAX_CODE_BYTES:
+        raise PackageError("code_uncompressed_size")
+    return manifest, entries
+
+
+def preflight(
+    root, target, wheelhouse, wheel_lock, layers, *, delivery_mode, allocation
+):
+    """Read inspected bytes only: no installer, temporary stage, ZIP or publication."""
+    if allocation != COMPLETE_FUNCTION_ALLOCATION:
+        raise PackageError("preflight_allocation_required")
+    root = Path(root).absolute()
+    target = target_contract(**target)
+    policy = packaging_policy(delivery_mode, allocation, layers)
+    layer_info = layer_evidence(layers, target)
+    requirements = safe_file(root / "requirements-lambda.txt").read_bytes()
+    declared = declarations(requirements)
+    sources = source_files(root, target["handler"])
+    wheels, installed = resolve_wheels(wheelhouse, wheel_lock, declared, target)
+    runtime_imports(sources, declared, installed)
+    record_names = [name for name in installed if name.endswith(".dist-info/RECORD")]
+    wheel_non_record_bytes = sum(
+        len(raw) for name, raw in installed.items() if name not in record_names
+    )
+    shipped_records(wheels, installed)
+    manifest, entries = manifest_entries(
+        sources,
+        requirements,
+        declared,
+        wheels,
+        installed,
+        wheel_lock,
+        target,
+        layer_info,
+        policy,
+    )
+    compressed_member_sum = 0
+    for wheel in wheels.values():
+        path = Path(wheelhouse) / wheel["filename"]
+        if sha(safe_file(path).read_bytes()) != wheel["sha256"]:
+            raise PackageError("wheel_hash")
+        with zipfile.ZipFile(path) as archive:
+            for info in archive.infolist():
+                name = info.filename
+                if info.is_dir():
+                    continue
+                parts = list(PurePosixPath(name).parts)
+                if (
+                    len(parts) >= 3
+                    and parts[0].endswith(".data")
+                    and parts[1] in ("purelib", "platlib")
+                ):
+                    name = "/".join(parts[2:])
+                if name in wheel["files"] and name not in record_names:
+                    compressed_member_sum += info.compress_size
+    if (
+        source_files(root, target["handler"]) != sources
+        or safe_file(root / "requirements-lambda.txt").read_bytes() != requirements
+    ):
+        raise PackageError("stale_source_binding")
+    application_bytes = sum(
+        len(raw) for name, raw in sources.items() if name in SOURCE_NAMES
+    )
+    generated_handler_bytes = sum(
+        len(raw) for name, raw in sources.items() if name not in SOURCE_NAMES
+    )
+    generated_record_bytes = sum(len(installed[name]) for name in record_names)
+    generated_manifest_bytes = len(entries["lambda-build-manifest.json"])
+    archive_structure_estimate = 22 + sum(
+        76 + 2 * len(name.encode("utf-8")) for name in entries
+    )
+    compressed_estimate = (
+        compressed_member_sum
+        + application_bytes
+        + generated_handler_bytes
+        + generated_record_bytes
+        + generated_manifest_bytes
+        + archive_structure_estimate
+    )
+    unpacked = sum(map(len, entries.values()))
+    return {
+        "schema": "lambda-package-preflight-v1",
+        "status": "STATIC_CALCULATION_NOT_BUILT_OR_QUALIFIED",
+        "target": target,
+        "packaging_policy": policy,
+        "wheel_lock_sha256": sha(canonical(wheel_lock)),
+        "requirements_sha256": sha(requirements),
+        "builder_sha256": manifest["builder_sha256"],
+        "source_sha256": manifest["source_sha256"],
+        "calculated": {
+            "inspected_wheel_non_record_bytes": wheel_non_record_bytes,
+            "generated_shipped_record_bytes": generated_record_bytes,
+            "application_source_bytes": application_bytes,
+            "generated_handler_bytes": generated_handler_bytes,
+            "generated_manifest_bytes": generated_manifest_bytes,
+            "archive_file_count": len(entries),
+            "code_and_aggregate_uncompressed_bytes": unpacked,
+            "layer_uncompressed_bytes": 0,
+            "aggregate_uncompressed_headroom_bytes": MAX_CODE_BYTES - unpacked,
+            "basis": "HASH_BOUND_FILES_AND_CURRENT_RECORD_HANDLER_MANIFEST_RECIPES",
+        },
+        "estimates": {
+            "retained_non_record_original_compressed_member_sum_bytes": compressed_member_sum,
+            "zip_structure_bytes": archive_structure_estimate,
+            "compressed_zip_bytes": compressed_estimate,
+            "exceeds_direct_upload_limit_estimate": compressed_estimate > MAX_ZIP_BYTES,
+            "basis": "ORIGINAL_WHEEL_MEMBER_COMPRESSION_PLUS_UNCOMPRESSED_APP_AND_GENERATED_FILES_PLUS_ZIP_STRUCTURE_ESTIMATE",
+            "limitation": "NOT_A_BOUND_OR_FINAL_ZIP_SIZE; FINAL_RECOMPRESSION_AND_ZIP64_OVERHEAD_NOT_MEASURED",
+        },
+        "final_build_required": {
+            "zip_bytes": None,
+            "actual_archive_uncompressed_bytes": None,
+            "artifact_sha256": None,
+            "direct_upload_limit_check": "REQUIRED_ON_FINAL_ZIP"
+            if delivery_mode == "direct"
+            else "NOT_APPLICABLE_TO_S3_DELIVERY",
+            "integrity_and_aggregate_uncompressed_check": "REQUIRED_AFTER_ACTUAL_INSTALLATION_AND_ASSEMBLY",
+        },
+        "native_link_gate": native_link_gate(),
+    }
+
+
 def assemble(
-    root, target, wheelhouse, wheel_lock, layers, output, *, installer=install_wheels
+    root,
+    target,
+    wheelhouse,
+    wheel_lock,
+    layers,
+    output,
+    *,
+    installer=install_wheels,
+    delivery_mode="direct",
+    allocation=None,
 ):
     root, output = Path(root).absolute(), Path(output).absolute()
     no_links(root)
@@ -656,6 +889,7 @@ def assemble(
     if not output.parent.is_dir() or output.suffix != ".zip":
         raise PackageError("output_parent_or_suffix")
     target = target_contract(**target)
+    policy = packaging_policy(delivery_mode, allocation, layers)
     requirements = safe_file(root / "requirements-lambda.txt").read_bytes()
     declared = declarations(requirements)
     sources = source_files(root, target["handler"])
@@ -757,60 +991,17 @@ def assemble(
             or safe_file(root / "requirements-lambda.txt").read_bytes() != requirements
         ):
             raise PackageError("stale_source_binding")
-        entries = dict(actual)
-        for name, raw in sources.items():
-            if name in entries:
-                raise PackageError("package_collision")
-            entries[name] = raw
-        manifest = {
-            "schema": "lambda-build-manifest-v1",
-            "status": "NOT_QUALIFIED_LINUX_EXECUTION_REQUIRED",
-            "target": target,
-            "builder_sha256": sha(safe_file(__file__).read_bytes()),
-            "record_policy": "REGENERATED_FOR_SHIPPED_FILES_ONLY",
-            "installation_policy": "RUNTIME_SUBSET_WITH_DECLARED_FILE_EXCLUSIONS"
-            if any(
-                record["reason"] == "NUMPY_PRECOMPILED_CACHE_SOURCE_RETAINED"
-                for wheel in wheels.values()
-                for record in wheel["excluded_files"]
-            )
-            else "RUNTIME_SUBSET_WITH_DECLARED_OPTIONAL_CLI_EXCLUSIONS",
-            "requirements_sha256": sha(requirements),
-            "declared_dependencies": declared,
-            "wheel_lock_sha256": sha(canonical(wheel_lock)),
-            "resolved_inspected_wheels": [
-                {
-                    k: r[k]
-                    for k in (
-                        "filename",
-                        "sha256",
-                        "name",
-                        "version",
-                        "requires_dist",
-                        "excluded_files",
-                    )
-                }
-                for r in sorted(wheels.values(), key=lambda r: r["name"])
-            ],
-            "source_sha256": {n: sha(b) for n, b in sorted(sources.items())},
-            "file_sha256": {n: sha(b) for n, b in sorted(entries.items())},
-            "layer_evidence": layer_info,
-            "code_payload_uncompressed_bytes": sum(map(len, entries.values())),
-            "aggregate_uncompressed_size_status": "UNRESOLVED_LAYER_CONTENTS"
-            if layers
-            else "CODE_ONLY",
-            "validation": {
-                "wheel_tags_and_native_headers": "PASSED",
-                "linux_import_and_link": "NOT_RUN",
-                "layer_content_and_shadowing": "NOT_RUN"
-                if layers
-                else "NO_LAYERS_DECLARED",
-            },
-            "artifact_hash_recipe": "SHA256 of final ZIP raw bytes (reported separately; no self-hash)",
-        }
-        entries["lambda-build-manifest.json"] = canonical(manifest)
-        if sum(map(len, entries.values())) > MAX_CODE_BYTES:
-            raise PackageError("code_uncompressed_size")
+        manifest, entries = manifest_entries(
+            sources,
+            requirements,
+            declared,
+            wheels,
+            actual,
+            wheel_lock,
+            target,
+            layer_info,
+            policy,
+        )
         staged_zip = temp / "artifact.zip"
         with zipfile.ZipFile(staged_zip, "w", zipfile.ZIP_DEFLATED) as archive:
             for name, raw in sorted(entries.items()):
@@ -820,7 +1011,7 @@ def assemble(
                 info.compress_type = zipfile.ZIP_DEFLATED
                 archive.writestr(info, raw)
         artifact = staged_zip.read_bytes()
-        if len(artifact) > MAX_ZIP_BYTES:
+        if delivery_mode == "direct" and len(artifact) > MAX_ZIP_BYTES:
             raise PackageError("direct_upload_zip_size")
         with zipfile.ZipFile(staged_zip) as archive:
             if archive.testzip() is not None or set(archive.namelist()) != set(entries):
@@ -832,6 +1023,7 @@ def assemble(
         "status": manifest["status"],
         "artifact_sha256": sha(artifact),
         "manifest_sha256": sha(entries["lambda-build-manifest.json"]),
+        "packaging_policy": policy,
         "zip_bytes": len(artifact),
         "code_uncompressed_bytes": sum(map(len, entries.values())),
         "layer_compressed_bytes": layer_info["compressed_layer_bytes"],
@@ -852,22 +1044,35 @@ def main():
         "wheelhouse",
         "wheel-lock",
         "layers-metadata",
-        "output",
     ):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--delivery-mode", required=True, choices=("direct", "s3"))
+    parser.add_argument(
+        "--allocation", required=True, choices=(COMPLETE_FUNCTION_ALLOCATION,)
+    )
+    parser.add_argument("--preflight", action="store_true")
+    parser.add_argument("--output")
     args = parser.parse_args()
     try:
         target = target_contract(
             args.runtime, args.platform, args.architecture, args.handler
         )
-        result = assemble(
+        inputs = (
             args.root,
             target,
             args.wheelhouse,
             json_read(args.wheel_lock),
             json_read(args.layers_metadata),
-            args.output,
         )
+        options = {"delivery_mode": args.delivery_mode, "allocation": args.allocation}
+        if args.preflight:
+            if args.output is not None:
+                raise PackageError("preflight_output_forbidden")
+            result = preflight(*inputs, **options)
+        else:
+            if args.output is None:
+                raise PackageError("output_required")
+            result = assemble(*inputs, args.output, **options)
         print(canonical(result).decode(), end="")
     except (
         ValueError,

@@ -411,7 +411,11 @@ def test_repository_pins_and_source_layout_static_only():
     root = Path(__file__).resolve().parents[1]
     pins = lp.declarations((root / "requirements-lambda.txt").read_bytes())
     old = (root / "requirements.txt").read_text()
+    approved = {"faiss-cpu": "==1.9.0", "numpy": "==1.26.4"}
+    assert all(pins[name] == spec for name, spec in approved.items())
     for name, spec in pins.items():
+        if name in approved:
+            continue
         assert any(
             lp.canonicalize_name(line.split("==")[0]) == name
             and line.strip().endswith(spec)
@@ -436,7 +440,7 @@ def test_powershell_wrapper_has_no_destructive_or_host_pip_path():
     assert "$LASTEXITCODE -ne 0" in script
     assert "Remove-Item" not in script and "Compress-Archive" not in script
     assert "pip.exe" not in script
-    assert script.count("[Parameter(Mandatory)]") == 8
+    assert script.count("[Parameter(Mandatory)]") == 9
 
 
 def test_generated_host_launcher_is_excluded(invented, tmp_path):
@@ -575,6 +579,10 @@ def test_cli_failure_is_sanitized(invented, tmp_path, monkeypatch, capsys):
     layers.write_bytes(b"[]")
     args = [
         "lambda_package.py",
+        "--delivery-mode",
+        "s3",
+        "--allocation",
+        lp.COMPLETE_FUNCTION_ALLOCATION,
         "--root",
         str(root),
         "--wheelhouse",
@@ -1159,3 +1167,248 @@ def test_numpy_source_collision_across_distributions(invented, monkeypatch):
     (root / "requirements-lambda.txt").write_bytes(b"numpy==1.26.4\ndemo==1.0\n")
     rejects("package_collision", build)
     assert not calls
+
+
+def static_preflight(invented, **options):
+    root, house, lock, *_ = invented
+    return lp.preflight(
+        root,
+        dict(TARGET),
+        house,
+        lock,
+        options.pop("layers", []),
+        delivery_mode=options.pop("delivery_mode", "s3"),
+        allocation=options.pop("allocation", lp.COMPLETE_FUNCTION_ALLOCATION),
+        **options,
+    )
+
+
+@pytest.mark.parametrize("mode", ["direct", "s3"])
+def test_complete_allocation_rejects_layers_before_installer(invented, mode):
+    *_, calls, _, build = invented
+    rejects(
+        "allocation_layers_conflict",
+        lambda: build(
+            delivery_mode=mode,
+            allocation=lp.COMPLETE_FUNCTION_ALLOCATION,
+        ),
+    )
+    rejects(
+        "allocation_layers_conflict",
+        lambda: static_preflight(
+            invented,
+            delivery_mode=mode,
+            layers=[LAYER],
+        ),
+    )
+    assert not calls
+
+
+@pytest.mark.parametrize(
+    "mode,allocation,code",
+    [
+        ("invalid", None, "delivery_mode"),
+        ("direct", "invented", "dependency_allocation"),
+        ("s3", None, "s3_allocation_required"),
+    ],
+)
+def test_invalid_policy_rejected_before_dispatch(invented, mode, allocation, code):
+    *_, calls, _, build = invented
+    rejects(code, lambda: build(layers=[], delivery_mode=mode, allocation=allocation))
+    assert not calls
+
+
+def test_s3_bypasses_only_compressed_cap_and_preserves_old_output(
+    invented, tmp_path, monkeypatch
+):
+    root, *_, build = invented
+    monkeypatch.setattr(lp, "MAX_ZIP_BYTES", 1)
+    options = {"layers": [], "allocation": lp.COMPLETE_FUNCTION_ALLOCATION}
+    rejects("direct_upload_zip_size", lambda: build(**options, delivery_mode="direct"))
+    assert not (tmp_path / "new.zip").exists()
+    assert (root / "deployment.zip").read_bytes() == b"invented previous artifact"
+    result = build(**options, delivery_mode="s3")
+    assert result["zip_bytes"] > 1
+    assert result["packaging_policy"]["compressed_zip_limit_bytes"] is None
+    assert result["packaging_policy"]["network_operation"] == "NONE"
+    assert result["aggregate_uncompressed_bytes"] == result["code_uncompressed_bytes"]
+    with zipfile.ZipFile(tmp_path / "new.zip") as archive:
+        manifest = json.loads(archive.read("lambda-build-manifest.json"))
+        assert manifest["layer_evidence"]["uncompressed_layer_bytes"] == 0
+        assert manifest["native_link_gate"]["status"] == "NOT_RUN_FOR_THIS_ARTIFACT"
+
+
+@pytest.mark.parametrize("mode", ["direct", "s3"])
+def test_uncompressed_cap_includes_generated_manifest(invented, monkeypatch, mode):
+    *_, calls, _, build = invented
+    report = static_preflight(invented, delivery_mode=mode)
+    # The retained files fit; the generated manifest pushes the total over.
+    calculated = report["calculated"]
+    payload_bytes = (
+        calculated["code_and_aggregate_uncompressed_bytes"]
+        - calculated["generated_manifest_bytes"]
+    )
+    monkeypatch.setattr(lp, "MAX_CODE_BYTES", payload_bytes + 1)
+    rejects(
+        "code_uncompressed_size", lambda: static_preflight(invented, delivery_mode=mode)
+    )
+    rejects(
+        "code_uncompressed_size",
+        lambda: build(
+            layers=[], allocation=lp.COMPLETE_FUNCTION_ALLOCATION, delivery_mode=mode
+        ),
+    )
+    assert calls  # Invented installer only; no output is published.
+
+
+def test_preflight_deterministic_read_only_and_matches_generated_sizes(
+    invented, tmp_path, monkeypatch
+):
+    root, house, _, calls, _, build = invented
+    result = build(
+        layers=[], allocation=lp.COMPLETE_FUNCTION_ALLOCATION, delivery_mode="s3"
+    )
+    with zipfile.ZipFile(tmp_path / "new.zip") as archive:
+        expected_manifest = len(archive.read("lambda-build-manifest.json"))
+    before = {
+        p: lp.sha(p.read_bytes())
+        for directory in (root, house)
+        for p in directory.rglob("*")
+        if p.is_file()
+    }
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("preflight reached an installation/staging/publication hook")
+
+    monkeypatch.setattr(lp, "install_wheels", forbidden)
+    monkeypatch.setattr(lp.subprocess, "run", forbidden)
+    monkeypatch.setattr(lp.tempfile, "TemporaryDirectory", forbidden)
+    monkeypatch.setattr(lp.os, "link", forbidden)
+    first = static_preflight(invented)
+    second = static_preflight(invented)
+    assert lp.canonical(first) == lp.canonical(second)
+    calculated = first["calculated"]
+    assert (
+        calculated["code_and_aggregate_uncompressed_bytes"]
+        == result["code_uncompressed_bytes"]
+    )
+    assert calculated["generated_manifest_bytes"] == expected_manifest
+    assert calculated["code_and_aggregate_uncompressed_bytes"] == sum(
+        calculated[k]
+        for k in (
+            "inspected_wheel_non_record_bytes",
+            "generated_shipped_record_bytes",
+            "application_source_bytes",
+            "generated_handler_bytes",
+            "generated_manifest_bytes",
+        )
+    )
+    assert (
+        calculated["aggregate_uncompressed_headroom_bytes"]
+        == lp.MAX_CODE_BYTES - result["code_uncompressed_bytes"]
+    )
+    assert all(
+        first["final_build_required"][k] is None
+        for k in ("zip_bytes", "actual_archive_uncompressed_bytes", "artifact_sha256")
+    )
+    assert "NOT_A_BOUND_OR_FINAL_ZIP_SIZE" in first["estimates"]["limitation"]
+    assert (
+        first["native_link_gate"]["internal_library_standalone_ldd"]
+        == "DIAGNOSTIC_ONLY_NOT_ACCEPTANCE_GATE"
+    )
+    assert (
+        first["native_link_gate"]["vendored_directory_ld_library_path"]
+        == "DIAGNOSTIC_ONLY_NOT_ACCEPTANCE_WORKAROUND"
+    )
+    assert before == {
+        p: lp.sha(p.read_bytes())
+        for directory in (root, house)
+        for p in directory.rglob("*")
+        if p.is_file()
+    }
+    assert len(calls) == 1
+
+
+def test_preflight_requires_allocation_and_detects_stale_source(invented, monkeypatch):
+    rejects(
+        "preflight_allocation_required",
+        lambda: static_preflight(invented, allocation=None),
+    )
+    original = lp.source_files
+    reads = []
+
+    def changed(*args):
+        result = original(*args)
+        reads.append(1)
+        if len(reads) > 1:
+            result["app/main.py"] += b"# changed\n"
+        return result
+
+    monkeypatch.setattr(lp, "source_files", changed)
+    rejects("stale_source_binding", lambda: static_preflight(invented))
+
+
+def test_preflight_lock_declaration_join_and_missing_wheel(invented):
+    root, house, lock, calls, *_ = invented
+    (root / "requirements-lambda.txt").write_bytes(b"demo==2.0\n")
+    rejects("dependency_closure", lambda: static_preflight(invented))
+    (root / "requirements-lambda.txt").write_bytes(b"demo==1.0\n")
+    (house / lock["wheels"][1]["filename"]).unlink()
+    rejects("missing_file", lambda: static_preflight(invented))
+    assert not calls
+
+
+def test_operational_lock_preserves_reviewed_inner_bytes():
+    root = Path(__file__).resolve().parents[1]
+    historical = lp.json_read(
+        root / "docs/experiments/jev-lambda-wheel-lock.proposed.json"
+    )
+    operational = lp.json_read(root / "config/lambda-wheel-lock.json")
+    assert operational == historical["wheel_lock"]
+    assert (root / "config/lambda-wheel-lock.json").read_bytes() == lp.canonical(
+        operational
+    )
+    assert (
+        lp.sha(lp.canonical(operational))
+        == "01fe426a5e28b274c4cc1bdb3ef6423203564b43ded257149bec35b7879c5bb8"
+    )
+    assert len(operational["wheels"]) == 28
+    assert lp.json_read(root / "config/lambda-layers.none.json") == []
+
+
+def test_cli_static_preflight_never_installs(invented, tmp_path, monkeypatch, capsys):
+    root, house, lock, calls, *_ = invented
+    lock_path = tmp_path / "lock.json"
+    lock_path.write_bytes(lp.canonical(lock))
+    layers_path = tmp_path / "layers.json"
+    layers_path.write_bytes(b"[]\n")
+    args = [
+        "lambda_package.py",
+        "--preflight",
+        "--root",
+        str(root),
+        "--wheelhouse",
+        str(house),
+        "--wheel-lock",
+        str(lock_path),
+        "--layers-metadata",
+        str(layers_path),
+        "--delivery-mode",
+        "s3",
+        "--allocation",
+        lp.COMPLETE_FUNCTION_ALLOCATION,
+    ]
+    for key, value in TARGET.items():
+        args.extend(["--" + key, value])
+    monkeypatch.setattr(sys, "argv", args)
+    assert lp.main() == 0
+    assert (
+        json.loads(capsys.readouterr().out)["schema"] == "lambda-package-preflight-v1"
+    )
+    assert not calls
+    monkeypatch.setattr(
+        sys, "argv", args + ["--output", str(tmp_path / "forbidden.zip")]
+    )
+    assert lp.main() == 1
+    assert json.loads(capsys.readouterr().err)["code"] == "preflight_output_forbidden"
+    assert not (tmp_path / "forbidden.zip").exists()
