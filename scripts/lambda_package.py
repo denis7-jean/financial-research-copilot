@@ -34,6 +34,13 @@ MAX_ZIP_BYTES = 50 * 1024 * 1024
 # digest is the script's bytes in the acquired, raw-hash-verified wheel.
 # New versions/scripts require another explicit policy review.
 JMESPATH_CLI_SHA256 = "3c33be32db89ef63e1efceabd80c34e70679ab6d86260b9ebfd1b4c415e8388f"
+# One acquired NumPy cache only; every other bytecode file remains rejected.
+NUMPY_BYTECODE_PATH = "numpy/distutils/__pycache__/conv_template.cpython-311.pyc"
+NUMPY_BYTECODE_SHA256 = (
+    "cddf727f461c9fe7df445945952019cd766e0638f6b7edab5f5a7082db3208f9"
+)
+NUMPY_SOURCE_PATH = "numpy/distutils/conv_template.py"
+NUMPY_SOURCE_SHA256 = "17ee2f9247c08c26fe7cdefd598ad75f704c1cca2240ef96daed3dab5d8e3ee2"
 RUNTIME_IMPORTS = {
     "boto3": "boto3",
     "botocore": "botocore",
@@ -253,6 +260,35 @@ def excluded_script_output(raw, expected_hash):
         raise PackageError("excluded_script_output_mismatch")
 
 
+def optional_numpy_bytecode(content, files, prefix):
+    if sha(content) != NUMPY_BYTECODE_SHA256:
+        raise PackageError("numpy_bytecode_policy")
+    if (
+        NUMPY_SOURCE_PATH not in files
+        or sha(files[NUMPY_SOURCE_PATH]) != NUMPY_SOURCE_SHA256
+    ):
+        raise PackageError("numpy_bytecode_source")
+    try:
+        rows = list(csv.reader(io.StringIO(files[prefix + "/RECORD"].decode())))
+    except (KeyError, UnicodeError, csv.Error) as error:
+        raise PackageError("numpy_bytecode_record") from error
+    for filename in (NUMPY_BYTECODE_PATH, NUMPY_SOURCE_PATH):
+        raw = files[filename]
+        digest = base64.urlsafe_b64encode(hashlib.sha256(raw).digest()).rstrip(b"=")
+        matching = [row for row in rows if row and row[0] == filename]
+        if matching != [[filename, "sha256=" + digest.decode(), str(len(raw))]]:
+            raise PackageError("numpy_bytecode_record")
+    return {
+        "wheel_path": NUMPY_BYTECODE_PATH,
+        "sha256": sha(content),
+        "reason": "NUMPY_PRECOMPILED_CACHE_SOURCE_RETAINED",
+        "source_path": NUMPY_SOURCE_PATH,
+        "source_sha256": sha(files[NUMPY_SOURCE_PATH]),
+        "installer_paths": [NUMPY_BYTECODE_PATH],
+        "installer_output_policy": "ABSENT_OR_EXACT_WHEEL_BYTES",
+    }
+
+
 def inspect_wheel(path, expected, target):
     raw = safe_file(path).read_bytes()
     if not re.fullmatch(r"[0-9a-f]{64}", str(expected)) or sha(raw) != expected:
@@ -279,6 +315,14 @@ def inspect_wheel(path, expected, target):
             seen.add(info.filename)
             if stat.S_ISLNK(info.external_attr >> 16):
                 raise PackageError("archive_symlink")
+            if info.filename.rstrip("/") in (
+                NUMPY_BYTECODE_PATH,
+                NUMPY_SOURCE_PATH,
+            ) and (
+                info.is_dir()
+                or stat.S_IFMT(info.external_attr >> 16) not in (0, stat.S_IFREG)
+            ):
+                raise PackageError("wheel_bytecode_type")
             if ".data/scripts/" in info.filename and (
                 info.is_dir()
                 or stat.S_IFMT(info.external_attr >> 16) not in (0, stat.S_IFREG)
@@ -333,6 +377,7 @@ def inspect_wheel(path, expected, target):
             raise PackageError("wheel_python_version")
     installed = {}
     for filename, content in files.items():
+        original_name = filename
         parts = list(PurePosixPath(filename).parts)
         if parts[0].endswith(".data"):
             if len(parts) == 3 and parts[1] == "scripts":
@@ -349,6 +394,13 @@ def inspect_wheel(path, expected, target):
             "lambda-build-manifest.json",
         ):
             raise PackageError("package_collision")
+        if (name, str(version), original_name) == (
+            "numpy",
+            "1.26.4",
+            NUMPY_BYTECODE_PATH,
+        ):
+            excluded.append(optional_numpy_bytecode(content, files, prefix))
+            continue
         if filename.endswith((".pth", ".pyc")) or PurePosixPath(filename).name in (
             "sitecustomize.py",
             "usercustomize.py",
@@ -653,7 +705,7 @@ def assemble(
         ]
         installer(command, stage)
         excluded_outputs = {
-            path: record["sha256"]
+            path: record
             for wheel in wheels.values()
             for record in wheel["excluded_files"]
             for path in record["installer_paths"]
@@ -661,15 +713,28 @@ def assemble(
         actual = {}
         for path in stage.rglob("*"):
             no_links(path)
+            name = path.relative_to(stage).as_posix()
+            excluded = excluded_outputs.get(name)
+            if (
+                excluded
+                and excluded["reason"] == "NUMPY_PRECOMPILED_CACHE_SOURCE_RETAINED"
+                and not stat.S_ISREG(path.stat().st_mode)
+            ):
+                raise PackageError("excluded_bytecode_output_type")
             if not path.is_file():
                 continue
-            name = path.relative_to(stage).as_posix()
             safe_name(name)
             raw = safe_file(path).read_bytes()
             if name not in installed:
                 if name in excluded_outputs:
-                    excluded_script_output(raw, excluded_outputs[name])
+                    if excluded["reason"] == "NUMPY_PRECOMPILED_CACHE_SOURCE_RETAINED":
+                        if sha(raw) != excluded["sha256"]:
+                            raise PackageError("excluded_bytecode_output_mismatch")
+                    else:
+                        excluded_script_output(raw, excluded["sha256"])
                     continue
+                if name.endswith(".pyc"):
+                    raise PackageError("unexpected_installed_file")
                 # Pip bookkeeping/entry-point wrappers are excluded, never executed.
                 if name.startswith(("bin/", "Scripts/")) or name.endswith(
                     (
@@ -703,7 +768,13 @@ def assemble(
             "target": target,
             "builder_sha256": sha(safe_file(__file__).read_bytes()),
             "record_policy": "REGENERATED_FOR_SHIPPED_FILES_ONLY",
-            "installation_policy": "RUNTIME_SUBSET_WITH_DECLARED_OPTIONAL_CLI_EXCLUSIONS",
+            "installation_policy": "RUNTIME_SUBSET_WITH_DECLARED_FILE_EXCLUSIONS"
+            if any(
+                record["reason"] == "NUMPY_PRECOMPILED_CACHE_SOURCE_RETAINED"
+                for wheel in wheels.values()
+                for record in wheel["excluded_files"]
+            )
+            else "RUNTIME_SUBSET_WITH_DECLARED_OPTIONAL_CLI_EXCLUSIONS",
             "requirements_sha256": sha(requirements),
             "declared_dependencies": declared,
             "wheel_lock_sha256": sha(canonical(wheel_lock)),

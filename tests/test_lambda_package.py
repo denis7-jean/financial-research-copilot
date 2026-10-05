@@ -876,3 +876,286 @@ def test_optional_script_requires_regular_archive_file(
                 info.external_attr = (mode | 0o644) << 16
             archive.writestr(info, raw)
     rejects(code, lambda: lp.inspect_wheel(path, lp.sha(path.read_bytes()), TARGET))
+
+
+NUMPY_CACHE = b"invented precompiled cache, never executed"
+NUMPY_SOURCE = b"# invented source counterpart, never executed\n"
+
+
+def numpy_fixture(house, monkeypatch, files=None, name="numpy", version="1.26.4"):
+    # Real layout with invented bytes. Only these tests rebind the two reviewed
+    # raw hashes; production accepts only the original wheel's exact contents.
+    monkeypatch.setattr(lp, "NUMPY_BYTECODE_SHA256", lp.sha(NUMPY_CACHE))
+    monkeypatch.setattr(lp, "NUMPY_SOURCE_SHA256", lp.sha(NUMPY_SOURCE))
+    payload = {lp.NUMPY_BYTECODE_PATH: NUMPY_CACHE, lp.NUMPY_SOURCE_PATH: NUMPY_SOURCE}
+    stream = io.StringIO(newline="")
+    writer = csv.writer(stream, lineterminator="\n")
+    for path, raw in sorted(payload.items()):
+        digest = base64.urlsafe_b64encode(lp.hashlib.sha256(raw).digest()).rstrip(b"=")
+        writer.writerow((path, "sha256=" + digest.decode(), str(len(raw))))
+    payload[f"{name}-{version}.dist-info/RECORD"] = stream.getvalue().encode()
+    payload.update(files or {})
+    return wheel(house, name=name, version=version, files=payload)
+
+
+def test_numpy_cache_exact_inspection(invented, monkeypatch):
+    _, house, _, _, _, _ = invented
+    entry = numpy_fixture(house, monkeypatch)
+    record = lp.inspect_wheel(house / entry["filename"], entry["sha256"], TARGET)
+    assert lp.NUMPY_BYTECODE_PATH not in record["files"]
+    assert record["files"][lp.NUMPY_SOURCE_PATH] == NUMPY_SOURCE
+    assert record["files"]["numpy/__init__.py"] == b"# invented, never executed\n"
+    assert record["excluded_files"] == [
+        {
+            "wheel_path": lp.NUMPY_BYTECODE_PATH,
+            "sha256": lp.sha(NUMPY_CACHE),
+            "reason": "NUMPY_PRECOMPILED_CACHE_SOURCE_RETAINED",
+            "source_path": lp.NUMPY_SOURCE_PATH,
+            "source_sha256": lp.sha(NUMPY_SOURCE),
+            "installer_paths": [lp.NUMPY_BYTECODE_PATH],
+            "installer_output_policy": "ABSENT_OR_EXACT_WHEEL_BYTES",
+        }
+    ]
+    rejects(
+        "wheel_hash",
+        lambda: lp.inspect_wheel(house / entry["filename"], "0" * 64, TARGET),
+    )
+
+
+@pytest.mark.parametrize("present", [False, True])
+def test_numpy_runtime_subset_manifest_record_and_installer(
+    invented, tmp_path, monkeypatch, present
+):
+    root, house, lock, calls, install, build = invented
+    entry = numpy_fixture(house, monkeypatch)
+    lock["wheels"] = [entry]
+    (root / "requirements-lambda.txt").write_bytes(b"numpy==1.26.4\n")
+
+    def installer(command, stage):
+        install(command, stage)
+        if not present:
+            (stage / lp.NUMPY_BYTECODE_PATH).unlink()
+
+    assert build(installer=installer) == build("second.zip", installer=installer)
+    assert len(calls) == 2 and all("--no-compile" in call for call in calls)
+    with zipfile.ZipFile(tmp_path / "new.zip") as archive:
+        names = archive.namelist()
+        assert not any(n.endswith(".pyc") for n in names)
+        assert archive.read(lp.NUMPY_SOURCE_PATH) == NUMPY_SOURCE
+        assert archive.read("numpy/__init__.py") == b"# invented, never executed\n"
+        manifest = json.loads(archive.read("lambda-build-manifest.json"))
+        assert (
+            manifest["installation_policy"]
+            == "RUNTIME_SUBSET_WITH_DECLARED_FILE_EXCLUSIONS"
+        )
+        assert manifest["status"] == "NOT_QUALIFIED_LINUX_EXECUTION_REQUIRED"
+        omission = manifest["resolved_inspected_wheels"][0]["excluded_files"][0]
+        assert omission["sha256"] == lp.sha(NUMPY_CACHE)
+        assert omission["source_sha256"] == lp.sha(NUMPY_SOURCE)
+        assert omission["installer_output_policy"] == "ABSENT_OR_EXACT_WHEEL_BYTES"
+        rows = list(
+            csv.reader(
+                io.StringIO(archive.read("numpy-1.26.4.dist-info/RECORD").decode())
+            )
+        )
+        assert {row[0] for row in rows} == {
+            n for n in names if n.startswith(("numpy/", "numpy-1.26.4.dist-info/"))
+        }
+        for name, digest, size in rows:
+            data = archive.read(name)
+            assert manifest["file_sha256"][name] == lp.sha(data)
+            if name.endswith("/RECORD"):
+                assert (digest, size) == ("", "")
+            else:
+                assert (
+                    digest
+                    == "sha256="
+                    + base64.urlsafe_b64encode(lp.hashlib.sha256(data).digest())
+                    .rstrip(b"=")
+                    .decode()
+                )
+                assert int(size) == len(data)
+
+
+@pytest.mark.parametrize(
+    "mode,code",
+    [
+        ("altered_cache", "numpy_bytecode_policy"),
+        ("altered_source", "numpy_bytecode_source"),
+        ("missing_source", "numpy_bytecode_source"),
+        ("another_cache", "wheel_startup_or_private_file"),
+        ("data_cache", "wheel_startup_or_private_file"),
+        ("unsupported_scheme", "wheel_data_scheme"),
+        ("unsafe_path", "unsafe_archive_path"),
+        ("source_collision", "package_collision"),
+        ("wrong_distribution", "wheel_startup_or_private_file"),
+        ("wrong_version", "wheel_startup_or_private_file"),
+        ("wrong_metadata", "wheel_identity"),
+    ],
+)
+def test_numpy_cache_narrow_policy(invented, monkeypatch, mode, code):
+    _, house, _, calls, _, _ = invented
+    name, version = (
+        ("other" if mode == "wrong_distribution" else "numpy"),
+        ("1.26.3" if mode == "wrong_version" else "1.26.4"),
+    )
+    entry = numpy_fixture(house, monkeypatch, name=name, version=version)
+    path = house / entry["filename"]
+    with zipfile.ZipFile(path) as archive:
+        files = {n: archive.read(n) for n in archive.namelist()}
+    if mode == "altered_cache":
+        files[lp.NUMPY_BYTECODE_PATH] += b"changed"
+    elif mode == "altered_source":
+        files[lp.NUMPY_SOURCE_PATH] += b"changed"
+    elif mode == "missing_source":
+        del files[lp.NUMPY_SOURCE_PATH]
+    elif mode == "another_cache":
+        files["numpy/distutils/__pycache__/other.cpython-311.pyc"] = NUMPY_CACHE
+    elif mode == "data_cache":
+        del files[lp.NUMPY_BYTECODE_PATH]
+        files["numpy-1.26.4.data/platlib/" + lp.NUMPY_BYTECODE_PATH] = NUMPY_CACHE
+    elif mode == "unsupported_scheme":
+        files["numpy-1.26.4.data/headers/header.h"] = b"invented"
+    elif mode == "unsafe_path":
+        files["numpy/distutils/../escape.pyc"] = NUMPY_CACHE
+    elif mode == "source_collision":
+        files["numpy-1.26.4.data/purelib/" + lp.NUMPY_SOURCE_PATH] = NUMPY_SOURCE
+    elif mode == "wrong_metadata":
+        files["numpy-1.26.4.dist-info/METADATA"] = b"Name: other\nVersion: 1.26.4\n"
+    entry = wheel(house, name=name, version=version, files=files)
+    rejects(code, lambda: lp.inspect_wheel(path, entry["sha256"], TARGET))
+    assert not calls
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "hash",
+        "size",
+        "duplicate",
+        "missing_cache",
+        "missing_source",
+        "invalid_encoding",
+    ],
+)
+def test_numpy_original_record_binding(invented, monkeypatch, mode):
+    _, house, _, _, _, _ = invented
+    entry = numpy_fixture(house, monkeypatch)
+    path = house / entry["filename"]
+    with zipfile.ZipFile(path) as archive:
+        files = {n: archive.read(n) for n in archive.namelist()}
+    key = "numpy-1.26.4.dist-info/RECORD"
+    rows = list(csv.reader(io.StringIO(files[key].decode())))
+    if mode in ("hash", "size"):
+        row = next(row for row in rows if row[0] == lp.NUMPY_BYTECODE_PATH)
+        row[1 if mode == "hash" else 2] = "sha256=wrong" if mode == "hash" else "999"
+    elif mode == "duplicate":
+        rows.append(rows[0])
+    else:
+        absent = (
+            lp.NUMPY_BYTECODE_PATH if mode == "missing_cache" else lp.NUMPY_SOURCE_PATH
+        )
+        rows = [row for row in rows if row[0] != absent]
+    stream = io.StringIO(newline="")
+    csv.writer(stream, lineterminator="\n").writerows(rows)
+    files[key] = b"\xff" if mode == "invalid_encoding" else stream.getvalue().encode()
+    entry = wheel(house, name="numpy", version="1.26.4", files=files)
+    rejects(
+        "numpy_bytecode_record", lambda: lp.inspect_wheel(path, entry["sha256"], TARGET)
+    )
+
+
+@pytest.mark.parametrize("member", ["cache", "source"])
+@pytest.mark.parametrize(
+    "kind,code",
+    [
+        ("link", "archive_symlink"),
+        ("fifo", "wheel_bytecode_type"),
+        ("directory", "wheel_bytecode_type"),
+        ("duplicate", "duplicate_archive_path"),
+    ],
+)
+def test_numpy_cache_archive_types_and_duplicates(
+    invented, monkeypatch, member, kind, code
+):
+    _, house, _, _, _, _ = invented
+    entry = numpy_fixture(house, monkeypatch)
+    path = house / entry["filename"]
+    with zipfile.ZipFile(path) as archive:
+        entries = {n: archive.read(n) for n in archive.namelist()}
+    import stat
+
+    selected = lp.NUMPY_BYTECODE_PATH if member == "cache" else lp.NUMPY_SOURCE_PATH
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, raw in entries.items():
+            info = zipfile.ZipInfo(name)
+            if name == selected and kind != "duplicate":
+                info.create_system = 3
+                info.external_attr = (
+                    {
+                        "link": stat.S_IFLNK,
+                        "fifo": stat.S_IFIFO,
+                        "directory": stat.S_IFDIR,
+                    }[kind]
+                    | 0o644
+                ) << 16
+            archive.writestr(info, raw)
+        if kind == "duplicate":
+            with pytest.warns(UserWarning, match="Duplicate name"):
+                archive.writestr(selected, entries[selected])
+    rejects(code, lambda: lp.inspect_wheel(path, lp.sha(path.read_bytes()), TARGET))
+
+
+@pytest.mark.parametrize(
+    "mode,code",
+    [
+        ("rewritten_cache", "excluded_bytecode_output_mismatch"),
+        ("cache_directory", "excluded_bytecode_output_type"),
+        ("another_cache", "unexpected_installed_file"),
+        ("bin_cache", "unexpected_installed_file"),
+        ("missing_source", "missing_installed_file"),
+        ("altered_source", "installed_file_mismatch"),
+    ],
+)
+def test_numpy_installer_output_fails_closed(
+    invented, tmp_path, monkeypatch, mode, code
+):
+    root, house, lock, _, install, build = invented
+    lock["wheels"] = [numpy_fixture(house, monkeypatch)]
+    (root / "requirements-lambda.txt").write_bytes(b"numpy==1.26.4\n")
+
+    def installer(command, stage):
+        install(command, stage)
+        cache, source = stage / lp.NUMPY_BYTECODE_PATH, stage / lp.NUMPY_SOURCE_PATH
+        if mode == "rewritten_cache":
+            cache.write_bytes(b"rewritten")
+        elif mode == "cache_directory":
+            cache.unlink()
+            cache.mkdir()
+        elif mode in ("another_cache", "bin_cache"):
+            path = stage / (
+                "bin/unreviewed.pyc"
+                if mode == "bin_cache"
+                else "numpy/distutils/__pycache__/conv_template.cpython-313.pyc"
+            )
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(NUMPY_CACHE)
+        elif mode == "missing_source":
+            source.unlink()
+        else:
+            source.write_bytes(b"changed")
+
+    rejects(code, lambda: build(installer=installer))
+    assert not (tmp_path / "new.zip").exists()
+    assert (root / "deployment.zip").read_bytes() == b"invented previous artifact"
+
+
+def test_numpy_source_collision_across_distributions(invented, monkeypatch):
+    root, house, lock, calls, _, build = invented
+    lock["wheels"] = [
+        numpy_fixture(house, monkeypatch),
+        wheel(house, files={lp.NUMPY_SOURCE_PATH: NUMPY_SOURCE}),
+    ]
+    (root / "requirements-lambda.txt").write_bytes(b"numpy==1.26.4\ndemo==1.0\n")
+    rejects("package_collision", build)
+    assert not calls
