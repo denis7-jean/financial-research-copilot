@@ -632,7 +632,6 @@ def test_stale_and_future_snapshots(scenario):
         ("version", "ROLLBACK_VERSION_MISMATCH"),
         ("code", "ROLLBACK_CODE_SHA256_MISMATCH"),
         ("candidate_version", "ROLLBACK_EQUALS_CANDIDATE"),
-        ("candidate_code", "ROLLBACK_CODE_EQUALS_CANDIDATE"),
         ("inactive", "ROLLBACK_TARGET_NOT_ACTIVE"),
         ("revision", "REVISION_MISMATCH"),
         ("bad_code", "CODE_SHA256_INVALID"),
@@ -656,9 +655,6 @@ def test_rollback_bindings(scenario, mutation, code):
         response["CodeSha256"] = scenario["code"].replace(scenario["code"][0], "A", 1)
     elif mutation == "candidate_version":
         rollback["function_version"] = "8"
-    elif mutation == "candidate_code":
-        rollback["code_sha256"] = scenario["code"]
-        response["CodeSha256"] = scenario["code"]
     elif mutation == "inactive":
         response["State"] = "Inactive"
     elif mutation == "revision":
@@ -887,6 +883,7 @@ def test_module_has_no_aws_network_subprocess_or_write_paths():
         "re",
         "sys",
         "zipfile",
+        "zlib",
     }
     calls = {
         node.func.attr
@@ -919,3 +916,361 @@ def test_module_has_no_aws_network_subprocess_or_write_paths():
         in ([], ["rb"])
         for node in opens
     )
+
+
+# ---- Correction batch: Codex review RP-1 to RP-7 -------------------------------
+
+
+def as_version(response, version):
+    """Make a saved configuration describe one numeric version of its function."""
+    response = copy.deepcopy(response)
+    response["Version"] = version
+    base = response["FunctionArn"].split(":function:")[0]
+    response["FunctionArn"] = f"{base}:function:{response['FunctionName']}:{version}"
+    return response
+
+
+def baseline_as(scenario, response, version):
+    scenario["records"]["production_baseline"] = record(
+        "production_baseline",
+        as_version(response, version),
+        request={"FunctionName": PROD, "Qualifier": version},
+    )
+
+
+def test_rp1_conflicting_facts_about_one_immutable_version_block(scenario):
+    rollback = scenario["records"]["rollback_target"]["response"]
+    conflicting = copy.deepcopy(rollback)
+    conflicting["CodeSha256"] = scenario["code"]
+    baseline_as(scenario, conflicting, "7")
+    found = codes(run(scenario))
+    assert ("IMMUTABLE_VERSION_CONFLICT", "rollback_target", "CodeSha256") in found
+    candidate = scenario["records"]["candidate"]["response"]
+    conflicting = copy.deepcopy(candidate)
+    conflicting["CodeSha256"] = OLD_CODE
+    baseline_as(scenario, conflicting, "8")
+    assert ("IMMUTABLE_VERSION_CONFLICT", "candidate", "CodeSha256") in codes(
+        run(scenario)
+    )
+    conflicting = copy.deepcopy(rollback)
+    conflicting["MemorySize"] = 1024
+    baseline_as(scenario, conflicting, "7")
+    assert ("IMMUTABLE_VERSION_CONFLICT", "rollback_target", "memory_size") in codes(
+        run(scenario)
+    )
+
+
+def test_rp1_agreeing_version_and_mutable_latest_snapshots_do_not_conflict(scenario):
+    rollback = scenario["records"]["rollback_target"]["response"]
+    baseline_as(scenario, rollback, "7")
+    assert run(scenario)["errors"] == []
+    baseline = scenario["records"]["production_baseline"]
+    baseline["request"] = {"FunctionName": PROD}
+    baseline["response"] = configuration(
+        rp.hex_to_code_sha256("1" * 64), 99, environment={"S3_BUCKET_NAME": "x"}
+    )
+    assert run(scenario)["errors"] == []
+
+
+def test_rp1_baseline_code_hash_is_validated(scenario):
+    configuration_value = scenario["records"]["production_baseline"]["response"]
+    configuration_value["Configuration"]["CodeSha256"] = "not-base64"
+    result = run(scenario)
+    assert ("CODE_SHA256_INVALID", "production_baseline", "CodeSha256") in codes(result)
+    assert result["technical_status"] == "BLOCKED"
+
+
+@pytest.mark.parametrize(
+    "observed,planned",
+    [({"9": 0.1}, {"9": 0.1}), ({"8": 0.1, "9": 0.1}, {"8": 0.1})],
+)
+def test_rp1_weighted_targets_must_be_the_other_verified_version(
+    scenario, observed, planned
+):
+    scenario["plan"]["release_strategy"]["additional_version_weights"] = planned
+    scenario["records"]["alias"]["response"]["RoutingConfig"] = {
+        "AdditionalVersionWeights": observed
+    }
+    result = run(scenario)
+    assert ("ROUTING_TARGET_UNSUPPORTED", "alias", "RoutingConfig") in codes(result)
+    assert result["technical_status"] == "BLOCKED"
+
+
+def test_rp1_two_planned_targets_are_rejected(scenario):
+    scenario["plan"]["release_strategy"]["additional_version_weights"] = {
+        "8": 0.1,
+        "9": 0.1,
+    }
+    with pytest.raises(rp.InputError, match="PLAN_INVALID"):
+        rp.validate_plan(scenario["plan"])
+
+
+def test_rp1_post_release_weight_to_verified_rollback_is_consistent(scenario):
+    strategy = scenario["plan"]["release_strategy"]
+    strategy["phase"] = "post_release"
+    strategy["additional_version_weights"] = {"7": 0.1}
+    alias = scenario["records"]["alias"]["response"]
+    alias["FunctionVersion"] = "8"
+    alias["RoutingConfig"] = {"AdditionalVersionWeights": {"7": 0.1}}
+    result = run(scenario)
+    assert result["errors"] == []
+    assert result["technical_status"] == "CONSISTENT_PENDING_EXTERNAL_GATES"
+
+
+@pytest.mark.parametrize("role", ["production_baseline", "rollback_target"])
+@pytest.mark.parametrize(
+    "mutation,code,field",
+    [
+        ("error", "ENVIRONMENT_ERROR_REPORTED", "Environment"),
+        ("provider", "ROUTER_PROVIDER_NOT_HAIKU", "COPILOT_ROUTER_PROVIDER"),
+        ("credential", "CREDENTIAL_IN_ENVIRONMENT", "AWS_SESSION_TOKEN"),
+    ],
+)
+def test_rp2_environment_safety_applies_to_every_function_role(
+    scenario, role, mutation, code, field
+):
+    response = scenario["records"][role]["response"]
+    if role == "production_baseline":
+        response = response["Configuration"]
+    environment = response["Environment"]
+    if mutation == "error":
+        environment["Error"] = {"ErrorCode": "invented", "Message": REASON}
+    elif mutation == "provider":
+        environment["Variables"]["COPILOT_ROUTER_PROVIDER"] = "jev"
+    else:
+        environment["Variables"]["AWS_SESSION_TOKEN"] = "invented"
+    result = run(scenario)
+    assert (code, role, field) in codes(result)
+    assert result["technical_status"] == "BLOCKED"
+
+
+def test_rp2_baseline_and_rollback_may_differ_from_intended_environment(scenario):
+    old = {"S3_BUCKET_NAME": "invented-bucket", "COPILOT_ROUTER_PROVIDER": "haiku"}
+    scenario["records"]["rollback_target"]["response"]["Environment"]["Variables"] = old
+    baseline = scenario["records"]["production_baseline"]["response"]
+    baseline["Configuration"]["Environment"]["Variables"] = dict(old)
+    result = run(scenario)
+    assert result["errors"] == []
+    assert result["technical_status"] == "CONSISTENT_PENDING_EXTERNAL_GATES"
+
+
+def test_rp3_configuration_only_rollback_with_identical_code_is_permitted(scenario):
+    rollback = scenario["records"]["rollback_target"]["response"]
+    rollback["CodeSha256"] = scenario["code"]
+    rollback["CodeSize"] = scenario["plan"]["artifact"]["zip_bytes"]
+    scenario["plan"]["rollback"]["code_sha256"] = scenario["code"]
+    result = run(scenario)
+    assert result["errors"] == []
+    notice = ("ROLLBACK_CODE_MATCHES_CANDIDATE", "rollback_target", "code_sha256")
+    assert notice in codes(result, "notices")
+    assert result["technical_status"] == "CONSISTENT_PENDING_EXTERNAL_GATES"
+
+
+def test_rp3_distinct_function_identities_with_equal_versions(scenario):
+    scenario["plan"] = base_plan(scenario["plan"]["artifact"], "unresolved", TEST_FN)
+    scenario["plan"]["rollback"] = {"function_version": "7", "code_sha256": OLD_CODE}
+    candidate = configuration(
+        scenario["code"],
+        scenario["plan"]["artifact"]["zip_bytes"],
+        version="7",
+        function=TEST_FN,
+    )
+    scenario["records"]["candidate"] = record(
+        "candidate", candidate, request={"FunctionName": TEST_FN, "Qualifier": "7"}
+    )
+    del scenario["records"]["alias"]
+    result = run(scenario)
+    assert result["errors"] == []
+    assert result["technical_status"] == "INCOMPLETE"
+    assert {entry["code"] for entry in result["unresolved_decisions"]} == {
+        "RELEASE_STRATEGY_UNRESOLVED"
+    }
+
+
+def test_rp3_same_qualified_candidate_version_is_still_rejected(scenario):
+    scenario["plan"]["rollback"]["function_version"] = "8"
+    assert "ROLLBACK_EQUALS_CANDIDATE" in error_codes(run(scenario))
+
+
+def rebind_candidate_to_artifact(scenario):
+    scenario["plan"]["artifact"] = describe(scenario["path"])
+    candidate = scenario["records"]["candidate"]["response"]
+    candidate["CodeSha256"] = rp.hex_to_code_sha256(
+        scenario["plan"]["artifact"]["sha256"]
+    )
+    candidate["CodeSize"] = scenario["plan"]["artifact"]["zip_bytes"]
+
+
+def test_rp4_manifest_allocation_evidence_is_required(scenario):
+    make_zip(
+        scenario["path"],
+        {key: value for key, value in MANIFEST.items() if key != "packaging_policy"},
+    )
+    rebind_candidate_to_artifact(scenario)
+    result = run(scenario)
+    assert error_codes(result) == {"MANIFEST_INVALID"}
+    assert result["technical_status"] == "BLOCKED"
+
+
+@pytest.mark.parametrize(
+    "declared,intended",
+    [
+        ([LAYER.replace(":2", ":3")], [LAYER]),
+        ([LAYER, LAYER + "0"], [LAYER + "0", LAYER]),
+    ],
+)
+def test_rp4_declared_layer_bindings_and_order_must_match(scenario, declared, intended):
+    legacy = {
+        **MANIFEST,
+        "packaging_policy": {"dependency_allocation": "LEGACY_UNRESOLVED"},
+        "layer_evidence": {"layers": [{"arn": arn} for arn in declared]},
+    }
+    make_zip(scenario["path"], legacy)
+    rebind_candidate_to_artifact(scenario)
+    scenario["plan"]["intended_configuration"]["layers"] = intended
+    result = run(scenario)
+    assert ("LAYER_ALLOCATION_CONTRADICTION", "artifact", "layers") in codes(result)
+    assert ("MANIFEST_ALLOCATION_UNSUPPORTED", "artifact", "allocation") in codes(
+        result
+    )
+
+
+@pytest.mark.parametrize(
+    "role,request_value,code",
+    [
+        ("candidate", {}, "RECORD_REQUEST_INVALID"),
+        ("alias", {"FunctionName": PROD}, "RECORD_REQUEST_INVALID"),
+        (
+            "candidate",
+            {"FunctionName": PROD, "Qualifier": "8", "Name": "live"},
+            "RECORD_REQUEST_INVALID",
+        ),
+        ("candidate", {"FunctionName": PROD, "Qualifier": 8}, "RECORD_REQUEST_INVALID"),
+        (
+            "candidate",
+            {"FunctionName": f"arn:aws:lambda:{REGION}:{ACCOUNT}:function:{PROD}:8"},
+            "RECORD_REQUEST_UNSUPPORTED",
+        ),
+        (
+            "candidate",
+            {"FunctionName": PROD, "Qualifier": "live"},
+            "RECORD_REQUEST_UNSUPPORTED",
+        ),
+    ],
+)
+def test_rp5_operation_specific_request_contract(
+    scenario, tmp_path, capsys, role, request_value, code
+):
+    scenario["records"][role]["request"] = request_value
+    assert rp.main(cli_args(scenario, tmp_path)) == 2
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert json.loads(output.err) == {"status": "INPUT_REJECTED", "code": code}
+
+
+def test_rp5_unqualified_request_must_return_latest(scenario):
+    del scenario["records"]["candidate"]["request"]["Qualifier"]
+    found = codes(run(scenario))
+    assert ("RECORD_REQUEST_RESPONSE_MISMATCH", "candidate", "Qualifier") in found
+
+
+@pytest.mark.parametrize(
+    "routing",
+    [
+        [],
+        False,
+        0,
+        "",
+        None,
+        {"AdditionalVersionWeights": []},
+        {"AdditionalVersionWeights": None},
+        {"AdditionalVersionWeights": "8"},
+        {"AdditionalVersionWeights": False},
+    ],
+)
+def test_rp6_present_malformed_routing_is_rejected(scenario, routing):
+    scenario["records"]["alias"]["response"]["RoutingConfig"] = routing
+    result = run(scenario)
+    assert ("ROUTING_WEIGHTS_INVALID", "alias", "RoutingConfig") in codes(result)
+    assert result["technical_status"] == "BLOCKED"
+
+
+@pytest.mark.parametrize("routing", ["absent", {}, {"AdditionalVersionWeights": {}}])
+def test_rp6_absent_or_empty_routing_remains_valid(scenario, routing):
+    alias = scenario["records"]["alias"]["response"]
+    if routing == "absent":
+        alias.pop("RoutingConfig", None)
+    else:
+        alias["RoutingConfig"] = routing
+    assert run(scenario)["errors"] == []
+
+
+@pytest.mark.parametrize(
+    "case,code",
+    [
+        ("exponent_overflow", "INPUT_NONFINITE_NUMBER"),
+        ("huge_integer", "INPUT_NUMBER_OUT_OF_RANGE"),
+        ("unpaired_surrogate", "INPUT_INVALID_UNICODE"),
+        ("record_time_overflow", "RECORD_INVALID"),
+        ("as_of_overflow", "AS_OF_INVALID"),
+    ],
+)
+def test_rp7_boundary_inputs_are_sanitized_rejections(
+    scenario, tmp_path, capsys, case, code
+):
+    args = cli_args(scenario, tmp_path)
+    alias_path = tmp_path / "cli/alias.json"
+    text = alias_path.read_text()
+    if case == "exponent_overflow":
+        alias_path.write_text(text[:-1] + ', "ignored": 1e400}')
+    elif case == "huge_integer":
+        alias_path.write_text(text[:-1] + ', "ignored": ' + "9" * 80 + "}")
+    elif case == "unpaired_surrogate":
+        alias_path.write_text(text[:-1] + ', "ignored": "\\ud800"}')
+    elif case == "record_time_overflow":
+        value = json.loads(text)
+        value["observed_utc"] = "9999-12-31T23:00:00-23:00"
+        alias_path.write_text(json.dumps(value))
+    else:
+        args[args.index("--as-of") + 1] = "9999-12-31T23:00:00-23:00"
+    assert rp.main(args) == 2
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert json.loads(output.err) == {"status": "INPUT_REJECTED", "code": code}
+
+
+def test_rp7_unpaired_surrogate_in_environment_value(scenario, tmp_path, capsys):
+    args = cli_args(scenario, tmp_path)
+    candidate_path = tmp_path / "cli/candidate.json"
+    text = candidate_path.read_text()
+    assert json.dumps(SECRET) in text
+    candidate_path.write_text(text.replace(json.dumps(SECRET), '"\\udc80"'))
+    assert rp.main(args) == 2
+    assert json.loads(capsys.readouterr().err)["code"] == "INPUT_INVALID_UNICODE"
+
+
+def stored_zip(path, manifest_raw, encrypted=False):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as archive:
+        archive.writestr(rp.MANIFEST_NAME, manifest_raw)
+    data = bytearray(buffer.getvalue())
+    if encrypted:
+        # zipfile clears this flag on write; set it in the local (offset 6) and
+        # central (offset 8) headers as an encrypted entry would carry it.
+        data[6] |= 0x1
+        data[data.index(b"PK\x01\x02") + 8] |= 0x1
+    path.write_bytes(bytes(data))
+
+
+@pytest.mark.parametrize("mode", ["encrypted", "crc"])
+def test_rp7_unreadable_manifest_is_a_fixed_code(scenario, mode):
+    raw = rp.canonical(MANIFEST).encode()
+    stored_zip(scenario["path"], raw, encrypted=mode == "encrypted")
+    if mode == "crc":
+        data = scenario["path"].read_bytes()
+        position = data.index(raw) + 5
+        flipped = bytes([data[position] ^ 0x01])
+        scenario["path"].write_bytes(data[:position] + flipped + data[position + 1 :])
+    result = run(scenario)
+    assert ("MANIFEST_UNREADABLE", "artifact", None) in codes(result)
+    assert result["technical_status"] == "BLOCKED"

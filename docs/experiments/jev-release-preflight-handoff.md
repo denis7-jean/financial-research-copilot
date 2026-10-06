@@ -1,6 +1,6 @@
 # Jev release preflight checker — Claude handoff
 
-This handoff covers a bounded, offline implementation. It is local only and has not been pushed or merged. Codex review is pending.
+This handoff covers a bounded, offline implementation and one correction batch for Codex's independent review (RP-1 to RP-7). It is local only and has not been pushed or merged. Codex review of the correction delta is pending.
 
 | Item | Value |
 |---|---|
@@ -8,7 +8,9 @@ This handoff covers a bounded, offline implementation. It is local only and has 
 | Worktree | `C:\Projects\AWS Project\worktrees\jev-release-preflight` (new) |
 | Base commit | `9bf00d13dd9c83a635719dfd2acb7798c353866c` |
 | Implementation commit | `e42d5e6ad900c91307fe35497143a35e417a13af` (checker and tests) |
-| Final commit | the direct child of `e42d5e6`, which adds only this handoff. A commit cannot contain its own hash; `git log -1` on the branch gives it. |
+| Original handoff commit | `2a7bdff71324c7ec3162284f6eb2a3068f54ba4c` (child of `e42d5e6`; adds only this handoff) |
+| Correction base | `2a7bdff71324c7ec3162284f6eb2a3068f54ba4c` |
+| Final commit | the correction commit, a direct child of `2a7bdff`, changing exactly the three authorized paths. A commit cannot contain its own hash; `git log -1` on the branch gives it. |
 | Date | 2026-10-06 |
 
 **No collisions.** Before creation, the branch did not exist, the `worktrees` directory did not exist, and `git worktree list` showed only `main`. The worktree was created with `git worktree add -b phase0/jev-release-preflight <path> 9bf00d1`.
@@ -17,9 +19,9 @@ This handoff covers a bounded, offline implementation. It is local only and has 
 
 | Path | Commit | Lines |
 |---|---|---:|
-| `scripts/jev_release_preflight.py` (new) | `e42d5e6` | 1,127 |
-| `tests/test_jev_release_preflight.py` (new) | `e42d5e6` | 921 |
-| `docs/experiments/jev-release-preflight-handoff.md` (new) | final | this file |
+| `scripts/jev_release_preflight.py` (new) | `e42d5e6`, corrected in final | see the correction section |
+| `tests/test_jev_release_preflight.py` (new) | `e42d5e6`, extended in final | see the correction section |
+| `docs/experiments/jev-release-preflight-handoff.md` (new) | `2a7bdff`, revised in final | this file |
 
 Nothing else changed. In particular, these are untouched:
 
@@ -108,16 +110,22 @@ The alias form requires `candidate_function == production_function`. The checker
 
 **`external_gates` (optional).** `qualification`, `independent_review` and `owner_authorization`, each `{label, sha256}` or `null`.
 
-### Saved response record (`jev-saved-aws-response-v1`)
+### Saved response record (`jev-saved-aws-response-v2`)
+
+The record schema was bumped from v1 to v2 because the request contract narrowed (RP-5). No v1 records were ever produced from real AWS captures.
 
 Each record has these fields:
 
 - `schema`;
 - `role`: `production_baseline`, `candidate`, `alias` or `rollback_target`, with one record per role;
 - `operation`: `GetFunction` or `GetFunctionConfiguration` for function roles, `GetAlias` for the alias;
-- `request`: `FunctionName`, `Qualifier` and `Name`;
+- `request`, under a **narrow, operation-specific capture contract**:
+  - `GetFunction` / `GetFunctionConfiguration`: `FunctionName` is required and must be a plain function name; `Qualifier` is optional and may only be `$LATEST` or a numeric version. An unqualified request must have returned `$LATEST`.
+  - `GetAlias`: `FunctionName` (plain name) and `Name` (non-numeric alias name) are both required; nothing else is permitted.
+  - Missing or extra arguments, or non-string values, are rejected with `RECORD_REQUEST_INVALID`.
+  - Full or partial ARNs and alias qualifiers are valid AWS forms but are **outside this contract**. They are rejected with `RECORD_REQUEST_UNSUPPORTED` rather than normalized, and alias resolution is never inferred. Historical requests are never rewritten.
 - `observed_utc`: timezone required;
-- `response`: the unmodified AWS response body.
+- `response`: the AWS response body as captured. The checker cannot verify that it is verbatim; a record built from a selected-field projection must say so through its provenance (see the remaining prerequisites).
 
 The result reports each record's raw input SHA-256.
 
@@ -127,8 +135,11 @@ The result reports each record's raw input SHA-256.
    - The ZIP is streamed and hashed, and its raw SHA-256 and size are compared with the plan.
    - The single `lambda-build-manifest.json` member (at most 4 MiB, read only) is hashed. Duplicate or oversized entries are not trusted. It is then parsed as strict JSON.
    - The manifest `target` runtime, architecture and handler must equal the intended configuration.
-   - The manifest's allocation and declared layers must agree with the planned layers.
-   - Conversion between hex and AWS `CodeSha256` is exact. Only the canonical 44-character standard base64 of 32 bytes is accepted.
+   - The manifest must carry `packaging_policy.dependency_allocation` (a string) and `layer_evidence.layers` (a list of `{"arn": <layer-version ARN>}` objects); otherwise `MANIFEST_INVALID`.
+   - Only `complete-function-no-layers` is supported; any other or legacy allocation gives `MANIFEST_ALLOCATION_UNSUPPORTED`.
+   - Declared layer-version ARNs must equal the planned layers exactly, in order, and a complete-function manifest must declare none; otherwise `LAYER_ALLOCATION_CONTRADICTION`.
+   - An encrypted, CRC-corrupt or unsupported-compression manifest entry gives `MANIFEST_UNREADABLE`.
+   - Conversion between hex and AWS `CodeSha256` is exact. Only the canonical 44-character standard base64 of 32 bytes is accepted, and this is validated for **every** function role.
 2. **Three separate configurations.**
    - The **production baseline** is reported, together with `planned_changes` (baseline versus intended). Its existing layer produces the notice `BASELINE_LAYERS_REMOVED_BY_PLAN`, never an error.
    - The **intended** configuration is the plan.
@@ -139,7 +150,9 @@ The result reports each record's raw input SHA-256.
    - Runtime, architectures, handler, package type, ordered layers, memory, timeout, ephemeral storage and the environment are compared.
    - The candidate's `CodeSha256` must equal the derived AWS form, and its `CodeSize` must equal the ZIP size.
    - The candidate must be `State Active` with `LastUpdateStatus Successful`.
-   - In every observed function environment: AWS credential variables, a non-Haiku `COPILOT_ROUTER_PROVIDER`, unexpected names (unless allowed) and any `Environment.Error` are flagged.
+   - **Common safety checks for every function role** (baseline, candidate and rollback): a malformed environment, any `Environment.Error`, AWS credential variables and a non-Haiku `COPILOT_ROUTER_PROVIDER` are errors for that role.
+   - **Candidate only:** the plan's intended-variable expectations and unexpected names (unless allowed). Baseline and rollback environments may legitimately differ from the intended configuration.
+   - **Immutable versions:** two records describing the same account / region / function / numeric version must agree on `CodeSha256`, `CodeSize`, the compared configuration fields and the environment variables; otherwise `IMMUTABLE_VERSION_CONFLICT`. Mutable `$LATEST` snapshots taken at different times are not required to match.
 4. **Provenance and freshness.**
    - Every fact is labelled `kind: SAVED_RESPONSE` with its own `observed_utc`, `age_seconds` and `freshness` (`WITHIN_MAX_AGE`, `STALE` or `FUTURE_TIMESTAMP`). It is never labelled "current".
    - Stale facts make the result `INCOMPLETE`. A timestamp more than 300 s in the future blocks.
@@ -148,13 +161,16 @@ The result reports each record's raw input SHA-256.
    - The candidate `Version` must equal `candidate_version`.
    - The alias ARN identity must be correct and use a non-numeric alias qualifier, and the alias name must match.
    - `FunctionVersion` must be published, never `$LATEST`. In `pre_release` it must equal the rollback version; in `post_release` it must equal the candidate.
+   - Absent `RoutingConfig` or `AdditionalVersionWeights` means no weighted routing, as does an empty dictionary. A present value of any other type (including falsey lists, booleans, numbers, strings and null) gives `ROUTING_WEIGHTS_INVALID`.
    - `AdditionalVersionWeights` must exactly equal the planned weights. Each weight must be finite and strictly between 0 and 1, the total must be below 1, and the primary version must not appear in them.
+   - **Two-version contract:** at most one additional target, and it must be the other verified version (the candidate in `pre_release`, the rollback version in `post_release`). Anything else gives `ROUTING_TARGET_UNSUPPORTED`; a plan with more than one target is rejected as `PLAN_INVALID`.
    - Revision IDs must be present for the alias, candidate and rollback. They must equal the planned values, and a missing planned alias revision is its own error.
 6. **Rollback.**
    - The target must be a numeric, immutable version. `$LATEST` or an alias name gives `ROLLBACK_TARGET_NOT_IMMUTABLE`.
    - The saved record is required. Its identity must be the production function at that exact version, and its `CodeSha256` must match the plan.
    - It must be `Active`, with a matching revision.
-   - It must differ from the candidate version and from the candidate code.
+   - Its complete qualified identity (account, region, function, version) must differ from the candidate's; the same qualified version gives `ROLLBACK_EQUALS_CANDIDATE`. Equal version numbers on different functions are not a conflict.
+   - Identical code is permitted (a configuration-only release); it produces the notice `ROLLBACK_CODE_MATCHES_CANDIDATE`, not an error.
    - If the rollback depends on layers, a notice reports that layer availability is not verified.
    - With an alias strategy, a missing rollback **blocks** (`ROLLBACK_TARGET_MISSING`). With an unresolved strategy, it is reported as the unresolved decision `ROLLBACK_TARGET_UNRESOLVED`.
 7. **No invented strategy.** `release_strategy: unresolved` yields `RELEASE_STRATEGY_UNRESOLVED`, so the status is `INCOMPLETE`, never consistent. An alias record supplied without a strategy is noted as not evaluated.
@@ -181,11 +197,11 @@ The result reports each record's raw input SHA-256.
 
 | Category | Codes |
 |---|---|
-| Errors (49) | the `ERROR_CODES` constant in the script |
+| Errors (52) | the `ERROR_CODES` constant in the script |
 | Missing / stale | `ARTIFACT_FILE_NOT_VERIFIED`, `PRODUCTION_BASELINE_MISSING`, `CANDIDATE_RECORD_MISSING`, `ALIAS_RECORD_MISSING`, `FACT_STALE` |
 | Decisions | `RELEASE_STRATEGY_UNRESOLVED`, `ROLLBACK_TARGET_UNRESOLVED` |
 | Notices | the `NOTICE_CODES` constant in the script |
-| Input | `INPUT_UNREADABLE`, `INPUT_NOT_JSON`, `INPUT_DUPLICATE_KEY`, `INPUT_NONFINITE_NUMBER`, `PLAN_INVALID`, `RECORD_INVALID`, `RECORD_DUPLICATE_ROLE`, `AS_OF_INVALID` |
+| Input | `INPUT_UNREADABLE`, `INPUT_NOT_JSON`, `INPUT_DUPLICATE_KEY`, `INPUT_NONFINITE_NUMBER`, `INPUT_NUMBER_OUT_OF_RANGE`, `INPUT_INVALID_UNICODE`, `PLAN_INVALID`, `RECORD_INVALID`, `RECORD_REQUEST_INVALID`, `RECORD_REQUEST_UNSUPPORTED`, `RECORD_DUPLICATE_ROLE`, `AS_OF_INVALID` |
 
 ## Limitations
 
@@ -194,6 +210,8 @@ The result reports each record's raw input SHA-256.
 - **Fields not compared:** execution role, VPC, logging/tracing configuration, KMS key, reserved or provisioned concurrency, SnapStart, tags, `Description` and `ConfigSha256`. Under the no-model startup plan, the test function's role intentionally differs from production's, so binding the role is an open decision.
 - Only the alias strategy has version/alias semantics. Other strategies, such as an in-place `$LATEST` update, are deliberately unsupported until a reviewed decision defines them.
 - Paginated `ListVersionsByFunction` is not consumed. Version facts come from qualified `GetFunctionConfiguration` / `GetFunction` records.
+- The request contract is deliberately narrow: ARN-form identifiers and alias-qualified function requests are rejected, not normalized or resolved.
+- Integers longer than 64 digits are rejected (`INPUT_NUMBER_OUT_OF_RANGE`); no AWS response field needs more.
 - Freshness depends on the stated `observed_utc` provenance. The checker cannot authenticate who captured a record or when.
 - Manifest checks read only the embedded manifest. The full-archive verification is the separate accepted artifact evidence.
 
@@ -277,11 +295,83 @@ This is expected without saved AWS responses. The ZIP hash was unchanged before 
 
 ## Remaining decisions and integration prerequisites
 
-1. **Release strategy.** This is still unresolved. The README records production as `$LATEST` only, with no alias. An alias strategy would first need an authorized publication of the current production code as an immutable version, so that a numeric rollback target exists. That is an AWS mutation outside this task.
-2. **Rollback target.** There is no immutable previous version yet, for the same reason.
-3. **Saved-record adapter.** Codex's sealed startup records must be wrapped as `jev-saved-aws-response-v1` records, keeping the raw AWS response, request and `observed_utc` unmodified. The wrapper's own hash becomes `input_sha256`. Whether to add a reviewed adapter, or have the capture step emit this schema directly, is an integration decision.
+1. **Release strategy.** This is still unresolved. Whether production currently has published versions or an alias is **unverified**: README history is not a saved current observation, and neither this checker nor the isolated startup test observed production. If no immutable version exists, an alias strategy would first need an authorized publication of the current production code as an immutable version, so that a numeric rollback target exists. That is an AWS mutation outside this task.
+2. **Rollback target.** No immutable previous version has been observed. Its existence or absence remains unverified until separately authorized, saved production version/alias evidence exists.
+3. **Saved-record adapter.** The sealed startup records are **selected-field projections**, not complete verbatim AWS responses: the startup tooling copies chosen fields with `config.get`, which can introduce explicit nulls for omitted fields and drops `ResponseMetadata`. A future adapter or capture step must: preserve the source record hashes; record the capture recipe (projection versus verbatim); keep the operation and request identity exactly as captured; take observation provenance from the original journal/request records; and never fabricate omitted fields, relabel `CreateFunction` output as `GetFunctionConfiguration`, invent timestamps or assert raw-response authenticity. This batch does not implement that adapter or modify the sealed evidence.
 4. **Production baseline record.** This needs a separately authorized, read-only `GetFunction` capture. Historical README facts are not saved responses.
 5. **Environment expectations.** The owner must state the required application variables and their expectations. For example, `S3_BUCKET_NAME` and the `FAISS_*` keys need values for RAG, while the logs-only startup function deliberately has none. The evaluation token is compared by SHA-256 only.
 6. **Memory and timeout.** The intended 512 MiB / 30 s mirrors the observed configuration. Any change should follow the measured startup evidence.
 7. **Fields to bind later.** Whether to bind the execution role, logging, concurrency and similar fields is open; see Limitations.
 8. **Integration.** Merge this branch into the integration worktree only after Codex's independent review, then run the final integrated review.
+
+## Correction batch for Codex review RP-1 to RP-7
+
+Review report: `C:\Projects\AWS Project\main\docs\experiments\jev-release-preflight-codex-review-20261006-644d8212.md`, SHA-256 `58b7581ad1d2f40f60c025f4431c1e6d6956557c9d0408af79248a408266b6a7`. Correction base `2a7bdff71324c7ec3162284f6eb2a3068f54ba4c`, verified clean on `phase0/jev-release-preflight` before editing.
+
+| Finding | Resolution | Regressions |
+|---|---|---|
+| RP-1 immutable identities and weighted targets | Canonical `CodeSha256` validated for every function role. Records of the same account/region/function/numeric version must agree on code, size, compared configuration and environment (`IMMUTABLE_VERSION_CONFLICT`); `$LATEST` excluded. At most one additional alias target, bound to the other verified version (`ROUTING_TARGET_UNSUPPORTED`); plans with more than one target are `PLAN_INVALID`. | same-version code and configuration conflicts (baseline/rollback v7, baseline/candidate v8); agreeing and `$LATEST` snapshots pass; baseline invalid hash; unbound target 9 and two targets; two planned targets; post-release weight to the verified rollback passes |
+| RP-2 common environment safety | Split into `check_environment_safety` (every function role) and `check_environment_expectations` (candidate only). | error/provider/credential for baseline and rollback (6 cases); legitimate baseline/rollback environment differences pass |
+| RP-3 rollback identity | Full qualified identities compared; identical code is the notice `ROLLBACK_CODE_MATCHES_CANDIDATE`. | configuration-only rollback passes; different functions at equal versions are not a conflict; same qualified candidate version still rejected |
+| RP-4 manifest allocation and layers | Allocation evidence and declared layer objects required; only complete-function supported; exact ordered layer-version comparison. | missing `packaging_policy`; legacy allocation with a different layer version and with reversed order |
+| RP-5 saved request contract | Narrower contract, record schema v2: operation-specific required/permitted keys, plain names, `$LATEST`/numeric qualifiers; ARNs and alias qualifiers rejected as `RECORD_REQUEST_UNSUPPORTED`. | empty request; alias without `Name`; `Name` on a function operation; non-string qualifier; ARN `FunctionName`; alias qualifier; unqualified request returning a version |
+| RP-6 routing field types | Absent versus present distinguished; present values must be dictionaries. | `[]`, `false`, `0`, `""`, `null`, weights `[]`/`null`/string/`false` rejected; absent, `{}` and empty weights remain valid |
+| RP-7 parsing and sanitized failures | Strict JSON with finite floats, at most 64-digit integers and no unpaired surrogates (inputs and manifest); timestamp normalization overflow rejected; encrypted/CRC/compression manifest failures are `MANIFEST_UNREADABLE`. Targeted handling only. | `1e400` in an ignored field; 80-digit integer; surrogate in an ignored field and in an environment value; overflowing `observed_utc` and `--as-of`; encrypted and CRC-corrupt manifests |
+
+**The regressions reproduce the defects.** I ran the new test file against the pre-correction checker (`git show 2a7bdff:scripts/jev_release_preflight.py`) in a scratch copy: all 39 defect regressions failed there. The 8 that passed are the deliberate positive and preservation checks.
+
+The encrypted-manifest fixture sets the general-purpose encryption bit directly in the local and central headers, because Python's `zipfile` clears it on write. Against plain `zipfile` the fixture reproduces the original uncaught `RuntimeError`.
+
+**Not done here, as instructed:**
+- implementing the saved-record adapter;
+- changing the sealed startup evidence;
+- broadening the unchecked-field scope;
+- folding in the startup C-1 labelling issue.
+
+### Correction validation (exact commands and results)
+
+Run from the worktree on the final correction bytes; `<scratch>` is a fresh session-scratchpad path. Codex's probe paths were not reused.
+
+```powershell
+& 'C:\Projects\AWS Project\main\.venv\Scripts\python.exe' -B -m pytest tests/test_jev_release_preflight.py -q --tb=short -p no:cacheprovider --basetemp <scratch>\rpc-final-313
+#   CPython 3.13.12: 138 passed, 1 existing warning (unknown asyncio_mode); offline guard: 0 outbound attempts
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B -m pytest tests/test_jev_release_preflight.py -q --tb=short -p no:cacheprovider --basetemp <scratch>\rpc-final-311
+#   CPython 3.11.15: 138 passed; offline guard: 0 outbound attempts
+& '...\python.exe' -B -c "from tests.offline_guard import install; install(); import runpy; runpy.run_module('ruff',run_name='__main__')" check --no-cache scripts/jev_release_preflight.py tests/test_jev_release_preflight.py
+#   All checks passed!
+& '...\python.exe' -B -c "...same guard..." format --check --no-cache scripts/jev_release_preflight.py tests/test_jev_release_preflight.py
+#   2 files already formatted
+git diff --check; git diff --cached --check   # clean
+```
+
+**Test count.** 92 original cases, minus one rollback case that changed from an error to a positive regression, plus 47 new correction cases, gives 138.
+
+**Development history.** The first correction run had 1 failure: the encrypted-manifest fixture. It used `ZipInfo.flag_bits`, which `zipfile` clears on write, so the fixture was corrected; the checker was not loosened.
+
+**Read-only re-run on the real accepted ZIP.** I used the same scratch plan as before, with `--as-of 2026-10-07T00:00:00Z`:
+- exit 1, `INCOMPLETE`, `FILE_HASHED_MANIFEST_READ`;
+- allocation `complete-function-no-layers`, 0 declared layers, 0 errors;
+- missing facts: the production baseline and candidate records only;
+- the ZIP is unchanged at `46ace5c3…`.
+
+### Correction preservation
+
+**Main worktree.** HEAD `9bf00d13dd9c83a635719dfd2acb7798c353866c` is unchanged. The two Codex-owned unstaged shared documents are untouched by me. There are 27 untracked entries, including Codex's review report (`58b7581a…`) and my startup review. No stash, reset, switch or staging happened there.
+
+**Codex's review probe evidence**, `dependency-acquisition\2026-10-06-release-preflight-review-644d8212`:
+- all 7 hashes listed in the review match;
+- its own `completion-index.json` has 7 entries, with 0 mismatches.
+
+**Sealed startup evidence.** The outcome `ebc9eecf…` and completion index `fdffe8a1…` are unchanged, and all indexed files re-hash.
+
+**Claude reports unchanged:**
+- `cee98d21…`, `4d24abaa…`, `03ce24d2…`, `c36ca926…`, `7afdfedc…`;
+- artifact `abb1fa34…`;
+- startup `82785ad8…`.
+
+**Not performed:**
+- AWS or provider calls;
+- network, installs or builds;
+- native or artifact execution;
+- push or merge;
+- edits to shared documents or Reviewer Protocol v2.

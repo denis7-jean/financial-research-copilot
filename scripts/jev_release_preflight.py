@@ -22,9 +22,10 @@ from pathlib import Path
 import re
 import sys
 import zipfile
+import zlib
 
 PLAN_SCHEMA = "jev-release-plan-v1"
-RECORD_SCHEMA = "jev-saved-aws-response-v1"
+RECORD_SCHEMA = "jev-saved-aws-response-v2"
 RESULT_SCHEMA = "jev-release-preflight-result-v1"
 MANIFEST_NAME = "lambda-build-manifest.json"
 MANIFEST_MAX_BYTES = 4 * 1024 * 1024
@@ -32,6 +33,16 @@ COMPLETE_FUNCTION_ALLOCATION = "complete-function-no-layers"
 FUTURE_SKEW_SECONDS = 300
 ROLES = ("production_baseline", "candidate", "alias", "rollback_target")
 FUNCTION_OPERATIONS = ("GetFunction", "GetFunctionConfiguration")
+# Narrow capture contract (record schema v2): required and permitted request
+# arguments per operation. FunctionName is a plain name, Qualifier is $LATEST
+# or a numeric version and Name is a non-numeric alias name. ARNs and alias
+# qualifiers are rejected rather than normalized or resolved.
+REQUEST_KEYS = {
+    "GetFunction": ({"FunctionName"}, {"Qualifier"}),
+    "GetFunctionConfiguration": ({"FunctionName"}, {"Qualifier"}),
+    "GetAlias": ({"FunctionName", "Name"}, set()),
+}
+MAX_INT_DIGITS = 64
 HAIKU_PROVIDER = "haiku"
 
 # Environment names the application actually reads (app/, excluding the
@@ -78,12 +89,15 @@ ERROR_CODES = frozenset(
         "FACT_TIMESTAMP_IN_FUTURE",
         "FUNCTION_ARN_INVALID",
         "FUNCTION_IDENTITY_MISMATCH",
+        "IMMUTABLE_VERSION_CONFLICT",
         "LAYER_ALLOCATION_CONTRADICTION",
         "LAYER_MISMATCH",
+        "MANIFEST_ALLOCATION_UNSUPPORTED",
         "MANIFEST_INVALID",
         "MANIFEST_MISSING",
         "MANIFEST_SHA256_MISMATCH",
         "MANIFEST_TARGET_MISMATCH",
+        "MANIFEST_UNREADABLE",
         "PLAN_ALIAS_REVISION_ID_MISSING",
         "RECORD_REQUEST_RESPONSE_MISMATCH",
         "RESPONSE_FIELD_INVALID",
@@ -91,7 +105,6 @@ ERROR_CODES = frozenset(
         "RESPONSE_MALFORMED",
         "REVISION_ID_MISSING",
         "REVISION_MISMATCH",
-        "ROLLBACK_CODE_EQUALS_CANDIDATE",
         "ROLLBACK_CODE_SHA256_MISMATCH",
         "ROLLBACK_EQUALS_CANDIDATE",
         "ROLLBACK_RECORD_MISSING",
@@ -100,6 +113,7 @@ ERROR_CODES = frozenset(
         "ROLLBACK_TARGET_NOT_IMMUTABLE",
         "ROLLBACK_VERSION_MISMATCH",
         "ROUTER_PROVIDER_NOT_HAIKU",
+        "ROUTING_TARGET_UNSUPPORTED",
         "ROUTING_WEIGHTS_INVALID",
         "ROUTING_WEIGHTS_MISMATCH",
         "UNEXPECTED_WEIGHTED_ROUTING",
@@ -126,6 +140,7 @@ NOTICE_CODES = frozenset(
         "BASELINE_DIFFERS_FROM_INTENDED",
         "BASELINE_LAYERS_REMOVED_BY_PLAN",
         "CANDIDATE_IS_UNPUBLISHED_LATEST",
+        "ROLLBACK_CODE_MATCHES_CANDIDATE",
         "ROLLBACK_DEPENDS_ON_LAYERS",
         "ROLLBACK_RECORD_NOT_EVALUATED",
     }
@@ -133,13 +148,17 @@ NOTICE_CODES = frozenset(
 INPUT_CODES = frozenset(
     {
         "INPUT_DUPLICATE_KEY",
+        "INPUT_INVALID_UNICODE",
         "INPUT_NONFINITE_NUMBER",
         "INPUT_NOT_JSON",
+        "INPUT_NUMBER_OUT_OF_RANGE",
         "INPUT_UNREADABLE",
         "AS_OF_INVALID",
         "PLAN_INVALID",
         "RECORD_DUPLICATE_ROLE",
         "RECORD_INVALID",
+        "RECORD_REQUEST_INVALID",
+        "RECORD_REQUEST_UNSUPPORTED",
     }
 )
 
@@ -187,20 +206,62 @@ def _nonfinite(_):
     raise InputError("INPUT_NONFINITE_NUMBER")
 
 
+def _finite_float(text):
+    # Exponent overflow (for example 1e400) parses to infinity without a literal.
+    value = float(text)
+    if not math.isfinite(value):
+        raise InputError("INPUT_NONFINITE_NUMBER")
+    return value
+
+
+def _bounded_int(text):
+    if len(text.lstrip("-")) > MAX_INT_DIGITS:
+        raise InputError("INPUT_NUMBER_OUT_OF_RANGE")
+    return int(text)
+
+
+def _reject_unpaired_surrogates(value):
+    """JSON escapes can produce lone surrogates that no later step can encode."""
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if type(item) is str:
+            try:
+                item.encode("utf-8")
+            except UnicodeEncodeError as error:
+                raise InputError("INPUT_INVALID_UNICODE") from error
+        elif type(item) is dict:
+            pending.extend(item)
+            pending.extend(item.values())
+        elif type(item) is list:
+            pending.extend(item)
+
+
+def parse_strict_json(raw):
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise InputError("INPUT_NOT_JSON") from error
+    try:
+        value = json.loads(
+            text,
+            object_pairs_hook=_strict_pairs,
+            parse_constant=_nonfinite,
+            parse_float=_finite_float,
+            parse_int=_bounded_int,
+        )
+    except json.JSONDecodeError as error:
+        raise InputError("INPUT_NOT_JSON") from error
+    _reject_unpaired_surrogates(value)
+    return value
+
+
 def read_json(path):
     try:
         raw = Path(path).read_bytes()
     except OSError as error:
         raise InputError("INPUT_UNREADABLE") from error
-    try:
-        value = json.loads(
-            raw.decode("utf-8"),
-            object_pairs_hook=_strict_pairs,
-            parse_constant=_nonfinite,
-        )
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise InputError("INPUT_NOT_JSON") from error
-    return value, hashlib.sha256(raw).hexdigest()
+    return parse_strict_json(raw), hashlib.sha256(raw).hexdigest()
 
 
 def hex_to_code_sha256(hex_digest):
@@ -229,7 +290,11 @@ def parse_time(value):
     parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         raise ValueError("timestamp")
-    return parsed.astimezone(datetime.timezone.utc)
+    try:
+        return parsed.astimezone(datetime.timezone.utc)
+    except OverflowError as error:
+        # For example 9999-12-31T23:00:00-23:00 normalizes past datetime.max.
+        raise ValueError("timestamp") from error
 
 
 def _require(condition, code="PLAN_INVALID"):
@@ -388,6 +453,7 @@ def validate_plan(plan):
             weights = _validate_weights(strategy["additional_version_weights"])
         except ValueError as error:
             raise InputError("PLAN_INVALID") from error
+        _require(len(weights) <= 1)
         _require(
             strategy["candidate_version"] not in weights
             or strategy["phase"] == "pre_release"
@@ -432,8 +498,6 @@ def validate_record(record, input_sha256):
         and record["schema"] == RECORD_SCHEMA
         and record["role"] in ROLES
         and type(record["request"]) is dict
-        and set(record["request"]) <= {"FunctionName", "Qualifier", "Name"}
-        and all(type(v) is str for v in record["request"].values())
     ):
         raise InputError("RECORD_INVALID")
     expected_operation = (
@@ -441,6 +505,25 @@ def validate_record(record, input_sha256):
     )
     if record["operation"] not in expected_operation:
         raise InputError("RECORD_INVALID")
+    request = record["request"]
+    required, permitted = REQUEST_KEYS[record["operation"]]
+    if not (
+        required <= set(request) <= required | permitted
+        and all(type(value) is str for value in request.values())
+    ):
+        raise InputError("RECORD_REQUEST_INVALID")
+    qualifier = request.get("Qualifier")
+    if (
+        not FUNCTION_NAME.fullmatch(request["FunctionName"])
+        or (
+            qualifier is not None
+            and qualifier != "$LATEST"
+            and not VERSION.fullmatch(qualifier)
+        )
+        or ("Name" in request and not ALIAS_NAME.fullmatch(request["Name"]))
+    ):
+        # ARNs, partial ARNs and alias qualifiers are outside capture contract v2.
+        raise InputError("RECORD_REQUEST_UNSUPPORTED")
     try:
         observed = parse_time(record["observed_utc"])
     except ValueError as error:
@@ -536,6 +619,13 @@ def function_configuration(record, findings):
     if valid and type(response["EphemeralStorage"].get("Size")) is not int:
         findings.error("RESPONSE_FIELD_INVALID", role, "EphemeralStorage")
         valid = False
+    if valid:
+        # Every function role, not only the candidate, must carry a canonical hash.
+        try:
+            code_sha256_to_hex(response["CodeSha256"])
+        except ValueError:
+            findings.error("CODE_SHA256_INVALID", role, "CodeSha256")
+            valid = False
     layers = response.get("Layers", [])
     if type(layers) is not list or not all(
         type(layer) is dict and type(layer.get("Arn")) is str for layer in layers
@@ -572,7 +662,7 @@ def observed_configuration(response):
 
 
 def check_identity(record, response, plan, function_name, findings):
-    """Account/region/name joins; returns the ARN qualifier."""
+    """Account/region/name joins; returns (account, region, name, version) or None."""
     role = record["role"]
     arn = parse_function_arn(response["FunctionArn"])
     if arn is None:
@@ -586,25 +676,24 @@ def check_identity(record, response, plan, function_name, findings):
     ):
         findings.error("FUNCTION_IDENTITY_MISMATCH", role, "FunctionArn")
     request = record["request"]
-    requested = request.get("FunctionName")
-    if requested is not None and requested != function_name:
+    if request["FunctionName"] != function_name:
         findings.error("RECORD_REQUEST_RESPONSE_MISMATCH", role, "FunctionName")
     qualifier = arn["qualifier"] or "$LATEST"
-    if response["Version"] == "$LATEST":
-        consistent = qualifier == "$LATEST"
-    else:
-        consistent = qualifier == response["Version"]
-    requested_qualifier = request.get("Qualifier")
-    if not consistent or (
-        requested_qualifier is not None and requested_qualifier != response["Version"]
+    # An unqualified request returns $LATEST under capture contract v2.
+    if (
+        qualifier != response["Version"]
+        or request.get("Qualifier", "$LATEST") != response["Version"]
     ):
         findings.error("RECORD_REQUEST_RESPONSE_MISMATCH", role, "Qualifier")
-    return qualifier
+        return None
+    return (arn["account"], arn["region"], arn["name"], qualifier)
 
 
-def check_environment(role, response, intended_environment, findings):
-    variables = response.get("Environment", {}).get("Variables", {})
-    if "Error" in response.get("Environment", {}):
+def check_environment_safety(role, response, findings):
+    """Invariants for every observed function, independent of the release plan."""
+    environment = response.get("Environment", {})
+    variables = environment.get("Variables", {})
+    if "Error" in environment:
         findings.error("ENVIRONMENT_ERROR_REPORTED", role, "Environment")
     for name in CREDENTIAL_ENVIRONMENT:
         if name in variables:
@@ -612,6 +701,11 @@ def check_environment(role, response, intended_environment, findings):
     provider = variables.get("COPILOT_ROUTER_PROVIDER")
     if provider is not None and provider != HAIKU_PROVIDER:
         findings.error("ROUTER_PROVIDER_NOT_HAIKU", role, "COPILOT_ROUTER_PROVIDER")
+
+
+def check_environment_expectations(role, response, intended_environment, findings):
+    """Candidate-only comparison with the plan's intended variables."""
+    variables = response.get("Environment", {}).get("Variables", {})
     expected = intended_environment["variables"]
     for name, expectation in sorted(expected.items()):
         present = name in variables
@@ -638,6 +732,44 @@ def check_environment(role, response, intended_environment, findings):
             findings.error("ENVIRONMENT_UNEXPECTED_NAME", role, safe)
 
 
+def observe_function(record, plan, function_name, observations, findings):
+    """Shared checks for every function role; returns (response, identity)."""
+    response = function_configuration(record, findings)
+    if response is None:
+        return None, None
+    identity = check_identity(record, response, plan, function_name, findings)
+    check_environment_safety(record["role"], response, findings)
+    if identity is not None and VERSION.fullmatch(identity[3]):
+        observations.append((record["role"], identity, response))
+    return response, identity
+
+
+def immutable_facts(response):
+    return {
+        "CodeSha256": response["CodeSha256"],
+        "CodeSize": response["CodeSize"],
+        **observed_configuration(response),
+        "Environment": response.get("Environment", {}).get("Variables", {}),
+    }
+
+
+def check_immutable_conflicts(observations, findings):
+    """A numeric version is immutable: two records of it must agree.
+
+    $LATEST snapshots are mutable and taken at different times, so they are
+    deliberately excluded rather than required to match.
+    """
+    first = {}
+    for role, identity, response in observations:
+        facts = immutable_facts(response)
+        if identity not in first:
+            first[identity] = facts
+            continue
+        for field, value in facts.items():
+            if first[identity][field] != value:
+                findings.error("IMMUTABLE_VERSION_CONFLICT", role, field)
+
+
 def check_freshness(record, as_of, max_age, findings):
     age = (as_of - record["observed"]).total_seconds()
     if age < -FUTURE_SKEW_SECONDS:
@@ -659,50 +791,80 @@ def check_freshness(record, as_of, max_age, findings):
     }
 
 
+def read_manifest(path):
+    """Hash the local ZIP and read (never extract or execute) its manifest entry.
+
+    Returns (sha256 hex, size, manifest bytes or None, failure code or None).
+    """
+    digest, size = hashlib.sha256(), 0
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+            size += len(block)
+    with zipfile.ZipFile(path) as archive:
+        entries = [
+            info for info in archive.infolist() if info.filename == MANIFEST_NAME
+        ]
+        if not entries:
+            return digest.hexdigest(), size, None, "MANIFEST_MISSING"
+        # Duplicated or oversized manifest entries are never trusted.
+        if len(entries) != 1 or entries[0].file_size > MANIFEST_MAX_BYTES:
+            return digest.hexdigest(), size, None, "MANIFEST_INVALID"
+        if entries[0].flag_bits & 0x1:
+            return digest.hexdigest(), size, None, "MANIFEST_UNREADABLE"
+        try:
+            raw = archive.read(entries[0])
+        except (zipfile.BadZipFile, zlib.error, NotImplementedError, EOFError):
+            # CRC mismatch, corrupt or unsupported compression.
+            return digest.hexdigest(), size, None, "MANIFEST_UNREADABLE"
+    return digest.hexdigest(), size, raw, None
+
+
+def parse_manifest(raw):
+    """Return (target, allocation, declared layer ARNs) or raise InputError."""
+    manifest = parse_strict_json(raw)
+    try:
+        target = manifest["target"]
+        allocation = manifest["packaging_policy"]["dependency_allocation"]
+        declared = manifest["layer_evidence"]["layers"]
+    except (KeyError, TypeError) as error:
+        raise InputError("MANIFEST_INVALID") from error
+    if (
+        type(target) is not dict
+        or type(allocation) is not str
+        or type(declared) is not list
+        or not all(
+            type(layer) is dict
+            and type(layer.get("arn")) is str
+            and LAYER_ARN.fullmatch(layer["arn"])
+            for layer in declared
+        )
+    ):
+        raise InputError("MANIFEST_INVALID")
+    return target, allocation, [layer["arn"] for layer in declared]
+
+
 def verify_artifact(path, plan, findings):
-    """Hash the local ZIP and read (never extract or execute) its manifest."""
     expected = plan["artifact"]
     try:
-        digest, size = hashlib.sha256(), 0
-        with Path(path).open("rb") as stream:
-            for block in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(block)
-                size += len(block)
-        with zipfile.ZipFile(path) as archive:
-            entries = [
-                info for info in archive.infolist() if info.filename == MANIFEST_NAME
-            ]
-            manifest_raw = None
-            if len(entries) == 1 and entries[0].file_size <= MANIFEST_MAX_BYTES:
-                manifest_raw = archive.read(entries[0])
-            manifest_state = "MANIFEST_MISSING" if not entries else "MANIFEST_INVALID"
+        digest, size, manifest_raw, failure = read_manifest(path)
     except (OSError, zipfile.BadZipFile):
         findings.error("ARTIFACT_UNREADABLE", "artifact")
         return {"verification": "UNREADABLE"}
-    if digest.hexdigest() != expected["sha256"]:
+    if digest != expected["sha256"]:
         findings.error("ARTIFACT_SHA256_MISMATCH", "artifact")
     if size != expected["zip_bytes"]:
         findings.error("ARTIFACT_SIZE_MISMATCH", "artifact")
-    if manifest_raw is None:
-        # Absent, duplicated or oversized manifest entries are never trusted.
-        findings.error(manifest_state, "artifact")
-        return {"verification": "FILE_HASHED", "sha256": digest.hexdigest()}
+    if failure is not None:
+        findings.error(failure, "artifact")
+        return {"verification": "FILE_HASHED", "sha256": digest}
     if hashlib.sha256(manifest_raw).hexdigest() != expected["manifest_sha256"]:
         findings.error("MANIFEST_SHA256_MISMATCH", "artifact")
     try:
-        manifest = json.loads(
-            manifest_raw.decode("utf-8"),
-            object_pairs_hook=_strict_pairs,
-            parse_constant=_nonfinite,
-        )
-        target = manifest["target"]
-        policy = manifest.get("packaging_policy")
-        manifest_layers = manifest["layer_evidence"]["layers"]
-        if type(target) is not dict or type(manifest_layers) is not list:
-            raise TypeError("manifest")
-    except (UnicodeDecodeError, json.JSONDecodeError, InputError, KeyError, TypeError):
+        target, allocation, declared_layers = parse_manifest(manifest_raw)
+    except InputError:
         findings.error("MANIFEST_INVALID", "artifact")
-        return {"verification": "FILE_HASHED", "sha256": digest.hexdigest()}
+        return {"verification": "FILE_HASHED", "sha256": digest}
     config = plan["intended_configuration"]
     for field, intended in (
         ("runtime", config["runtime"]),
@@ -711,21 +873,22 @@ def verify_artifact(path, plan, findings):
     ):
         if target.get(field) != intended:
             findings.error("MANIFEST_TARGET_MISMATCH", "artifact", field)
-    allocation = policy.get("dependency_allocation") if type(policy) is dict else None
-    if (
-        config["layers"]
-        and (allocation == COMPLETE_FUNCTION_ALLOCATION or not manifest_layers)
-    ) or (not config["layers"] and manifest_layers):
-        # The planned layers must agree with the dependency allocation the artifact was built for.
+    if allocation != COMPLETE_FUNCTION_ALLOCATION:
+        # Unknown or legacy allocations leave the layer split unresolved.
+        findings.error("MANIFEST_ALLOCATION_UNSUPPORTED", "artifact", "allocation")
+    if declared_layers != config["layers"] or (
+        allocation == COMPLETE_FUNCTION_ALLOCATION and declared_layers
+    ):
+        # Exact layer-version bindings and order must match the plan.
         findings.error("LAYER_ALLOCATION_CONTRADICTION", "artifact", "layers")
     return {
         "verification": "FILE_HASHED_MANIFEST_READ",
-        "sha256": digest.hexdigest(),
+        "sha256": digest,
         "manifest_sha256": hashlib.sha256(manifest_raw).hexdigest(),
         "manifest_dependency_allocation": allocation
-        if type(allocation) is str and SAFE_TOKEN.fullmatch(allocation)
-        else None,
-        "manifest_declared_layers": len(manifest_layers),
+        if SAFE_TOKEN.fullmatch(allocation)
+        else "UNPRINTABLE_VALUE",
+        "manifest_declared_layers": len(declared_layers),
     }
 
 
@@ -736,23 +899,20 @@ def compare_configuration(role, observed, intended, findings):
             findings.error(code, role, field)
 
 
-def check_candidate(record, plan, artifact_code_sha256, findings):
+def check_candidate(record, plan, artifact_code_sha256, observations, findings):
     role = "candidate"
-    response = function_configuration(record, findings)
+    response, identity = observe_function(
+        record, plan, plan["candidate_function"], observations, findings
+    )
     if response is None:
-        return None
-    check_identity(record, response, plan, plan["candidate_function"], findings)
+        return None, None
     observed = observed_configuration(response)
     compare_configuration(role, observed, plan["intended_configuration"], findings)
-    check_environment(
+    check_environment_expectations(
         role, response, plan["intended_configuration"]["environment"], findings
     )
-    try:
-        code_sha256_to_hex(response["CodeSha256"])
-        if response["CodeSha256"] != artifact_code_sha256:
-            findings.error("CODE_SHA256_MISMATCH", role, "CodeSha256")
-    except ValueError:
-        findings.error("CODE_SHA256_INVALID", role, "CodeSha256")
+    if response["CodeSha256"] != artifact_code_sha256:
+        findings.error("CODE_SHA256_MISMATCH", role, "CodeSha256")
     if response["CodeSize"] != plan["artifact"]["zip_bytes"]:
         findings.error("CODE_SIZE_MISMATCH", role, "CodeSize")
     if response["State"] != "Active":
@@ -780,15 +940,16 @@ def check_candidate(record, plan, artifact_code_sha256, findings):
             name if ENV_NAME.fullmatch(name) else "UNPRINTABLE_NAME"
             for name in response.get("Environment", {}).get("Variables", {})
         ),
-    }
+    }, identity
 
 
-def check_baseline(record, plan, findings):
+def check_baseline(record, plan, observations, findings):
     role = "production_baseline"
-    response = function_configuration(record, findings)
+    response, _ = observe_function(
+        record, plan, plan["production_function"], observations, findings
+    )
     if response is None:
         return None
-    check_identity(record, response, plan, plan["production_function"], findings)
     observed = observed_configuration(response)
     intended = plan["intended_configuration"]
     # Baseline differences are planned changes, not inconsistencies.
@@ -818,7 +979,9 @@ def check_baseline(record, plan, findings):
     }
 
 
-def check_rollback(record, plan, artifact_code_sha256, candidate_version, findings):
+def check_rollback(
+    record, plan, artifact_code_sha256, candidate_identity, observations, findings
+):
     rollback = plan["rollback"]
     role = "rollback_target"
     version = rollback["function_version"]
@@ -832,19 +995,25 @@ def check_rollback(record, plan, artifact_code_sha256, candidate_version, findin
         findings.error("CODE_SHA256_INVALID", role, "code_sha256")
         expected_code = None
     if expected_code is not None and rollback["code_sha256"] == artifact_code_sha256:
-        findings.error("ROLLBACK_CODE_EQUALS_CANDIDATE", role, "code_sha256")
-    if version == candidate_version:
+        # A configuration-only release legitimately keeps identical code.
+        findings.notice("ROLLBACK_CODE_MATCHES_CANDIDATE", role, "code_sha256")
+    rollback_identity = (
+        plan["account_id"],
+        plan["region"],
+        plan["production_function"],
+        version,
+    )
+    if rollback_identity == candidate_identity:
         findings.error("ROLLBACK_EQUALS_CANDIDATE", role, "function_version")
     if record is None:
         findings.error("ROLLBACK_RECORD_MISSING", role)
         return None
-    response = function_configuration(record, findings)
+    response, identity = observe_function(
+        record, plan, plan["production_function"], observations, findings
+    )
     if response is None:
         return None
-    qualifier = check_identity(
-        record, response, plan, plan["production_function"], findings
-    )
-    if response["Version"] != version or qualifier != version:
+    if response["Version"] != version or identity != rollback_identity:
         findings.error("ROLLBACK_VERSION_MISMATCH", role, "Version")
     if expected_code is not None and response["CodeSha256"] != rollback["code_sha256"]:
         findings.error("ROLLBACK_CODE_SHA256_MISMATCH", role, "CodeSha256")
@@ -893,31 +1062,35 @@ def check_alias(record, plan, findings):
     ):
         findings.error("ALIAS_IDENTITY_MISMATCH", role, "AliasArn")
     request = record["request"]
-    if request.get("FunctionName") not in (
-        None,
-        plan["production_function"],
-    ) or request.get("Name") not in (None, response["Name"]):
+    if (
+        request["FunctionName"] != plan["production_function"]
+        or request["Name"] != response["Name"]
+    ):
         findings.error("RECORD_REQUEST_RESPONSE_MISMATCH", role, "Name")
     if response["Name"] != strategy["alias_name"]:
         findings.error("ALIAS_NAME_MISMATCH", role, "Name")
     target = response["FunctionVersion"]
+    rollback = plan["rollback"]
+    rollback_version = (
+        rollback["function_version"]
+        if rollback is not None and VERSION.fullmatch(rollback["function_version"])
+        else None
+    )
+    if strategy["phase"] == "post_release":
+        primary, other = strategy["candidate_version"], rollback_version
+    else:
+        primary, other = rollback_version, strategy["candidate_version"]
     if not VERSION.fullmatch(target):
         findings.error("ALIAS_TARGETS_UNPUBLISHED_VERSION", role, "FunctionVersion")
-    else:
-        rollback = plan["rollback"]
-        expected = (
-            strategy["candidate_version"]
-            if strategy["phase"] == "post_release"
-            else rollback["function_version"]
-            if rollback is not None
-            else None
-        )
-        if expected is not None and target != expected:
-            findings.error("ALIAS_TARGET_VERSION_MISMATCH", role, "FunctionVersion")
-    routing = response.get("RoutingConfig") or {}
-    weights = (
-        routing.get("AdditionalVersionWeights") or {} if type(routing) is dict else None
-    )
+    elif primary is not None and target != primary:
+        findings.error("ALIAS_TARGET_VERSION_MISMATCH", role, "FunctionVersion")
+    # Absent optional fields mean no weighted routing; present ones must be maps.
+    weights = {}
+    routing = response.get("RoutingConfig", {})
+    if type(routing) is not dict:
+        weights = None
+    elif "AdditionalVersionWeights" in routing:
+        weights = routing["AdditionalVersionWeights"]
     try:
         weights = _validate_weights(weights)
         if target in weights:
@@ -926,6 +1099,13 @@ def check_alias(record, plan, findings):
         findings.error("ROUTING_WEIGHTS_INVALID", role, "RoutingConfig")
         weights = None
     planned = _validate_weights(strategy["additional_version_weights"])
+    for field, mapping in (
+        ("RoutingConfig", weights),
+        ("additional_version_weights", planned),
+    ):
+        # Two-version contract: one additional target, the other verified version.
+        if mapping and (other is None or set(mapping) != {other}):
+            findings.error("ROUTING_TARGET_UNSUPPORTED", role, field)
     if weights is not None and weights != planned:
         findings.error(
             "UNEXPECTED_WEIGHTED_ROUTING"
@@ -980,16 +1160,20 @@ def evaluate(plan, records, artifact_path=None, as_of=None):
         if role in by_role
     ]
 
+    # Numeric-version observations from every function role, for immutability joins.
+    observations = []
     baseline = None
     if "production_baseline" in by_role:
-        baseline = check_baseline(by_role["production_baseline"], plan, findings)
+        baseline = check_baseline(
+            by_role["production_baseline"], plan, observations, findings
+        )
     else:
         findings.missing_fact("PRODUCTION_BASELINE_MISSING", "production_baseline")
 
-    candidate = None
+    candidate = candidate_identity = None
     if "candidate" in by_role:
-        candidate = check_candidate(
-            by_role["candidate"], plan, artifact_code_sha256, findings
+        candidate, candidate_identity = check_candidate(
+            by_role["candidate"], plan, artifact_code_sha256, observations, findings
         )
     else:
         findings.missing_fact("CANDIDATE_RECORD_MISSING", "candidate")
@@ -1007,18 +1191,20 @@ def evaluate(plan, records, artifact_path=None, as_of=None):
 
     rollback = None
     if plan["rollback"] is not None:
-        candidate_version = (
-            strategy["candidate_version"]
-            if strategy["type"] == "alias"
-            else candidate["version"]
-            if candidate is not None
-            else None
-        )
+        # Compare complete qualified identities, never bare version numbers.
+        if strategy["type"] == "alias":
+            candidate_identity = (
+                plan["account_id"],
+                plan["region"],
+                plan["production_function"],
+                strategy["candidate_version"],
+            )
         rollback = check_rollback(
             by_role.get("rollback_target"),
             plan,
             artifact_code_sha256,
-            candidate_version,
+            candidate_identity,
+            observations,
             findings,
         )
     elif strategy["type"] == "alias":
@@ -1028,6 +1214,8 @@ def evaluate(plan, records, artifact_path=None, as_of=None):
         findings.decision("ROLLBACK_TARGET_UNRESOLVED", "rollback_target", "rollback")
         if "rollback_target" in by_role:
             findings.notice("ROLLBACK_RECORD_NOT_EVALUATED", "rollback_target")
+
+    check_immutable_conflicts(observations, findings)
 
     if findings.errors:
         status = "BLOCKED"
