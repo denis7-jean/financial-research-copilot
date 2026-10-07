@@ -9,6 +9,7 @@ from app.agents.router import RouterAgent
 from app.agents.router_configuration import RouterConfiguration, build_router
 from app.agents.summarizer_agent import SummarizerAgent, SummaryResponse
 from app.errors import ServiceFailure, failure_from
+from app.services.rag_smoke_policy import SmokePolicy, SmokeStop
 from app.observability import (
     annotate,
     current_trace_id,
@@ -42,6 +43,30 @@ def _failure_result(failure: ServiceFailure, task_type: str, trace_id: str) -> d
 
 
 class CopilotOrchestrator:
+    @staticmethod
+    def process_smoke(query: str, *, policy: SmokePolicy) -> dict:
+        """Explicit injected single-run entry; never enabled by environment alone.
+
+        No ordinary orchestrator, summarizer or Jev client is constructed here.
+        The QAAgent calls the same retriever and generation application seams.
+        Returned financial content requires separately authorized private handling.
+        """
+        if type(policy) is not SmokePolicy:
+            raise SmokeStop("POLICY_REQUIRED")
+        with policy.activate(query):
+            decision = RouterAgent(smoke_policy=policy).route(query)
+            if decision.task_type != "qa":
+                policy.fail("ROUTER_MISROUTE")
+            response = QAAgent().run(query)
+            if not response.answer.strip() or not response.retrieved_context:
+                policy.fail("RAG_RESULT_INVALID")
+            return {
+                "scope": "STRUCTURAL_SMOKE_NOT_QUALIFICATION",
+                "task_type": "qa",
+                "router_confidence": decision.confidence,
+                "result": response.model_dump(),
+            }
+
     def __init__(self, *, router_configuration=None, jev_transport=None):
         # Preserve legacy construction/fixtures on the default Haiku path.
         configuration = router_configuration or RouterConfiguration.from_environment()

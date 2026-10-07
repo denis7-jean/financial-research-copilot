@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import tempfile
 import time
@@ -10,6 +11,7 @@ from dotenv import load_dotenv
 
 from app.errors import ServiceFailure, failure_from
 from app.observability import annotate, record_model_call, stage
+from app.services.rag_smoke_policy import current_policy, strict_json, check
 
 load_dotenv()
 
@@ -27,8 +29,46 @@ _index = None
 _metadata = None
 
 
+class SmokeNativeAdapter:
+    """Runtime adapter; tests inject invented substitutes, never execute FAISS."""
+
+    @staticmethod
+    def deserialize(raw):
+        return faiss.deserialize_index(np.frombuffer(raw, dtype=np.uint8))
+
+    @staticmethod
+    def is_flat_ip(index):
+        return isinstance(index, faiss.IndexFlatIP) and index.metric_type == faiss.METRIC_INNER_PRODUCT
+
+    @staticmethod
+    def embedding_array(values):
+        return np.array([values], dtype=np.float32)
+
+    @staticmethod
+    def valid_index(value):
+        return not isinstance(value, (bool, np.bool_)) and isinstance(value, (int, np.integer))
+
+    @staticmethod
+    def finite_score(value):
+        return not isinstance(value, (bool, np.bool_)) and isinstance(value, (float, int, np.floating, np.integer)) and math.isfinite(value)
+
+
 def _load_index_if_needed():
     global _index, _metadata
+
+    smoke = current_policy()
+    if smoke is not None:
+        # Ignore the ordinary global cache: this run must verify BOTH bindings.
+        raw_index = smoke.object_bytes("index")
+        raw_meta = smoke.object_bytes("metadata")
+        metadata = smoke.validate_metadata(raw_meta)
+        # Only now may the injected adapter deserialize verified bytes.
+        if smoke.native is None:
+            smoke.native = SmokeNativeAdapter()
+        index = smoke.native.deserialize(raw_index)
+        check(smoke.native.is_flat_ip(index) and type(index.d) is int and index.d == 1024 and type(index.ntotal) is int and index.ntotal == len(metadata), "INDEX_STRUCTURE_INVALID")
+        smoke.index, smoke.metadata = index, metadata
+        return
 
     if _index is not None:
         annotate("index_loaded_this_request", False)
@@ -54,6 +94,19 @@ def _load_index_if_needed():
 def embed_query(query: str) -> np.ndarray:
     """Embed the query with Titan. Raises ServiceFailure (stage retrieval.embed)."""
     body = json.dumps({"inputText": query, "dimensions": 1024, "normalize": True})
+    smoke = current_policy()
+    if smoke is not None:
+        smoke.validate_query(query)
+
+        def decode(response):
+            return response, strict_json(smoke.read_body(response, smoke.config["embedding_response_bytes"]))
+
+        payload = smoke.invoke("embedding", "InvokeModel", {
+            "modelId": EMBEDDING_MODEL_ID, "body": body,
+            "contentType": "application/json", "accept": "application/json",
+        }, decode=decode)
+        smoke.validate_embedding(payload.get("embedding"))
+        return smoke.native.embedding_array(payload["embedding"])
     start = time.monotonic()
     with stage("retrieval.embed"):
         try:
@@ -87,6 +140,21 @@ def retrieve_chunks(query: str, n_results: int = 5) -> list[dict]:
     model failures raise app.errors.ServiceFailure instead of looking like an
     empty result.
     """
+    smoke = current_policy()
+    if smoke is not None:
+        smoke.validate_query(query)
+        check(n_results == 5, "RETRIEVAL_COUNT_INVALID")
+        _load_index_if_needed()
+        embedding = embed_query(query)
+        distances, indices = smoke.index.search(embedding, n_results)
+        check(len(distances) == len(indices) == 1 and len(distances[0]) == len(indices[0]) == n_results, "SEARCH_RESULT_INVALID")
+        results = []
+        for distance, idx in zip(distances[0], indices[0]):
+            check(smoke.native.valid_index(idx) and 0 <= int(idx) < len(smoke.metadata) and smoke.native.finite_score(distance), "SEARCH_RESULT_INVALID")
+            entry = smoke.metadata[int(idx)]
+            results.append({"content": entry["text"], "source": entry["source"], "score": float(distance)})
+        return results
+
     try:
         _load_index_if_needed()
     except Exception as e:

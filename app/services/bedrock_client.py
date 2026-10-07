@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from app.errors import ServiceFailure, failure_from
 from app.observability import annotate, record_converse_usage, stage
 from app.services.retriever import retrieve_chunks
+from app.services.rag_smoke_policy import current_policy
 
 load_dotenv()
 
@@ -43,7 +44,7 @@ def retrieve_and_generate(query: str, knowledge_base_id: str = None) -> dict:
 
     with stage("llm.qa_generate"):
         try:
-            response = bedrock.converse(
+            request = dict(
                 modelId=BEDROCK_MODEL_ID,
                 system=[
                     {
@@ -62,6 +63,14 @@ def retrieve_and_generate(query: str, knowledge_base_id: str = None) -> dict:
                     }
                 ],
             )
+            smoke = current_policy()
+            if smoke is not None:
+                smoke.validate_query(query)
+                request["modelId"] = smoke.config["models"]["haiku"]
+                request["inferenceConfig"] = {"maxTokens": smoke.config["output_tokens"]["generation"]}
+                response = smoke.invoke("generation", "Converse", request)
+            else:
+                response = bedrock.converse(**request)
         except Exception as e:
             raise failure_from("qa_generate", e) from e
     record_converse_usage("qa_generate", BEDROCK_MODEL_ID, response)
