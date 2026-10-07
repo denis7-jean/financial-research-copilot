@@ -149,10 +149,30 @@ def retrieve_chunks(query: str, n_results: int = 5) -> list[dict]:
         distances, indices = smoke.index.search(embedding, n_results)
         check(len(distances) == len(indices) == 1 and len(distances[0]) == len(indices[0]) == n_results, "SEARCH_RESULT_INVALID")
         results = []
+        seen = set()
+        previous_score = None
         for distance, idx in zip(distances[0], indices[0]):
             check(smoke.native.valid_index(idx) and 0 <= int(idx) < len(smoke.metadata) and smoke.native.finite_score(distance), "SEARCH_RESULT_INVALID")
-            entry = smoke.metadata[int(idx)]
-            results.append({"content": entry["text"], "source": entry["source"], "score": float(distance)})
+            ordinal, score = int(idx), float(distance)
+            check(
+                ordinal not in seen
+                and (previous_score is None or score <= previous_score),
+                "SEARCH_RESULT_INVALID",
+            )
+            seen.add(ordinal)
+            previous_score = score
+            entry = smoke.metadata[ordinal]
+            check(
+                entry["source"] in smoke.config["metadata"]["source_counts"],
+                "SEARCH_RESULT_INVALID",
+            )
+            results.append({"content": entry["text"], "source": entry["source"], "score": score})
+        expected = smoke.config["expected_source"]
+        check(
+            sum(row["source"] == expected["source"] for row in results)
+            >= expected["minimum_hits"],
+            "EXPECTED_SOURCE_MISSING",
+        )
         return results
 
     try:

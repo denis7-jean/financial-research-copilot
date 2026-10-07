@@ -138,10 +138,11 @@ class SmokePolicy:
                     "timeouts",
                     "objects",
                     "metadata",
+                    "expected_source",
                     "embedding_response_bytes",
                 ),
             )
-            check(config["schema"] == "rag-smoke-policy-v1", "POLICY_INVALID")
+            check(config["schema"] == "rag-smoke-policy-v2", "POLICY_INVALID")
             check(
                 type(config["run_id"]) is str
                 and re.fullmatch(r"[A-Za-z0-9_-]{1,80}", config["run_id"]),
@@ -252,6 +253,13 @@ class SmokePolicy:
                 )
                 integer(count)
             check(sum(sources.values()) == config["metadata"]["rows"], "POLICY_INVALID")
+            exact(config["expected_source"], ("source", "minimum_hits"))
+            expected = config["expected_source"]
+            check(
+                type(expected["source"]) is str and expected["source"] in sources,
+                "POLICY_INVALID",
+            )
+            integer(expected["minimum_hits"], maximum=5)
             check(
                 set(evidence) == set(trusted_evidence_hashes) == {"haiku", "titan"},
                 "EVIDENCE_INVALID",

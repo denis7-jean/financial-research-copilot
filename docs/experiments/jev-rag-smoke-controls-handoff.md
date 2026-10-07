@@ -1,8 +1,9 @@
 # Isolated RAG smoke controls — offline implementation handoff
 
 Base: `274e283e353261c4d50b0d4f18ee97366d80d7ef`.
+Original implementation: `4103f1e2c05abd6360a1ac793bca3a6e139c801e`. F1/F2 correction base is that exact commit; the new correction commit is bound by the private completion receipt.
 Branch/worktree: `phase0/jev-rag-smoke-controls`, `C:\Projects\AWS Project\worktrees\jev-rag-smoke-controls`.
-Status: **Codex implementation and self-review; independent review pending.** No execution, build, qualification or deployment acceptance.
+Status: **Codex F1/F2 correction and self-review; focused independent delta review pending.** Claude requested changes on the original implementation. No execution, build, qualification or deployment acceptance.
 
 The proposal `dependency-acquisition/2026-10-06-rag-smoke-plan-7f467d10/plan.md` was read and verified at `ac0e7ca4aecff038fc151d67471faac552863cf82e5e0297c2c222701bc0d4c3`. Its historical scenario, rates, budgets, caps and resources remain proposals. The baseline evidence review was verified at `dcf4cf081b51cc0c0594e018795b9b61b2c7dc45a93293ac15c9aa97671b8c29`; it accepts one recorded `$LATEST` observation, not RAG, aliases, rollback, release or least-privilege IAM.
 
@@ -19,7 +20,11 @@ The chain is router -> index GET -> metadata GET -> embedding -> QA generation. 
 
 ## Exact configuration and evidence contract
 
-`rag-smoke-policy-v1` has exactly: schema; safe run_id/scenario strings; query_sha256; region=us-east-1; models={haiku:pinned Haiku4.5 US profile,titan:Titan V2}; max_attempts={router:1,embedding:1,generation:1,object_reads:2}; output_tokens={router,generation}, positive integer owner caps; ceilings_usd={haiku,titan,total}, positive decimal strings; timeouts={connect_seconds,read_seconds}, positive integer owner values; objects={index,metadata}; metadata={rows,source_counts,max_text_bytes}; embedding_response_bytes, positive integer cap. Query must be nonempty, <=300 characters and match its exact UTF-8 hash. No real scenario, prices, ceiling or caps are installed by this increment.
+`rag-smoke-policy-v2` has exactly: schema; safe run_id/scenario strings; query_sha256; region=us-east-1; models={haiku:pinned Haiku4.5 US profile,titan:Titan V2}; max_attempts={router:1,embedding:1,generation:1,object_reads:2}; output_tokens={router,generation}, positive integer owner caps; ceilings_usd={haiku,titan,total}, positive decimal strings; timeouts={connect_seconds,read_seconds}, positive integer owner values; objects={index,metadata}; metadata={rows,source_counts,max_text_bytes}; expected_source={source,minimum_hits}; embedding_response_bytes, positive integer cap. Query must be nonempty, <=300 characters and match its exact UTF-8 hash. No real scenario, prices, ceiling or caps are installed by this increment.
+
+The owner-supplied expected_source condition is mandatory: source must be a string already in the bound metadata source allowlist, and minimum_hits must be a built-in integer in [1,5], the fixed retrieval k. Neither defaults nor opt-outs are accepted. Both fields are included in canonical policy bytes and the claim's policy_sha256. Missing/null/malformed conditions, additional keys, and every v1 policy reject with POLICY_INVALID before claim creation or dispatch. No old policy silently bypasses the condition. This version change applies only to the smoke policy, not Reviewer Protocol v2 or its accepted contracts.
+
+Before returning smoke retrieval to generation, exactly five indices must be valid, in range and distinct; scores must be finite and non-increasing (equal scores are valid). Source membership is checked and matching expected-source hits must meet the supplied minimum. Duplicate/invalid/order failures produce SEARCH_RESULT_INVALID; insufficient expected-source hits produce EXPECTED_SOURCE_MISSING. The real orchestrator/QA/retriever seams stop with zero generation sends. Ordinary retrieval outside active smoke policy remains unchanged. A source hit is a structural provenance condition, not an answer-quality or semantic citation assertion.
 
 Each object has exactly bucket/key/owner/etag/version_id/size_bytes/sha256. The two keys are distinct in the same bucket and expected owner. ETags are exact quoted values; VersionId is null or explicit. Requests include ExpectedBucketOwner and IfMatch, optionally exact VersionId. Full bytes/ContentLength/ETag/version/hash joins are required. Managed transfers, ranged part loops and caches cannot bypass this gate. Metadata is a strict JSON list of exactly bound row count with exactly chunk_id/source/text per row: ordinal integer IDs, source membership and exact source counts, nonempty bounded text. Duplicate keys, nonfinite JSON numbers and mismatches fail before FAISS. Sources and file bytes are trusted only at supplied bindings; this does not prove vector/text semantic alignment or historical writer execution.
 
@@ -35,7 +40,7 @@ Claims require an existing parent outside Git, an absolute normalized path, no p
 
 The existing ordinary application still performs import-time dotenv/client initialization. This task's tests keep the existing guard active before importing it, so no real credential source is accessed. Future dedicated smoke entry/capture configuration must address that context under its grant; this is not permission to load credentials now.
 
-## Validation
+## Original implementation validation (historical result)
 
 Actual interpreter: Python3.11.15 (`C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe`). Private receipt root: `C:\Projects\AWS Project\dependency-acquisition\rag-smoke-controls-20261007-04cb97b2`.
 
@@ -51,10 +56,62 @@ The existing accounting/journal implementation was inspected. Its experiment dep
 
 Review the seven-path delta, explicit activation and unchanged ordinary paths; actual SDK hook coverage and unknown accounting; full S3/metadata gate preceding deserialization; strict route/output gating; finite/aligned search; retained claims/partial evidence and disclosure of filesystem-only scope. This is Codex self-review, not independent acceptance.
 
-**Build blocker outside this grant:** `scripts/lambda_package.py:SOURCE_NAMES` does not include `app/services/rag_smoke_policy.py`. Because the four changed application files import it, a later separately authorized packaging delta must include it and validate the new import/source closure. No packager change is made here. Any eventual isolated Lambda entry also needs a separately reviewed invocation/claim binding; ordinary `/ask` remains unchanged and cannot enable this policy.
+**F1 corrected by the bounded follow-up grant:** the original omission of `app/services/rag_smoke_policy.py` from `scripts/lambda_package.py:SOURCE_NAMES` was an existing-test/integration regression, not merely a future build limitation. The original 296-case validation omitted the packaging file and therefore missed test_repository_pins_and_source_layout_static_only failing with application_import_closure. The fixed explicit allowlist now includes that module; the static layout expectation is 18 source entries including the generated root handler. Tests still reject missing required application modules. No recursive inclusion or import-closure bypass is introduced. No real ZIP was built. Any eventual isolated Lambda entry still needs a separately reviewed invocation/claim binding; ordinary `/ask` remains unchanged and cannot enable this policy.
 
 After independent acceptance and those bounded dependencies: refresh the application-source bundle, source inventory/manifest, generated root-handler joins as applicable, final ZIP/SHA/AWS CodeSha256 and subject-bound build/native/startup/release reviews. No existing ZIP is claimed to exercise these controls. Existing accepted candidate.zip remains `46ace5c38c4cf24e131c01437419aa56244280e2e570a777ae2a0d5ff7cabed7`. Runtime pins, lock/allocation and old evidence retain their original bindings; they were not changed. Reviewer Protocol v2 source/digests/evidence are unaffected. No Reviewer-v2 qualification dependency is introduced for this structural smoke.
 
 Remaining owner/live prerequisites: approve exact question and public retrieval-data disclosure/retention, scenario and expectation; supply reviewed current price/token-capacity evidence and explicit caps/ceilings/timeouts; establish the invocation/retained-claim boundary; authorize new isolated resources/permissions and operator/credential flow; independently review, separately build/validate and authorize the eventual single run. No budget or deployment decision is inferred here.
 
 Scope receipt: isolated offline source/tests/documentation only, local scoped commit, no merge/push. Other worktrees/shared documents/reports and inventoried protected artifacts remain unchanged. Claude's active acceptance worktree is deliberately not inspected. The sealed accepted baseline capture's18 bindings were checked unchanged; no helper/operator executed. No network/AWS/credential access, native execution, installs, containers, build, model calls, resource changes, cleanup or Reviewer-v2 edits. Stop for Claude's independent review.
+
+## Focused F1/F2 correction receipt — 2026-10-07
+
+Claude's original review is retained unchanged and uncommitted at docs/experiments/jev-rag-smoke-controls-claude-review.md, raw SHA-256 afff8aa0bf1cca0ab1540875043df896b6c34a9b6c79e59e5a7f7aaf4ecfeb6b. Acceptance-contract review remains a separate task: this batch does not edit its contract/fixtures or import its branch.
+
+Exactly six scoped paths change: scripts/lambda_package.py; tests/test_lambda_package.py; app/services/rag_smoke_policy.py; app/services/retriever.py; tests/test_jev_rag_smoke.py; this handoff. Production routing/defaults, other source files, requirements, allocation, locks and historical receipts are unchanged.
+
+Fresh private evidence: C:\Projects\AWS Project\dependency-acquisition\rag-f1f2-correction-20261007-69e8c420. Actual interpreter: Python 3.11.15. The preserved bootstrap installs the existing offline guard and invented pure-Python NumPy/FAISS substitutes before application imports. No native/index code executes and no .env or real credential source is loaded.
+
+### Base reproduction
+
+A private source snapshot was copied from raw Git blobs at 4103f1e2, without changing any worktree. Four invented application probes establish that duplicate indices, increasing scores and off-target source hits dispatch generation at the base, and an expected_source key is rejected by the old policy. The repository static-layout test fails with application_import_closure. The lock test independently fails on the unchanged CRLF checkout, reproduced separately by copying its verified raw bytes into the private snapshot; those bytes normalize exactly to the committed lock. Result: 4 passed, 2 failed (the two documented reproductions), zero outbound attempts.
+
+```powershell
+$env:CORRECTION_TEST_ROOT = 'C:\Projects\AWS Project\dependency-acquisition\rag-f1f2-correction-20261007-69e8c420\committed-base'
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-f1f2-correction-20261007-69e8c420\run_offline.py' 'C:\Projects\AWS Project\dependency-acquisition\rag-f1f2-correction-20261007-69e8c420\test_base_probes.py' tests/test_lambda_package.py::test_repository_pins_and_source_layout_static_only tests/test_lambda_package.py::test_operational_lock_preserves_reviewed_inner_bytes -q --basetemp 'C:\Projects\AWS Project\dependency-acquisition\rag-f1f2-correction-20261007-69e8c420\pytest-base' --junitxml 'C:\Projects\AWS Project\dependency-acquisition\rag-f1f2-correction-20261007-69e8c420\base-results.xml' -p no:cacheprovider
+```
+
+### Corrected validation
+
+The focused checkpoint passed 89 cases before one additional legacy-v1-with-new-condition rejection case was added. The final integrated run includes that case and all focused smoke/regression suites plus the complete packaging test file:
+
+```powershell
+$env:CORRECTION_TEST_ROOT = 'C:\Projects\AWS Project\worktrees\jev-rag-smoke-controls'
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-f1f2-correction-20261007-69e8c420\run_offline.py' tests/test_jev_rag_smoke.py tests/test_router.py tests/test_agents.py tests/test_jev_candidate.py tests/test_observability.py tests/test_errors.py tests/test_jev_live_smoke.py tests/test_lambda_package.py -q -ra --basetemp 'C:\Projects\AWS Project\dependency-acquisition\rag-f1f2-correction-20261007-69e8c420\pytest-integrated' --junitxml 'C:\Projects\AWS Project\dependency-acquisition\rag-f1f2-correction-20261007-69e8c420\integrated-results.xml' -p no:cacheprovider
+```
+
+Result: **445 passed, 1 failed, 1 skipped**, zero outbound attempts. Breakdown: 86 smoke cases, 234 existing router/agent/Jev/observability/error/live-smoke regressions, and packaging 125 passed / 1 failed / 1 skipped. There are 24 additional smoke cases and three additional packaging cases relative to the correction base. The skip is Windows symlink privilege unavailable; the existing synthetic reparse checks still run. The single warning is asyncio_mode with plugin autoload disabled, as in the original validation.
+
+The sole failure remains test_operational_lock_preserves_reviewed_inner_bytes: raw Windows checkout SHA-256 226aafe6c2aab570bebb7d495e214422206fdb7e97058875ac17b069d54d38ab ends in CRLF, while canonical/committed bytes SHA-256 01fe426a5e28b274c4cc1bdb3ef6423203564b43ded257149bec35b7879c5bb8 end in LF. The lock's committed blob is unchanged from the earlier integration base. Requirements, lock bytes/hash requirements and line-ending policy were not altered or normalized to hide this failure. This result is not an all-green packaging-suite claim.
+
+Guarded Ruff check covers the five changed Python files; format check covers policy, smoke tests, packager and packaging tests. The existing retriever's formatting outside the edited smoke block is not rewritten. Git whitespace checks cover the working and staged delta. Exact commands, raw working-copy versus committed-blob hashes, JUnit hashes and preservation are recorded in private validation/completion receipts. Documentation-only updates after the integrated run do not change its tested Python bytes.
+
+### N1–N5 and future execution gates retained
+
+| Note | Unchanged limitation / required later gate |
+|---|---|
+| N1 | Per-attempt ceilings hold, but complete worst-case sufficiency is not checked at policy construction. Before any future parent Invoke, provider and total reservations must cover the complete worst-case model chain, plus the separately approved infrastructure allowance. Settlement-dependent affordability is not that prerequisite. |
+| N2 | Retry metadata mismatch precedes usage journalling. The bound send hook blocks a second delivery; this does not make one reservation sufficient for multiple genuinely delivered sends. Preserve/disclose any such evidence and uncertain extra exposure; no accounting redesign is included here. |
+| N3 | Unencodable metadata text stops before deserialization with the existing generic LOCAL_OR_UNCERTAIN_FAILURE. No error-taxonomy expansion is included. |
+| N4 | Completion remains a returned application result, not a published hash-bound evidence index. A partial final write may leave parseable complete-event bytes followed by stopped. A future consumer must require returned success and no later stop, and separately bind publication; parsed event bytes alone do not establish completion. Complete failure evidence is distinct from experiment success. |
+| N5 | Claims remain filesystem-scoped. A future exclusive retained operator claim before the parent Invoke and zero-retry parent client are required; no distributed deduplication service is added. |
+
+Other operator prerequisites remain explicit: no live producer/handler activation, external current price/capacity proof and owner caps/budget, private output/retention, allowed credential flow and resolved runtime client checks, isolated resource/IAM and memory/duration authorization, Lambda INIT/REPORT and parent unknown-outcome accounting. No semantic abstention classifier or answer-quality evaluator was added. No build/invoke/inference/deployment permission follows from these offline tests.
+
+### Focused Claude delta-review scope
+
+Compare the correction directly with 4103f1e2. Verify the one-entry explicit allowlist change and 18-entry repository layout; missing-module rejection and unchanged closure logic; policy-v2 mandatory allowlisted source/integer minimum and canonical claim binding; distinct indices, finite descending-or-tied scores, expected-source gate before generation; actual application seam failures with zero generation sends and positive tied/mixed-source cases. Verify ordinary-path regressions and the separate unchanged lock/CRLF failure. Preserve N1–N5; do not conflate this correction with acceptance-contract review or future operator implementation.
+
+Preservation receipt checks all non-scoped tracked files in this worktree against the pre-edit inventory, the original review hash, protected ZIP/startup/plan/adapter bindings and existing other-worktree states. The accepted ZIP remains unchanged; no historical evidence is refreshed. This correction is Codex implementation/self-review only, locally committed for Claude's focused review. No integration or push. Stop after delivery.
+
+During this batch, Claude's separate acceptance worktree advanced from e6fc6cd176f3bb8c411fd613fc82065103aabaf0 to 4e2addd5a66ad5b43765c11a688d4b4459aa95a7. The preservation receipt records that concurrent change separately; this batch did not edit, integrate or review that increment. Other inventoried worktree states and the protected bindings remained unchanged.

@@ -144,7 +144,7 @@ def invented(tmp_path):
         for role, raw in (("index", index_raw), ("metadata", metadata_raw))
     }
     config = {
-        "schema": "rag-smoke-policy-v1",
+        "schema": "rag-smoke-policy-v2",
         "run_id": "invented-run",
         "scenario": "invented-factual-qa",
         "query_sha256": digest(QUERY.encode()),
@@ -161,6 +161,7 @@ def invented(tmp_path):
         "timeouts": {"connect_seconds": 2, "read_seconds": 10},
         "objects": objects,
         "metadata": {"rows": 5, "source_counts": {source: 5}, "max_text_bytes": 100},
+        "expected_source": {"source": source, "minimum_hits": 1},
         "embedding_response_bytes": 65536,
     }
     evidence = {
@@ -327,6 +328,7 @@ def test_integrity_and_metadata_failure_before_native_load(tmp_path, change, cod
         f.config["metadata"]["source_counts"] = {
             "s3://invented-bucket/docs/other.pdf": 5
         }
+        f.config["expected_source"]["source"] = "s3://invented-bucket/docs/other.pdf"
         code = "METADATA_INVALID"
     else:
         raw = b"[{}]" if change == "metadata" else b'[{"chunk_id":0,"chunk_id":1}]'
@@ -420,6 +422,8 @@ def test_index_structure_failure_prevents_embedding(tmp_path, field, value):
         ([0, 1, 2, 3, True], [1.0] * 5),
         ([0, 1, 2, 3, 4], [float("inf")] * 5),
         ([0], [1.0]),
+        ([0, 0, 0, 1, 2], [1.0, 0.9, 0.8, 0.7, 0.6]),
+        ([0, 1, 2, 3, 4], [0.1, 0.2, 0.3, 0.4, 0.9]),
     ],
 )
 def test_search_validation_prevents_generation(tmp_path, indices, scores):
@@ -428,6 +432,144 @@ def test_search_validation_prevents_generation(tmp_path, indices, scores):
     with pytest.raises(SmokeStop, match="SEARCH_RESULT_INVALID"):
         run(f)
     assert len(f.model.calls) == 2
+    assert [op for op, _ in f.model.calls] == ["Converse", "InvokeModel"]
+    assert f.model.wire_sends == 2 and len(f.model.responses) == 1
+
+
+def replace_invented_metadata(f, sources):
+    raw = canonical(
+        [
+            {"chunk_id": i, "source": source, "text": SENTINEL}
+            for i, source in enumerate(sources)
+        ]
+    )
+    f.config["metadata"].update(
+        rows=len(sources),
+        source_counts={source: sources.count(source) for source in sources},
+    )
+    f.config["objects"]["metadata"].update(size_bytes=len(raw), sha256=digest(raw))
+    f.s3.responses[1].update(Body=io.BytesIO(raw), ContentLength=len(raw))
+    f.native.index.ntotal = len(sources)
+
+
+@pytest.mark.parametrize(
+    "hits,minimum",
+    [(0, 1), (2, 3)],
+)
+def test_expected_source_gate_prevents_generation(tmp_path, hits, minimum):
+    f = invented(tmp_path)
+    expected = f.config["expected_source"]["source"]
+    other = "s3://invented-bucket/docs/other-invented.pdf"
+    replace_invented_metadata(f, [expected] * hits + [other] * (5 - hits) + [expected])
+    f.config["expected_source"]["minimum_hits"] = minimum
+    p = policy(f)
+    with pytest.raises(SmokeStop, match="^EXPECTED_SOURCE_MISSING$"):
+        CopilotOrchestrator.process_smoke(QUERY, policy=p)
+    assert [op for op, _ in f.model.calls] == ["Converse", "InvokeModel"]
+    assert f.model.wire_sends == 2 and len(f.model.responses) == 1
+    assert f.s3.wire_sends == 2 and len(f.native.loads) == 1
+    assert p.halted and current_policy() is None
+    assert not list(p.directory.glob("*-complete.json"))
+
+
+@pytest.mark.parametrize("mixed_sources", [False, True])
+def test_tied_scores_and_sufficient_expected_source_hits_allow_generation(
+    tmp_path, mixed_sources
+):
+    f = invented(tmp_path)
+    expected = f.config["expected_source"]["source"]
+    if mixed_sources:
+        other = "s3://invented-bucket/docs/other-invented.pdf"
+        replace_invented_metadata(f, [expected, other, expected, other, other])
+        f.config["expected_source"]["minimum_hits"] = 2
+    else:
+        f.config["expected_source"]["minimum_hits"] = 5
+    f.native.index.search = lambda embedding, k: (
+        [[1.0, 1.0, 0.9, 0.9, 0.8]],
+        [[0, 1, 2, 3, 4]],
+    )
+    p, result = run(f)
+    assert f.model.wire_sends == 3
+    assert [op for op, _ in f.model.calls] == ["Converse", "InvokeModel", "Converse"]
+    hits = sum(
+        row["source"] == expected for row in result["result"]["retrieved_context"]
+    )
+    assert hits >= f.config["expected_source"]["minimum_hits"]
+    assert list(p.directory.glob("*-complete.json"))
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        None,
+        {},
+        {"source": "s3://invented-bucket/docs/not-allowlisted.pdf", "minimum_hits": 1},
+        {"source": None, "minimum_hits": 1},
+        {"minimum_hits": 1},
+        {"source": "s3://invented-bucket/docs/public-invented.pdf"},
+        {"source": "s3://invented-bucket/docs/public-invented.pdf", "minimum_hits": 0},
+        {"source": "s3://invented-bucket/docs/public-invented.pdf", "minimum_hits": -1},
+        {"source": "s3://invented-bucket/docs/public-invented.pdf", "minimum_hits": 6},
+        {
+            "source": "s3://invented-bucket/docs/public-invented.pdf",
+            "minimum_hits": True,
+        },
+        {
+            "source": "s3://invented-bucket/docs/public-invented.pdf",
+            "minimum_hits": 1.0,
+        },
+        {
+            "source": "s3://invented-bucket/docs/public-invented.pdf",
+            "minimum_hits": "1",
+        },
+        {
+            "source": "s3://invented-bucket/docs/public-invented.pdf",
+            "minimum_hits": 1,
+            "opt_out": True,
+        },
+    ],
+)
+def test_expected_source_condition_is_mandatory_and_strict(tmp_path, condition):
+    f = invented(tmp_path)
+    f.config["expected_source"] = condition
+    with pytest.raises(SmokeStop, match="^POLICY_INVALID$"):
+        policy(f)
+    assert not f.model.calls and not f.s3.calls and not f.native.loads
+    assert not (tmp_path / "invented-run").exists()
+
+
+@pytest.mark.parametrize("mode", ["missing", "legacy_missing", "legacy_present"])
+def test_missing_condition_and_legacy_policies_cannot_bypass_gate(tmp_path, mode):
+    f = invented(tmp_path)
+    if mode.startswith("legacy"):
+        f.config["schema"] = "rag-smoke-policy-v1"
+    if mode != "legacy_present":
+        del f.config["expected_source"]
+    with pytest.raises(SmokeStop, match="^POLICY_INVALID$"):
+        policy(f)
+    assert f.model.wire_sends == f.s3.wire_sends == 0
+    assert not (tmp_path / "invented-run").exists()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("minimum_hits", 2), ("source", "s3://invented-bucket/docs/other-invented.pdf")],
+)
+def test_expected_source_condition_is_bound_in_claim_policy_hash(
+    tmp_path, field, value
+):
+    f = invented(tmp_path)
+    expected = f.config["expected_source"]["source"]
+    other = "s3://invented-bucket/docs/other-invented.pdf"
+    replace_invented_metadata(f, [expected, expected, other, other, other])
+    original_hash = digest(canonical(f.config))
+    f.config["expected_source"][field] = value
+    changed_hash = digest(canonical(f.config))
+    assert changed_hash != original_hash
+    p, _ = run(f)
+    claim = json.loads((p.directory / "01-claim.json").read_bytes())
+    assert claim["policy_sha256"] == changed_hash
+    assert f.model.wire_sends == 3
 
 
 @pytest.mark.parametrize("provider", ["haiku", "total"])
