@@ -69,6 +69,7 @@ SOURCE_NAMES = (
     "app/agents/summarizer_agent.py",
     "app/services/__init__.py",
     "app/services/bedrock_client.py",
+    "app/services/rag_smoke_policy.py",
     "app/services/retriever.py",
 )
 

@@ -426,12 +426,35 @@ def test_repository_pins_and_source_layout_static_only():
         pins
     )
     sources = lp.source_files(root, TARGET["handler"])
-    assert len(sources) == 17
+    assert len(sources) == 18
+    assert "app/services/rag_smoke_policy.py" in sources
     # Static closure of import names; no app/client/model initialization.
     pretend_files = {module + "/__init__.py": b"" for module in lp.RUNTIME_IMPORTS}
     lp.runtime_imports(sources, pins, pretend_files)
     for raw in sources.values():
         ast.parse(raw, feature_version=(3, 11))
+
+
+@pytest.mark.parametrize(
+    "missing", ["app/services/rag_smoke_policy.py", "app/agents/qa_agent.py"]
+)
+def test_repository_import_closure_rejects_missing_application_module(missing):
+    root = Path(__file__).resolve().parents[1]
+    sources = lp.source_files(root, TARGET["handler"])
+    del sources[missing]
+    pins = lp.declarations((root / "requirements-lambda.txt").read_bytes())
+    pretend_files = {module + "/__init__.py": b"" for module in lp.RUNTIME_IMPORTS}
+    rejects(
+        "application_import_closure",
+        lambda: lp.runtime_imports(sources, pins, pretend_files),
+    )
+
+
+def test_fixed_allowlist_requires_smoke_source_file(invented):
+    root, _, _, calls, _, _ = invented
+    (root / "app/services/rag_smoke_policy.py").unlink()
+    rejects("missing_file", lambda: lp.source_files(root, TARGET["handler"]))
+    assert not calls
 
 
 def test_powershell_wrapper_has_no_destructive_or_host_pip_path():

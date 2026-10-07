@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from app.errors import ServiceFailure, failure_from
 from app.observability import record_converse_usage, record_failure, set_route
 from app.agents.routing_contract import RouterDecision
+from app.services.rag_smoke_policy import SmokeStop, current_policy, strict_json
 
 load_dotenv()
 
@@ -51,14 +52,26 @@ def _sdk_attempts(response: object) -> int | None:
 
 
 class RouterAgent:
-    def __init__(self):
-        self._client = boto3.client("bedrock-runtime", region_name="us-east-1")
+    # Legacy synthetic subclasses construct the pinned router without __init__.
+    _smoke = None
+
+    def __init__(self, *, smoke_policy=None):
+        self._smoke = smoke_policy
+        self._client = (
+            None if smoke_policy is not None
+            else boto3.client("bedrock-runtime", region_name="us-east-1")
+        )
         self._model_id = os.getenv(
             "BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"
         )
         self.latency_ms: float = 0.0
 
     def route(self, query: str, trace_id: str = "") -> RouterDecision:
+        if self._smoke is not None:
+            if current_policy() is not self._smoke:
+                raise SmokeStop("SMOKE_NOT_ACTIVE")
+            self._smoke.validate_query(query)
+            self._model_id = self._smoke.config["models"]["haiku"]
         prompt = _USER_PROMPT_TEMPLATE.format(query=query)
 
         start = time.monotonic()
@@ -69,11 +82,18 @@ class RouterAgent:
             router_cost_basis="unknown",
         )
         try:
-            response = self._client.converse(
+            request = dict(
                 modelId=self._model_id,
                 system=[{"text": _SYSTEM_PROMPT}],
                 messages=[{"role": "user", "content": [{"text": prompt}]}],
             )
+            if self._smoke is not None:
+                request["inferenceConfig"] = {"maxTokens": self._smoke.config["output_tokens"]["router"]}
+                response = self._smoke.invoke("router", "Converse", request)
+            else:
+                response = self._client.converse(**request)
+        except SmokeStop:
+            raise
         except Exception as e:
             set_route(
                 router_attempts=0
@@ -101,8 +121,10 @@ class RouterAgent:
             incoming, outgoing = usage.get("inputTokens"), usage.get("outputTokens")
             if all(type(value) is int and value >= 0 for value in (incoming, outgoing)):
                 set_route(
-                    router_cost_usd=(incoming + 5 * outgoing) / 1e6,
-                    router_cost_basis="usage_estimate",
+                    router_cost_usd=float(self._smoke.attempts["router"]["charge_usd"])
+                    if self._smoke is not None else (incoming + 5 * outgoing) / 1e6,
+                    router_cost_basis="smoke_verified_rate_usage_estimate"
+                    if self._smoke is not None else "usage_estimate",
                 )
 
         try:
@@ -113,9 +135,11 @@ class RouterAgent:
                 if text.startswith("json"):
                     text = text[4:]
             text = text.strip()
-            data = json.loads(text)
+            data = strict_json(text) if self._smoke is not None else json.loads(text)
             decision = RouterDecision.model_validate(data)
         except Exception as e:
+            if self._smoke is not None:
+                self._smoke.fail("ROUTER_OUTPUT_INVALID")
             failure = ServiceFailure(
                 "router",
                 "invalid_model_output",
@@ -125,6 +149,8 @@ class RouterAgent:
             return self._fallback("fallback_parse_error", failure, trace_id)
 
         if decision.confidence < 0.6:
+            if self._smoke is not None:
+                self._smoke.fail("ROUTER_FALLBACK")
             set_route(
                 router_outcome="fallback_low_confidence",
                 model_task_type=decision.task_type,
