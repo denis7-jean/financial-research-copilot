@@ -34,14 +34,25 @@ Nothing else changed. In particular, these are untouched:
 
 No additional dependency path was needed. The checker uses the standard library only and does not import `scripts/lambda_package.py`.
 
-## Source and test hashes
+## Historical implementation source and test bindings
 
-These are SHA-256 hashes of the committed blob content (LF), reproducible with `git show <commit>:<path> | sha256sum`. The Windows working copy of the script uses CRLF endings, so hashing the raw working file gives a different value.
+These are historical SHA-256 hashes of committed blob content (LF) at `e42d5e6ad900c91307fe35497143a35e417a13af` and the original handoff commit `2a7bdff71324c7ec3162284f6eb2a3068f54ba4c`. They are preserved as original implementation bindings, not the current correction's hashes. Reproduce hashes from raw `git show <commit>:<path>` bytes without PowerShell text-pipeline conversion. Windows working copies may use CRLF endings, so their raw hashes can differ.
 
 | Path | Blob SHA-256 | Git blob id |
 |---|---|---|
 | `scripts/jev_release_preflight.py` | `3d21d3dacce40007ac090863873112f3859f0af47f128720d7f35b2272bb5e3c` | `29b780495c2da3b42c6ca246f886b17f52963583` |
 | `tests/test_jev_release_preflight.py` | `5af8bce7914e7deaf625deedd00f5747417fa7e5f269179ed9e7db33069e3977` | `68389c98dc5fa0c37bc375ec8818b2e709661315` |
+
+### Accepted correction and local integration bindings
+
+Codex independently accepted the revised offline contract at correction commit `86cd103446bdc9b980ca144a98a06c5d226c8fb1`. Local integration merge `93bd452e26c1c6cad7132e11ac77baf658b6e357` has parents `9bf00d13dd9c83a635719dfd2acb7798c353866c` and that exact correction commit. The script and tests retain the accepted committed bytes unchanged:
+
+| Path | Accepted committed-blob SHA-256 |
+|---|---|
+| `scripts/jev_release_preflight.py` | `87f2a1d6d317352a4326909cc7787a80212a0a8f3ed363decfdb4c29b39c2f47` |
+| `tests/test_jev_release_preflight.py` | `21698346ae923d629153a4f9bb0b3c929dd74083d4e6f8866522ffa3736bfd42` |
+
+The handoff blob at `86cd103446bdc9b980ca144a98a06c5d226c8fb1` has historical pre-integration SHA-256 `26ad646b7010dbe0b36ed77e79c333fec0c729046ab585e42516b84bbe5da39d`. That hash does **not** describe this edited integration document. Its new committed hash is recorded separately in the integration receipt. The original pending-review statements elsewhere in this handoff describe the source branch's historical state; the accepted reviews and integration validation are summarized in `jev-integration-handoff.md`. Integration remains subject to Claude's final merge-fidelity/documentation/preservation review and does not establish release authorization.
 
 ## Checker contract
 
