@@ -407,6 +407,8 @@ def test_complete_capture_produces_records_the_unchanged_checker_accepts(tmp_pat
         "status": "COMPLETE",
         "stop_code": None,
         "interruption_stage": None,
+        "index_failure_code": None,
+        "publication_failures": 0,
         "calls_planned": 5,
         "calls_attempted": 5,
         "accepted_records": 4,
@@ -1348,6 +1350,8 @@ def test_console_output_is_sanitized(tmp_path, capsys, fail):
         "status",
         "stop_code",
         "interruption_stage",
+        "index_failure_code",
+        "publication_failures",
         "calls_planned",
         "calls_attempted",
         "accepted_records",
@@ -1382,6 +1386,8 @@ STATUS_KEYS = {
     "status",
     "stop_code",
     "interruption_stage",
+    "index_failure_code",
+    "publication_failures",
     "calls_planned",
     "calls_attempted",
     "accepted_records",
@@ -1810,3 +1816,357 @@ def test_oc1_publication_error_carries_fixed_fields_only_positive(tmp_path):
         "pending_stop": None,
     }
     assert str(raised.value) == "PUBLICATION_COLLISION"
+
+
+# OC-1 residual findings D1-D3 (Codex delta review of 5c0461c).
+#
+# Each `test_d1_`/`test_d2_`/`test_d3_` test reproduces a residual defect at
+# 5c0461c unless its name ends in `_positive`.
+
+
+def _serializer_trap(monkeypatch, should_fail):
+    """Wrap the helper's serializer; `should_fail(value, count)` decides."""
+    original = cap.canonical
+
+    def trapped(value):
+        if should_fail(value):
+            raise ValueError(PRIVATE_MARKER)
+        return original(value)
+
+    monkeypatch.setattr(cap, "canonical", trapped)
+
+
+def _second_response_serialization(monkeypatch):
+    seen = {"count": 0}
+
+    def should_fail(value):
+        if isinstance(value, dict) and "InventedSerializerTrap" in value:
+            seen["count"] += 1
+            return seen["count"] >= 2
+        return False
+
+    _serializer_trap(monkeypatch, should_fail)
+
+
+def test_d1_response_is_serialized_once_for_copy_and_hash(tmp_path, monkeypatch):
+    plan = capture_plan()
+    responses = standard_responses()
+    responses["candidate"]["InventedSerializerTrap"] = True
+    _second_response_serialization(monkeypatch)
+    status, aws, out = run(tmp_path, plan, scripted(plan, responses))
+    assert status["status"] == "COMPLETE" and len(aws.calls) == 5
+    observation = load(out / "03-candidate.observation.json")
+    assert observation["response"] == responses["candidate"]
+    monkeypatch.undo()
+    assert (
+        observation["response_sha256"]
+        == hashlib.sha256(
+            cap.canonical(responses["candidate"]).encode("utf-8")
+        ).hexdigest()
+    )
+    assert_no_private_text(out)
+
+
+def test_d1_cli_second_serialization_does_not_escape(tmp_path, capsys, monkeypatch):
+    plan = capture_plan()
+    responses = standard_responses()
+    responses["candidate"]["InventedSerializerTrap"] = True
+    _second_response_serialization(monkeypatch)
+    aws = FakeAWS(scripted(plan, responses))
+    argv = [
+        "--plan",
+        write_plan(tmp_path, plan),
+        "--out",
+        str(tmp_path / "c"),
+        "--live",
+    ]
+    assert cap.main(argv, aws, Clock()) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["status"] == "COMPLETE"
+    assert PRIVATE_MARKER not in captured.out + captured.err
+
+
+def _status_trap(monkeypatch, status_value):
+    """Fail only the console line: the index carries a status but not this schema."""
+
+    def should_fail(value):
+        return (
+            isinstance(value, dict)
+            and value.get("status") == status_value
+            and value.get("schema", cap.STATUS_SCHEMA) == cap.STATUS_SCHEMA
+        )
+
+    _serializer_trap(monkeypatch, should_fail)
+
+
+def test_d1_console_status_serialization_failure_has_a_fixed_fallback(
+    tmp_path, capsys, monkeypatch
+):
+    plan = capture_plan()
+    aws = FakeAWS(scripted(plan, standard_responses()))
+    out = tmp_path / "capture"
+    _status_trap(monkeypatch, "COMPLETE")
+    argv = ["--plan", write_plan(tmp_path, plan), "--out", str(out), "--live"]
+    assert cap.main(argv, aws, Clock()) == cap.CONSOLE_UNAVAILABLE_EXIT
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == cap.CONSOLE_FALLBACK
+    assert json.loads(captured.err)["status"] == "CONSOLE_STATUS_UNAVAILABLE"
+    for forbidden in (PRIVATE_MARKER, str(tmp_path), "Traceback"):
+        assert forbidden not in captured.out + captured.err
+    # The files were published independently; only the console report failed.
+    monkeypatch.undo()
+    assert load(out / "capture-index.json")["status"] == "COMPLETE"
+    assert len(aws.calls) == 5
+
+
+@pytest.mark.parametrize(
+    "status_value, extra, expected_exit",
+    [
+        ("PLAN_VALID_NO_CALLS_MADE", [], 3),
+        ("INPUT_REJECTED", ["--out", "OUT"], 2),
+    ],
+    ids=["validate-only", "input-rejected"],
+)
+def test_d1_other_console_lines_have_the_same_fallback(
+    tmp_path, capsys, monkeypatch, status_value, extra, expected_exit
+):
+    _status_trap(monkeypatch, status_value)
+    argv = ["--plan", write_plan(tmp_path, capture_plan())] + [
+        str(tmp_path / "c") if value == "OUT" else value for value in extra
+    ]
+    aws = FakeAWS([])
+    assert cap.main(argv, aws, Clock()) == expected_exit
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == cap.CONSOLE_FALLBACK
+    assert aws.factory_calls == []
+
+
+def test_d1_console_fallback_is_a_literal_positive():
+    assert cap.CONSOLE_UNAVAILABLE_EXIT == 3
+    # It is valid JSON without depending on the serializer it reports on.
+    assert json.loads(cap.CONSOLE_FALLBACK) == {
+        "code": "CONSOLE_SERIALIZATION_FAILED",
+        "schema": cap.STATUS_SCHEMA,
+        "status": "CONSOLE_STATUS_UNAVAILABLE",
+    }
+
+
+def _record_refused_then_partial_observation(monkeypatch, index_fails=False):
+    original = Path.open
+
+    def patched(self, mode="r", *args, **kwargs):
+        if "x" in mode and self.name == "03-candidate.record.json":
+            raise PermissionError(13, PRIVATE_MARKER, str(self))
+        if "x" in mode and self.name == "03-candidate.observation.json":
+            return PartialWriter(original(self, mode, *args, **kwargs))
+        if "x" in mode and index_fails and self.name == "capture-index.json":
+            raise OSError(28, PRIVATE_MARKER, str(self))
+        return original(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", patched)
+
+
+def test_d2_every_failed_publication_is_disclosed(tmp_path, monkeypatch):
+    plan = capture_plan()
+    _record_refused_then_partial_observation(monkeypatch)
+    status, aws, out = run(tmp_path, plan, scripted(plan, standard_responses()))
+    assert status["status"] == "INTERRUPTED" and len(aws.calls) == 3
+    monkeypatch.undo()
+    index = load(out / "capture-index.json")
+    failures = index.get("publication_failures", [])
+    assert {
+        (f["file"], f["stage"], f["incomplete_file_possible"]) for f in failures
+    } == {
+        ("03-candidate.record.json", "record", False),
+        ("03-candidate.observation.json", "observation", True),
+    }
+    # The primary failure and its semantics are unchanged.
+    assert index["interruption"]["file"] == "03-candidate.record.json"
+    assert status["stop_code"] == "PUBLICATION_FAILED"
+    assert status["interruption_stage"] == "record"
+    assert status.get("publication_failures") == 2
+    # Neither failed file is bound as successful; the prefix is left in place.
+    assert "03-candidate.observation.json" not in index["files"]
+    assert "03-candidate.record.json" not in index["files"]
+    assert (out / "03-candidate.observation.json").read_bytes()
+    assert not (out / "03-candidate.record.json").exists()
+    for listed, digest in index["files"].items():
+        assert file_sha256(out / listed) == digest
+    assert PRIVATE_MARKER not in (out / "capture-index.json").read_text()
+
+
+def test_d2_index_failure_is_distinguished_from_the_earlier_failure(
+    tmp_path, monkeypatch
+):
+    plan = capture_plan()
+    _record_refused_then_partial_observation(monkeypatch, index_fails=True)
+    status, aws, _ = run(tmp_path, plan, scripted(plan, standard_responses()))
+    assert status["status"] == "INTERRUPTED_UNINDEXED"
+    assert (status["stop_code"], status["interruption_stage"]) == (
+        "PUBLICATION_FAILED",
+        "record",
+    )
+    assert status.get("index_failure_code") == "PUBLICATION_FAILED"
+    assert status.get("publication_failures") == 3
+    assert status["index_sha256"] is None and len(aws.calls) == 3
+
+
+@pytest.mark.parametrize("index_fails", [False, True], ids=["indexed", "unindexed"])
+def test_d2_cli_multiple_failures_are_sanitized(
+    tmp_path, capsys, monkeypatch, index_fails
+):
+    plan = capture_plan()
+    _record_refused_then_partial_observation(monkeypatch, index_fails)
+    aws = FakeAWS(scripted(plan, standard_responses()))
+    argv = [
+        "--plan",
+        write_plan(tmp_path, plan),
+        "--out",
+        str(tmp_path / "c"),
+        "--live",
+    ]
+    assert cap.main(argv, aws, Clock()) == 1
+    captured = capsys.readouterr()
+    for forbidden in (PRIVATE_MARKER, str(tmp_path), "Traceback"):
+        assert forbidden not in captured.out + captured.err
+    if not index_fails:
+        # The partial observation file is disclosed in the published index.
+        monkeypatch.undo()
+        index = load(tmp_path / "c" / "capture-index.json")
+        disclosed = {f["file"] for f in index.get("publication_failures", [])}
+        assert disclosed == {
+            "03-candidate.record.json",
+            "03-candidate.observation.json",
+        }
+    status = json.loads(captured.out)
+    assert status.get("publication_failures") == (3 if index_fails else 2)
+    assert status.get("index_failure_code") == (
+        "PUBLICATION_FAILED" if index_fails else None
+    )
+    assert len(aws.calls) == 3
+
+
+YEAR_ONE_PLUS_ONE = datetime.datetime(
+    1, 1, 1, 0, 30, tzinfo=datetime.timezone(datetime.timedelta(hours=1))
+)
+
+
+class ScriptedMonotonic:
+    def __init__(self, values):
+        self.values = list(values)
+
+    def __call__(self):
+        return self.values.pop(0)
+
+
+def test_d3_huge_int_monotonic_before_dispatch_makes_no_call(tmp_path):
+    plan = capture_plan()
+    monotonic = ScriptedMonotonic([10**400])
+    aws = FakeAWS(scripted(plan, standard_responses()))
+    status = cap.capture(encode(plan), tmp_path / "c", aws, Clock(), monotonic)
+    assert (status["status"], status["stop_code"]) == ("STOPPED", "CLOCK_INVALID")
+    assert aws.calls == [] and status["calls_attempted"] == 0
+
+
+@pytest.mark.parametrize(
+    "after",
+    [10**400, 1e308],
+    ids=["huge-int-after", "infinite-elapsed"],
+)
+def test_d3_invalid_elapsed_after_receipt_preserves_the_response(tmp_path, after):
+    plan = capture_plan()
+    monotonic = ScriptedMonotonic([-1e308, after])
+    aws = FakeAWS(scripted(plan, standard_responses()))
+    out = tmp_path / "c"
+    status = cap.capture(encode(plan), out, aws, Clock(), monotonic)
+    assert (status["status"], status["stop_code"]) == ("STOPPED", "CLOCK_INVALID")
+    assert len(aws.calls) == 1  # no Lambda read follows
+    observation = load(out / "01-account_verification.observation.json")
+    assert observation["reason"] == {"code": "CLOCK_INVALID", "field": "elapsed_ms"}
+    assert observation["timing"]["elapsed_ms"] is None
+    assert observation["response"] == caller()
+
+
+def test_d3_utc_conversion_overflow_before_dispatch_makes_no_call(tmp_path):
+    plan = capture_plan()
+    aws = FakeAWS(scripted(plan, standard_responses()))
+    clock = Clock([YEAR_ONE_PLUS_ONE])
+    status = cap.capture(encode(plan), tmp_path / "c", aws, clock)
+    assert (status["stop_code"], status["calls_attempted"]) == ("CLOCK_INVALID", 0)
+    assert aws.calls == []
+
+
+def test_d3_utc_conversion_overflow_after_receipt_preserves_the_response(tmp_path):
+    plan = capture_plan()
+    aws = FakeAWS(scripted(plan, standard_responses()))
+    out = tmp_path / "c"
+    clock = Clock([T0, YEAR_ONE_PLUS_ONE])
+    status = cap.capture(encode(plan), out, aws, clock)
+    assert (status["status"], status["stop_code"]) == ("STOPPED", "CLOCK_INVALID")
+    assert len(aws.calls) == 1
+    observation = load(out / "01-account_verification.observation.json")
+    assert observation["reason"] == {
+        "code": "CLOCK_INVALID",
+        "field": "response_received_utc",
+    }
+    assert observation["timing"]["response_received_utc"] is None
+    assert observation["response"] == caller()
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["utc-before", "utc-after", "monotonic-huge-before", "monotonic-infinite-elapsed"],
+)
+def test_d3_cli_clock_extremes_are_sanitized(tmp_path, capsys, monkeypatch, case):
+    plan = capture_plan()
+    aws = FakeAWS(scripted(plan, standard_responses()))
+    clock = Clock()
+    if case == "utc-before":
+        clock = Clock([YEAR_ONE_PLUS_ONE])
+    elif case == "utc-after":
+        clock = Clock([T0, YEAR_ONE_PLUS_ONE])
+    else:
+        values = [10**400] if case == "monotonic-huge-before" else [-1e308, 1e308]
+        fake = ScriptedMonotonic(values)
+        monkeypatch.setattr(cap, "time", type("FakeTime", (), {"monotonic": fake}))
+    argv = [
+        "--plan",
+        write_plan(tmp_path, plan),
+        "--out",
+        str(tmp_path / "c"),
+        "--live",
+    ]
+    assert cap.main(argv, aws, clock) == 1
+    captured = capsys.readouterr()
+    status = json.loads(captured.out)
+    assert (status["status"], status["stop_code"]) == ("STOPPED", "CLOCK_INVALID")
+    assert len(aws.calls) == (0 if case.endswith("before") else 1)
+    assert "Traceback" not in captured.out + captured.err
+
+
+def test_d3_valid_extreme_but_finite_clock_values_positive(tmp_path):
+    plan = capture_plan((BASELINE,))
+    monotonic = ScriptedMonotonic([0, 1, 1e15, 1e15 + 0.25])
+    aws = FakeAWS(scripted(plan, standard_responses()))
+    out = tmp_path / "c"
+    status = cap.capture(encode(plan), out, aws, Clock(), monotonic)
+    assert status["status"] == "COMPLETE"
+    elapsed = [
+        load(out / name)["timing"]["elapsed_ms"]
+        for name in (
+            "01-account_verification.observation.json",
+            "02-production_baseline.observation.json",
+        )
+    ]
+    assert elapsed == [1000.0, 250.0]
+
+
+def test_unrelated_programming_error_still_propagates_positive(tmp_path, monkeypatch):
+    def broken(response, plan):
+        raise NameError("invented unrelated defect")
+
+    monkeypatch.setattr(cap, "check_caller_identity", broken)
+    plan = capture_plan()
+    with pytest.raises(NameError):
+        run(tmp_path, plan, scripted(plan, standard_responses()))

@@ -509,22 +509,25 @@ class Publisher:
     """
 
     def __init__(self, directory):
-        self.directory, self.files = directory, {}
+        self.directory, self.files, self.failures = directory, {}, []
+
+    def _failure(self, code, stage, name, opened):
+        failure = PublicationError(code, stage, name, opened)
+        self.failures.append(failure)
+        return failure
 
     def write_bytes(self, name, data, stage):
         if name in self.files:
-            raise PublicationError("PUBLICATION_COLLISION", stage, name, False)
+            raise self._failure("PUBLICATION_COLLISION", stage, name, False)
         opened = False
         try:
             with (self.directory / name).open("xb") as handle:
                 opened = True
                 handle.write(data)
         except FileExistsError:
-            raise PublicationError(
-                "PUBLICATION_COLLISION", stage, name, False
-            ) from None
+            raise self._failure("PUBLICATION_COLLISION", stage, name, False) from None
         except OSError:
-            raise PublicationError("PUBLICATION_FAILED", stage, name, opened) from None
+            raise self._failure("PUBLICATION_FAILED", stage, name, opened) from None
         self.files[name] = sha256_hex(data)
         return self.files[name]
 
@@ -532,7 +535,7 @@ class Publisher:
         try:
             data = canonical(value).encode("utf-8")
         except (RecursionError, TypeError, ValueError):
-            raise PublicationError(
+            raise self._failure(
                 "PUBLICATION_SERIALIZATION_FAILED", stage, name, False
             ) from None
         return self.write_bytes(name, data, stage)
@@ -546,10 +549,16 @@ def utc_text(moment):
     return moment.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
-def _utc(moment):
-    if type(moment) is not datetime.datetime or moment.utcoffset() is None:
-        raise Stop("CLOCK_INVALID", "clock")
-    return moment.astimezone(datetime.timezone.utc)
+def _utc(moment, field="clock"):
+    if type(moment) is not datetime.datetime:
+        raise Stop("CLOCK_INVALID", field)
+    try:
+        if moment.utcoffset() is None:
+            raise Stop("CLOCK_INVALID", field)
+        return moment.astimezone(datetime.timezone.utc)
+    except (OverflowError, ValueError):
+        # For example year 1 with a positive offset: no UTC instant exists.
+        raise Stop("CLOCK_INVALID", field) from None
 
 
 def _read_clock(read, field):
@@ -561,11 +570,33 @@ def _read_clock(read, field):
         raise Stop("CLOCK_READ_FAILED", field) from error
 
 
+def _finite_number(value):
+    """True for an int or float that converts to a finite float."""
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        # An int too large for a float.
+        return False
+
+
 def _read_monotonic(read, field):
     value = _read_clock(read, field)
-    if type(value) not in (int, float) or not math.isfinite(value):
+    if not _finite_number(value):
         raise Stop("CLOCK_INVALID", field)
     return value
+
+
+def _elapsed_ms(before, after):
+    """Validated non-negative, finite milliseconds between two monotonic reads."""
+    try:
+        elapsed = float(after - before) * 1000.0
+    except OverflowError:
+        raise Stop("CLOCK_INVALID", "elapsed_ms") from None
+    if not math.isfinite(elapsed) or elapsed < 0:
+        raise Stop("CLOCK_INVALID", "elapsed_ms")
+    return round(elapsed, 3)
 
 
 # Bounded reads.
@@ -622,7 +653,9 @@ class Capture:
         if self.attempted >= self.plan["max_calls"]:
             raise Stop("CALL_LIMIT_REACHED", operation)
         # Both clocks are read before the call: a failure here makes no call.
-        started = _utc(_read_clock(self.clock, "request_started_utc"))
+        started = _utc(
+            _read_clock(self.clock, "request_started_utc"), "request_started_utc"
+        )
         if self.previous_start is not None and started <= self.previous_start:
             raise Stop("CLOCK_INVALID", "request_started_utc")
         before = _read_monotonic(self.monotonic, "elapsed_ms")
@@ -638,10 +671,9 @@ class Capture:
         # Post-response clock failures are recorded, never filled in.
         clock_stop = None
         try:
-            after = _read_monotonic(self.monotonic, "elapsed_ms")
-            if after < before:
-                raise Stop("CLOCK_INVALID", "elapsed_ms")
-            elapsed_ms = round((after - before) * 1000, 3)
+            elapsed_ms = _elapsed_ms(
+                before, _read_monotonic(self.monotonic, "elapsed_ms")
+            )
         except Stop as caught:
             elapsed_ms, clock_stop = None, caught
         observation = {
@@ -674,7 +706,10 @@ class Capture:
             "record": None,
         }
         try:
-            received = _utc(_read_clock(self.clock, "response_received_utc"))
+            received = _utc(
+                _read_clock(self.clock, "response_received_utc"),
+                "response_received_utc",
+            )
         except Stop as caught:
             received = None
             if caught.code == "CLOCK_READ_FAILED":
@@ -692,14 +727,14 @@ class Capture:
             if type(response) is not dict or not representable(response):
                 raise Stop("RESPONSE_NOT_JSON_REPRESENTABLE", operation)
             # A JSON round trip of JSON-native data is the identity: faithful copy.
+            # The same serialized text yields both the copy and its hash.
             try:
-                response = json.loads(canonical(response))
+                text = canonical(response)
+                response = json.loads(text)
             except (RecursionError, TypeError, ValueError):
                 raise Stop("RESPONSE_SERIALIZATION_FAILED", operation) from None
             observation["response"] = response
-            observation["response_sha256"] = sha256_hex(
-                canonical(response).encode("utf-8")
-            )
+            observation["response_sha256"] = sha256_hex(text.encode("utf-8"))
             metadata = response_metadata(response)
             observation["response_metadata"] = metadata
             if metadata["retry_attempts"] is None:
@@ -750,6 +785,7 @@ class Capture:
                 observation_name, observation, "observation"
             )
         except PublicationError as caught:
+            # The publisher keeps every failure; the first stays the primary one.
             publication = publication or caught
         if publication is not None:
             if stop is not None:
@@ -815,6 +851,8 @@ def capture(plan_bytes, out_dir, client_factory, clock=_utc_now, monotonic=None)
         "status": status,
         "stop": None if stop is None else {"code": stop.code, "field": stop.field},
         "interruption": None if interruption is None else interruption.summary(),
+        # Every failed file, in order; none of them is in `files`.
+        "publication_failures": [failure.summary() for failure in publisher.failures],
         "calls": {"planned": plan["max_calls"], "attempted": run.attempted},
         "account_verified": run.account_verified,
         "records": run.records,
@@ -831,10 +869,11 @@ def capture(plan_bytes, out_dir, client_factory, clock=_utc_now, monotonic=None)
     }
     # One attempt at the index; it is a different file, not a retry. On a
     # failed filesystem the capture is honestly reported as unindexed.
+    index_failure = None
     try:
         index_sha256 = publisher.write_json("capture-index.json", index, "index")
     except PublicationError as caught:
-        index_sha256 = None
+        index_sha256, index_failure = None, caught
         status = "INTERRUPTED_UNINDEXED"
         interruption = interruption or caught
     if interruption is not None:
@@ -846,11 +885,34 @@ def capture(plan_bytes, out_dir, client_factory, clock=_utc_now, monotonic=None)
         "status": status,
         "stop_code": code,
         "interruption_stage": None if interruption is None else interruption.stage,
+        # Distinguishes a failed index from an earlier primary failure.
+        "index_failure_code": None if index_failure is None else index_failure.code,
+        "publication_failures": len(publisher.failures),
         "calls_planned": plan["max_calls"],
         "calls_attempted": run.attempted,
         "accepted_records": len(run.records),
         "index_sha256": index_sha256,
     }
+
+
+# Literal, not produced by the serializer whose failure it reports.
+CONSOLE_FALLBACK = (
+    '{"code":"CONSOLE_SERIALIZATION_FAILED",'
+    '"schema":"jev-release-observation-capture-status-v1",'
+    '"status":"CONSOLE_STATUS_UNAVAILABLE"}\n'
+)
+CONSOLE_UNAVAILABLE_EXIT = 3
+
+
+def _emit(stream, value):
+    """Write one canonical JSON line; on a serializer failure write the fallback."""
+    try:
+        text = canonical(value)
+    except (RecursionError, TypeError, ValueError):
+        sys.stderr.write(CONSOLE_FALLBACK)
+        return False
+    stream.write(text)
+    return True
 
 
 def main(argv=None, client_factory=boto3_client_factory, clock=_utc_now):
@@ -872,25 +934,27 @@ def main(argv=None, client_factory=boto3_client_factory, clock=_utc_now):
             if args.out is not None:
                 raise InputError("LIVE_OPT_IN_REQUIRED")
             plan = load_plan(raw)
-            sys.stdout.write(
-                canonical(
-                    {
-                        "schema": STATUS_SCHEMA,
-                        "status": "PLAN_VALID_NO_CALLS_MADE",
-                        "calls_planned": plan["max_calls"],
-                        "plan_sha256": sha256_hex(raw),
-                    }
-                )
+            emitted = _emit(
+                sys.stdout,
+                {
+                    "schema": STATUS_SCHEMA,
+                    "status": "PLAN_VALID_NO_CALLS_MADE",
+                    "calls_planned": plan["max_calls"],
+                    "plan_sha256": sha256_hex(raw),
+                },
             )
-            return 0
+            return 0 if emitted else CONSOLE_UNAVAILABLE_EXIT
         if args.out is None:
             raise InputError("LIVE_OPT_IN_REQUIRED")
         status = capture(raw, args.out, client_factory, clock)
     except InputError as error:
         code = str(error) if str(error) in INPUT_CODES else "PLAN_INVALID"
-        sys.stderr.write(canonical({"status": "INPUT_REJECTED", "code": code}))
+        _emit(sys.stderr, {"status": "INPUT_REJECTED", "code": code})
         return 2
-    sys.stdout.write(canonical(status))
+    # A console failure says nothing about the files: the capture's own result
+    # is in its index. The caller just cannot confirm it from this run.
+    if not _emit(sys.stdout, status):
+        return CONSOLE_UNAVAILABLE_EXIT
     return 0 if status["status"] == "COMPLETE" else 1
 
 

@@ -2,7 +2,7 @@
 
 Date: 2026-10-06. Offline implementation and synthetic validation only. Local commits, not pushed or merged.
 
-**Status.** Codex reviewed the original commit `fa54782c150d0934fb8443e50267657ef3a7b135` and requested one change (OC-1). The review report is `docs/experiments/jev-release-observation-capture-codex-review.md` (raw SHA-256 `d59e57c8…`), left uncommitted and unmodified. This document now describes the **OC-1 correction**, a direct child of `fa54782`. **Codex's independent delta review of that correction is pending.** See "OC-1 correction" below; statements elsewhere about the original commit are historical.
+**Status.** Codex reviewed the original commit `fa54782c150d0934fb8443e50267657ef3a7b135` and requested one change (OC-1). The review report is `docs/experiments/jev-release-observation-capture-codex-review.md` (raw SHA-256 `d59e57c8…`), left uncommitted and unmodified. The **OC-1 correction** `5c0461c3ea57079f7133d1ebcd157289a3ab4790` is a direct child of `fa54782`. Codex's delta review of it, `docs/experiments/jev-release-observation-capture-codex-delta-review-20261007-61d08d77.md` (raw SHA-256 `8f5265f3…`, uncommitted and unmodified), requested three residual fixes, D1 to D3. This document now describes the **D1–D3 correction**, a direct child of `5c0461c`. **Codex's focused delta review of it is pending.** See "OC-1 correction" and "OC-1 residual correction D1–D3" below; statements elsewhere about earlier commits are historical.
 
 | Item | Value |
 |---|---|
@@ -10,7 +10,8 @@ Date: 2026-10-06. Offline implementation and synthetic validation only. Local co
 | Worktree | `C:\Projects\AWS Project\worktrees\jev-release-observation-capture` (new) |
 | Base commit | `aeee2e1597f06f365a789abefbda65368c81fe84` (accepted local integration) |
 | Original commit (reviewed) | `fa54782c150d0934fb8443e50267657ef3a7b135`, the single child of the base, adding exactly the three paths below |
-| OC-1 correction commit | the single child of `fa54782`, changing only the same three paths. A commit cannot contain its own hash; `git log -1` on this branch gives it. |
+| OC-1 correction commit (reviewed) | `5c0461c3ea57079f7133d1ebcd157289a3ab4790`, the single child of `fa54782` |
+| D1–D3 correction commit | the single child of `5c0461c`, changing only the same three paths. A commit cannot contain its own hash; `git log -1` on this branch gives it. |
 
 **Not authorized, and not done:**
 - the live entry point was never exercised;
@@ -106,7 +107,7 @@ The helper never discovers or infers aliases, versions, rollback targets or a re
 | `RETRY_METADATA_MISSING` / `UNEXPECTED_RETRY` | `ResponseMetadata.RetryAttempts` is absent or not an integer / is not 0 |
 | `RESPONSE_FIELD_MISSING` / `RESPONSE_FIELD_INVALID` | a binding field is absent or malformed (below) |
 | `RESPONSE_BINDING_MISMATCH` | the response identity differs from the request or plan |
-| `CLOCK_INVALID` | the host clock is naive, a request start does not strictly increase, the response time precedes the request start, or a monotonic reading is non-numeric, non-finite or goes backwards |
+| `CLOCK_INVALID` | Any of these: the host clock is naive, or its conversion to UTC overflows (for example year 1 with a positive offset); a request start does not strictly increase; the response time precedes the request start; a monotonic reading is non-numeric, non-finite or too large for a float; or the computed elapsed time is negative or non-finite. |
 | `CLOCK_READ_FAILED` | reading the UTC or monotonic clock raised. Before the call, no call is made; after a response, the response is still preserved. |
 | `CLIENT_UNAVAILABLE` / `CALL_LIMIT_REACHED` | client construction failed / defensive call-limit guard |
 
@@ -164,7 +165,8 @@ A rejected response is still preserved in full when it is representable and the 
 - The provenance states `HOST_UTC_CLOCK_NOT_AWS_AUTHENTICATED`. Nothing implies AWS authenticated any time.
 
 **Index.** The index records:
-- `status`: `COMPLETE`, `STOPPED` or `INTERRUPTED`, with `stop {code, field}` and `interruption`;
+- `status`: `COMPLETE`, `STOPPED` or `INTERRUPTED`, with `stop {code, field}` and `interruption` (the primary failure);
+- `publication_failures`: every failed file published before the index, in order. Each entry is `{code, stage, file, incomplete_file_possible, pending_stop}`; none of these files is in `files`;
 - planned versus attempted calls, and `account_verified`;
 - accepted records with their file and observation hashes;
 - every other file's SHA-256;
@@ -178,7 +180,7 @@ A rejected response is still preserved in full when it is representable and the 
 - **Nothing is retried, overwritten, renamed or deleted.**
 - **Record failure.** If a record file fails, the response is still written to its observation file when the filesystem permits.
 - **Partial writes.** A partially written file is left in place, never listed in the index's `files`, and disclosed as `incomplete_file_possible: true`.
-- **Index.** One attempt is made to write the index with `status: INTERRUPTED` and `interruption {code, stage, file, incomplete_file_possible, pending_stop}`. `stage` is `plan`, `record`, `observation` or `index`. That attempt is a different file, not a retry.
+- **Index.** One attempt is made to write the index with `status: INTERRUPTED` and `interruption {code, stage, file, incomplete_file_possible, pending_stop}`. `stage` is `plan`, `record`, `observation` or `index`. That attempt is a different file, not a retry. Every earlier failed file is listed in `publication_failures`, so a second failure, such as a partial observation after a refused record, is disclosed too.
 - **Unindexed.** If the index itself cannot be written, the console reports `INTERRUPTED_UNINDEXED` with `index_sha256: null`. This includes a capture whose reads all succeeded. Earlier files remain on disk, unindexed.
 - **Never `COMPLETE`.** A publication failure never yields `COMPLETE`.
 
@@ -199,13 +201,17 @@ python scripts/jev_release_observation_capture.py --plan <plan.json> --out <new-
 **Exit codes:**
 - 0: plan valid (validate-only) or capture `COMPLETE`;
 - 1: `STOPPED`, `INTERRUPTED` or `INTERRUPTED_UNINDEXED`;
-- 2: input rejected.
+- 2: input rejected;
+- 3: the console status line could not be serialized, so the fixed fallback below was written. This is not a statement about the files. A capture's own result is in its index and the returned status, which this run could not report.
 
 **Console output** is one JSON object:
 - validate-only: `schema`, `status`, `calls_planned`, `plan_sha256`;
-- live: `schema`, `status`, `stop_code`, `interruption_stage`, `calls_planned`, `calls_attempted`, `accepted_records`, `index_sha256`. On an interruption, `stop_code` is the publication code and `interruption_stage` its fixed stage name.
+- live: `schema`, `status`, `stop_code`, `interruption_stage`, `calls_planned`, `calls_attempted`, `accepted_records`, `index_sha256`. It also includes `index_failure_code` and `publication_failures`.
+  - On an interruption, `stop_code` is the primary publication code and `interruption_stage` its fixed stage name.
+  - `index_failure_code` is set only when the index itself failed, so a failed index is distinguished from an earlier primary failure.
+  - `publication_failures` counts every failed file, including a failed index.
 
-Input errors print `{status: INPUT_REJECTED, code}` on stderr. The console never prints:
+Input errors print `{status: INPUT_REJECTED, code}` on stderr. If serializing any console line fails, the helper writes the fixed literal `{"code":"CONSOLE_SERIALIZATION_FAILED","schema":"jev-release-observation-capture-status-v1","status":"CONSOLE_STATUS_UNAVAILABLE"}` to stderr instead. That literal is not produced by the serializer that failed. The console never prints:
 - environment values or credentials;
 - response bodies or ARNs, including role and caller ARNs;
 - account IDs or function names;
@@ -279,12 +285,21 @@ The script and tests are committed as LF blobs. Their working copies are also LF
 | `tests/test_jev_release_observation_capture.py` | `15562466c5d7b8650cf4759fb0618d18aa6e6dc617a91df68eddf87f8a6f6172` | `67d9f039df2896f2a3d2d3d23eee72611d4baf99` |
 | this handoff at `fa54782` | `8bdc50ca04cae4172fc66d077e020ac4833cdeb17d7f12b5ef3dd2d362f113d8` | `58ce67af39cb77a106c44b803208828cd6ea82a8` |
 
-**OC-1 correction commit (current):**
+**OC-1 correction commit `5c0461c` (historical, as reviewed by Codex):**
 
 | Path | Committed-blob SHA-256 | Git blob id |
 |---|---|---|
 | `scripts/jev_release_observation_capture.py` | `c84462b72f9b85cc5f15edb7e0cd05791dd45cbc7d48c19a3172706ed40c06a7` | `7b7dd5c965ec739e244ab1194ada1150d60516a9` |
 | `tests/test_jev_release_observation_capture.py` | `b1877b5ee6ca557329f1e828f663f6db24970db2a6d870426f7a5d185a17de28` | `8be46c54b86ffc0c104e2b4e695ca2ce84918c75` |
+
+| this handoff at `5c0461c` | `b5c687ba34b59e07986158fcf03e7c69b564bd0901323c56f923241efef4b5bb` | `78b304669b4d5d264c746c4d743ba75fd218d40f` |
+
+**D1–D3 correction commit (current):**
+
+| Path | Committed-blob SHA-256 | Git blob id |
+|---|---|---|
+| `scripts/jev_release_observation_capture.py` | `b5c48de053667982c5b0fde4e95ecedc5352cef2c0eadc28e4e033a64591878f` | `1cda16b873d753ec19419bf452377c4f2a783973` |
+| `tests/test_jev_release_observation_capture.py` | `3425694ad5c56ff30d67b8f99d059507847c5f536eaa96de43d3a8e7386867f8` | `a17a247a59fe42c2c5a25561abb42e8fb645e784` |
 
 Both correction working copies have 0 CR bytes, so their raw hashes equal these blob hashes when committed.
 
@@ -432,7 +447,7 @@ git diff --cached --check   # clean
 - **Codex's capture review report:** unchanged and uncommitted.
 - **Evidence:** sealed startup evidence, the accepted ZIP, the adapter's private outputs and Codex's probe directories were not touched or reused.
 
-### Focused OC-1 delta-review scope for Codex
+### Focused OC-1 delta-review scope for Codex (historical; reviewed at `5c0461c`)
 
 1. **Delta shape.** `fa54782..HEAD` is one commit changing only the three authorized paths. Codex's report is unchanged.
 2. **Every OC-1 site.** Each site in the report (`Publisher.write_bytes/write_json`, `Capture.observe` clock, serialization and publication points, final index, `main`) now returns fixed codes. No raw message, path or traceback reaches stdout or stderr for these failures.
@@ -443,3 +458,105 @@ git diff --cached --check   # clean
 7. **Depth bound.** `MAX_JSON_DEPTH` is consistent between `representable()` and the serializer, and the plan parser is also covered.
 8. **Catch scope.** Catches stay narrow. Only injectable clock reads use broad catches, and there is no catch-all in `main()`.
 9. **Behaviour preserved.** The normal path, strict plan, account gate, retry and checker-compatibility behaviour are unchanged.
+
+## OC-1 residual correction D1–D3 (Codex delta review of `5c0461c`)
+
+**Base and review.**
+- Base `5c0461c3ea57079f7133d1ebcd157289a3ab4790`, verified as HEAD before editing.
+- Review `docs/experiments/jev-release-observation-capture-codex-delta-review-20261007-61d08d77.md`, verified at raw SHA-256 `8f5265f3de66b5fd74e8ceded3123c8a7590def774e6a114c480434d7d7ebecf`.
+- Both Codex reports are uncommitted and unmodified; the original is still `d59e57c8…`.
+- Only D1–D3 are changed. The capture-plan contract is unchanged.
+
+| Finding | Before (`5c0461c`) | Now |
+|---|---|---|
+| D1 response hash | The response was serialized once for the round trip, then again for its hash, outside the handled boundary. A second-serialization `ValueError` escaped, and the received response had no observation and no index. | It is serialized **once**: the same canonical text yields both the copy (`json.loads`) and `response_sha256`, inside the handled `RESPONSE_SERIALIZATION_FAILED` boundary. |
+| D1 console | `canonical(status)` and the other console lines were unprotected, so a serializer error escaped after the files were published. | `_emit` catches `RecursionError`, `TypeError` and `ValueError` from the serializer only. It then writes the fixed literal `CONSOLE_FALLBACK` to stderr. The status line exits 3 (`CONSOLE_UNAVAILABLE_EXIT`), and so does validate-only; an input rejection keeps exit 2. The files already published are left as they are and are described by their own index. The fallback only says the console report is unavailable. |
+| D2 multiple failures | Only the first `PublicationError` was kept. In Codex's reproduction (record refused, observation partly written, index published), the partial observation file was absent from the index. | The publisher records **every** failure. The index carries `publication_failures`, a list of `{code, stage, file, incomplete_file_possible, pending_stop}` in order. `interruption` stays the primary failure, and the stop semantics are unchanged. The returned status adds `index_failure_code`, set only when the index itself failed, plus the `publication_failures` count. Failed files are never in `files`, and nothing is retried, overwritten, repaired or deleted. |
+| D3 huge monotonic integer | `math.isfinite(10**400)` raised `OverflowError` before dispatch. | `_finite_number` treats the overflow as non-finite, giving `CLOCK_INVALID` before dispatch, with no service call. |
+| D3 UTC conversion overflow | An aware datetime at year 1 with +1h raised `OverflowError` in `astimezone`. | `_utc` catches `OverflowError` and `ValueError` from that conversion. Before dispatch this gives `CLOCK_INVALID` with no call. After receipt, `response_received_utc` is `null` and the response is preserved. |
+| D3 non-finite elapsed time | Finite readings of `-1e308` and `1e308` gave an infinite `elapsed_ms`. Serializing the observation then failed, so the STS response was lost. | `_elapsed_ms` validates the computed duration: finite, non-negative, and the float conversion cannot overflow. Otherwise it is `CLOCK_INVALID`, with `elapsed_ms: null` and the response preserved. |
+
+**Exception scope.**
+- New catches are specific:
+  - serializer errors at the console;
+  - `OverflowError` in numeric conversion;
+  - `OverflowError` and `ValueError` in the UTC conversion.
+- No global catch-all was added. A test confirms that an unrelated `NameError` in validation still propagates.
+
+**Unconfirmed index (limitation, documented as requested).**
+- A complete set of index bytes can survive an error during file close. The producer then correctly returns `INTERRUPTED_UNINDEXED` with `index_sha256: null`, while the on-disk bytes may parse and even contain the prepared `status: COMPLETE`.
+- Those bytes are an **unconfirmed, failed publication**, not a capture receipt. A consumer must require the successful returned status **and** the index-hash binding before trusting an index. Parseability or an internal `COMPLETE` string alone is insufficient.
+- A console fallback (exit 3) likewise leaves the caller without that confirmation.
+- No recovery, freeze or consumption framework is added, and the failed file is not deleted.
+
+### D1–D3 validation (exact commands and results)
+
+Interpreter: CPython **3.11.15** (`C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe`). I used fresh session-scratchpad basetemps; Codex's review scratch was not reused.
+
+```powershell
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B -m pytest tests/test_jev_release_observation_capture.py -q --tb=short -p no:cacheprovider --basetemp <scratch>\d123-final-311
+#   164 passed; offline guard active: 0 outbound network attempt(s) intercepted, none sent
+& 'C:\Projects\AWS Project\main\.venv\Scripts\python.exe' -B -c "from tests.offline_guard import install; install(); import runpy; runpy.run_module('ruff',run_name='__main__')" check --no-cache scripts/jev_release_observation_capture.py tests/test_jev_release_observation_capture.py
+#   All checks passed!
+& '...same guard...' format --check --no-cache scripts/jev_release_observation_capture.py tests/test_jev_release_observation_capture.py
+#   2 files already formatted
+git diff --cached --check   # clean
+```
+
+**Tests: 164 cases.** That is the earlier 143 plus 21 new cases.
+
+**Defect regressions (18), through both the library and the fake-client CLI:**
+- **D1 (5):**
+  - the response is serialized once, via library and CLI;
+  - the status-line console fallback;
+  - the validate-only and input-rejected console fallbacks.
+- **D2 (4):**
+  - a refused record plus a partial observation, with every failure disclosed and neither failed file bound;
+  - an earlier failure plus an index failure, distinguished;
+  - CLI indexed and unindexed variants.
+- **D3 (9):**
+  - a huge monotonic integer before dispatch;
+  - a huge integer and an infinite elapsed time after receipt, with the response preserved;
+  - UTC conversion overflow before dispatch and after receipt;
+  - four CLI clock-extreme cases (UTC before and after, monotonic huge-before and infinite-elapsed, the latter injected by replacing the module's `time` reference).
+- **All 18 assert:** no later AWS read, no private marker, path or traceback in the output, and nonzero exit where applicable.
+
+**Positive checks (3):**
+- the console fallback is a valid JSON literal and the exit code is 3;
+- valid extreme-but-finite monotonic values still give exact elapsed times;
+- an unrelated programming error still propagates.
+
+**Existing tests updated (contract only).** The status equality and key sets now include `index_failure_code` and `publication_failures`.
+
+**Regressions reproduce the defects.** I ran this test file against the committed `5c0461c` helper, from a `git archive 5c0461c` scratch tree. That tree had a placeholder `.git` at its root, so the repository-location test does not produce a scratch-only failure. **33 failed, 131 passed.** Reasons, from the JUnit report:
+
+| Group | Count | Reason at `5c0461c` |
+|---|---|---|
+| D1 regressions | 5 | escaped `ValueError` (the invented private serializer fault) |
+| D2 regressions | 4 | the index lacks the partial-file disclosure (`assert set() == {...}`, ×2), or the earlier failure hides the index failure: no `index_failure_code` (library) and no failure count (CLI unindexed), ×2 |
+| D3 regressions | 9 | escaped `OverflowError` (×7), or the infinite elapsed time turned into `PUBLICATION_SERIALIZATION_FAILED`, losing the response (×2) |
+| Positive check | 1 | `CONSOLE_FALLBACK` is absent (interface) |
+| Existing tests | 14 | only the new status keys (contract change, not a detection) |
+
+The two remaining positive checks and all other existing behaviour pass on the baseline.
+
+**Prepared baseline-only plan, revalidated offline.**
+- File: `C:\Projects\AWS Project\dependency-acquisition\baseline-capture-plan-20261007-98297584c77f\capture-plan.json`, raw SHA-256 `e8e4864fc55cccf863671258d419988e1dcbb4da8fd9a7bfb6a6dc1e5b0026cf` before and after.
+- Validate-only `main` returned exit 0 and `PLAN_VALID_NO_CALLS_MADE`, with 2 calls planned. The client factory was an assertion that was never reached, and there were 0 outbound attempts.
+- The proposed `sensitive-capture-98297584c77f` directory still does not exist.
+
+### D1–D3 preservation
+
+- **Main:** HEAD `9bf00d13dd9c83a635719dfd2acb7798c353866c`, status unchanged.
+- **Other worktrees:** integration `aeee2e1`, release-preflight `86cd103` and adapter `e88ada3` are unchanged, apart from my earlier uncommitted reviews.
+- **Both Codex capture reports:** unchanged and uncommitted.
+- **Evidence:** sealed startup evidence, the accepted ZIP, the adapter's private outputs, the prepared plan and its receipt were not modified.
+
+### Focused D1–D3 delta-review scope for Codex
+
+1. **Delta shape.** `5c0461c..HEAD` is one commit touching only the three authorized paths. Both Codex reports are unchanged.
+2. **D1.** The response is serialized exactly once for both copy and hash. Every console line goes through `_emit`. The fallback is a literal and exits 3 (2 for input rejection). The documentation does not claim that a console failure invalidates published files.
+3. **D2.** `publication_failures` lists every failed file, including Codex's record-refused-plus-partial-observation case. `interruption`, `stop_code` and the stage stay primary. `index_failure_code` distinguishes a failed index. No failed file is in `files`, and nothing is retried or deleted.
+4. **D3.** A huge integer, UTC conversion overflow and a non-finite elapsed time each give `CLOCK_INVALID`. Before dispatch there is no call; after receipt the response is preserved and the timing field is `null`.
+5. **Catch scope.** Catches stay narrow, with no global catch-all, and the unrelated-error propagation test still passes.
+6. **Unchanged behaviour.** The normal path, plan contract, account gate, retries and checker compatibility are unchanged. The unconfirmed-index limitation is stated accurately.
