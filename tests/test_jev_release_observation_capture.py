@@ -195,6 +195,9 @@ class FakeClient:
         def call(**kwargs):
             self.aws.calls.append((self.service, method, kwargs))
             result = self.aws.results.pop(0)
+            if callable(result):
+                # A scripted side effect; its response is returned uncopied.
+                return result()
             if isinstance(result, Exception):
                 raise result
             return copy.deepcopy(result)
@@ -403,6 +406,7 @@ def test_complete_capture_produces_records_the_unchanged_checker_accepts(tmp_pat
         "schema": cap.STATUS_SCHEMA,
         "status": "COMPLETE",
         "stop_code": None,
+        "interruption_stage": None,
         "calls_planned": 5,
         "calls_attempted": 5,
         "accepted_records": 4,
@@ -1219,12 +1223,12 @@ def test_existing_empty_directory_is_not_reused(tmp_path):
 
 def test_publisher_never_overwrites(tmp_path):
     publisher = cap.Publisher(tmp_path)
-    publisher.write_json("a.json", {"first": True})
-    with pytest.raises(FileExistsError):
-        publisher.write_json("a.json", {"second": True})
+    publisher.write_json("a.json", {"first": True}, "record")
+    with pytest.raises(cap.PublicationError, match="^PUBLICATION_COLLISION$"):
+        publisher.write_json("a.json", {"second": True}, "record")
     (tmp_path / "b.json").write_bytes(b"existing")
-    with pytest.raises(FileExistsError):
-        cap.Publisher(tmp_path).write_json("b.json", {})
+    with pytest.raises(cap.PublicationError, match="^PUBLICATION_COLLISION$"):
+        cap.Publisher(tmp_path).write_json("b.json", {}, "record")
     assert (tmp_path / "b.json").read_bytes() == b"existing"
     assert load(tmp_path / "a.json") == {"first": True}
 
@@ -1343,6 +1347,7 @@ def test_console_output_is_sanitized(tmp_path, capsys, fail):
         "schema",
         "status",
         "stop_code",
+        "interruption_stage",
         "calls_planned",
         "calls_attempted",
         "accepted_records",
@@ -1364,3 +1369,444 @@ def test_console_output_is_sanitized(tmp_path, capsys, fail):
     # The private capture keeps the faithful response, secrets included.
     private = (tmp_path / "capture" / "02-production_baseline.record.json").read_text()
     assert SECRET in private and ROLE_ARN in private
+
+
+# OC-1: post-response and publication failures (invented failures only).
+#
+# Each test below reproduces a defect at fa54782 (an exception escaped the
+# sanitized boundary) unless its name ends in `_positive`.
+
+PRIVATE_MARKER = "invented-private-diagnostic C:\\Users\\invented\\private-path"
+STATUS_KEYS = {
+    "schema",
+    "status",
+    "stop_code",
+    "interruption_stage",
+    "calls_planned",
+    "calls_attempted",
+    "accepted_records",
+    "index_sha256",
+}
+
+
+class PartialWriter:
+    """Writes half of the data, then fails like a full disk."""
+
+    def __init__(self, handle):
+        self.handle = handle
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.handle.close()
+        return False
+
+    def write(self, data):
+        self.handle.write(data[: len(data) // 2])
+        self.handle.flush()
+        raise OSError(28, PRIVATE_MARKER)
+
+
+def fail_publication(monkeypatch, name, partial=False):
+    """Make exclusive creation of one named output file fail."""
+    original = Path.open
+
+    def patched(self, mode="r", *args, **kwargs):
+        if self.name == name and "x" in mode:
+            if not partial:
+                raise OSError(28, PRIVATE_MARKER, str(self))
+            return PartialWriter(original(self, mode, *args, **kwargs))
+        return original(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", patched)
+
+
+class Monotonic:
+    def __init__(self, fail_at=None, value=None):
+        self.calls, self.fail_at, self.value = 0, fail_at, value
+
+    def __call__(self):
+        self.calls += 1
+        if self.calls == self.fail_at:
+            if self.value is not None:
+                return self.value
+            raise RuntimeError(PRIVATE_MARKER)
+        return float(self.calls)
+
+
+class FailingClock(Clock):
+    def __init__(self, fail_at):
+        super().__init__()
+        self.reads, self.fail_at = 0, fail_at
+
+    def __call__(self):
+        self.reads += 1
+        if self.reads == self.fail_at:
+            raise RuntimeError(PRIVATE_MARKER)
+        return super().__call__()
+
+
+def assert_no_private_text(out):
+    for path in out.iterdir():
+        assert PRIVATE_MARKER not in path.read_text(encoding="utf-8", errors="replace")
+
+
+@pytest.mark.parametrize(
+    "name, stage, attempted",
+    [
+        ("03-candidate.record.json", "record", 3),
+        ("03-candidate.observation.json", "observation", 3),
+        ("capture-plan.json", "plan", 0),
+    ],
+)
+def test_oc1_publication_failure_interrupts_and_preserves(
+    tmp_path, monkeypatch, name, stage, attempted
+):
+    plan = capture_plan()
+    fail_publication(monkeypatch, name)
+    status, aws, out = run(tmp_path, plan, scripted(plan, standard_responses()))
+    assert set(status) == STATUS_KEYS
+    assert status["status"] == "INTERRUPTED"
+    assert (status["stop_code"], status["interruption_stage"]) == (
+        "PUBLICATION_FAILED",
+        stage,
+    )
+    # No later read: the rollback and alias reads never happen.
+    assert status["calls_attempted"] == attempted == len(aws.calls)
+    index = load(out / "capture-index.json")
+    assert index["status"] == "INTERRUPTED"
+    assert index["interruption"] == {
+        "code": "PUBLICATION_FAILED",
+        "stage": stage,
+        "file": name,
+        "incomplete_file_possible": False,
+        "pending_stop": None,
+    }
+    assert not (out / name).exists()
+    for listed, digest in index["files"].items():
+        assert file_sha256(out / listed) == digest  # earlier files intact
+    if stage != "plan":
+        assert [entry["role"] for entry in index["records"]] == ["production_baseline"]
+    if stage == "record":
+        # The response still survives in its observation file.
+        observation = load(out / "03-candidate.observation.json")
+        assert observation["outcome"] == "PUBLICATION_FAILED"
+        assert observation["reason"] == {
+            "code": "PUBLICATION_FAILED",
+            "field": "record",
+        }
+        assert observation["response"] == standard_responses()["candidate"]
+        assert observation["record"] is None
+    if stage == "observation":
+        # The record was published first; it is listed as a file, not accepted.
+        assert "03-candidate.record.json" in index["files"]
+    assert_no_private_text(out)
+
+
+def test_oc1_index_publication_failure_is_reported_unindexed(tmp_path, monkeypatch):
+    plan = capture_plan()
+    fail_publication(monkeypatch, "capture-index.json")
+    status, aws, out = run(tmp_path, plan, scripted(plan, standard_responses()))
+    assert status["status"] == "INTERRUPTED_UNINDEXED"  # never COMPLETE
+    assert status["stop_code"] == "PUBLICATION_FAILED"
+    assert status["interruption_stage"] == "index"
+    assert status["index_sha256"] is None
+    assert len(aws.calls) == 5 and status["accepted_records"] == 4
+    assert not (out / "capture-index.json").exists()
+    assert len(list(out.glob("*.record.json"))) == 4
+
+
+def test_oc1_partial_write_is_kept_and_disclosed(tmp_path, monkeypatch):
+    plan = capture_plan()
+    name = "03-candidate.observation.json"
+    fail_publication(monkeypatch, name, partial=True)
+    status, aws, out = run(tmp_path, plan, scripted(plan, standard_responses()))
+    assert status["status"] == "INTERRUPTED" and len(aws.calls) == 3
+    index = load(out / "capture-index.json")
+    assert index["interruption"]["file"] == name
+    assert index["interruption"]["incomplete_file_possible"] is True
+    # Left in place, never deleted, and never listed as published.
+    partial = (out / name).read_bytes()
+    assert partial and name not in index["files"]
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(partial)
+
+
+def test_oc1_existing_file_collision_is_preserved_and_reported(tmp_path):
+    plan = capture_plan()
+    out = tmp_path / "capture"
+    results = scripted(plan, standard_responses())
+    candidate = results[2]
+
+    def concurrent_writer():
+        (out / "03-candidate.record.json").write_bytes(b"pre-existing")
+        return candidate
+
+    results[2] = concurrent_writer
+    aws = FakeAWS(results)
+    status = cap.capture(encode(plan), out, aws, Clock())
+    assert (status["status"], status["stop_code"]) == (
+        "INTERRUPTED",
+        "PUBLICATION_COLLISION",
+    )
+    assert len(aws.calls) == 3
+    assert (out / "03-candidate.record.json").read_bytes() == b"pre-existing"
+    observation = load(out / "03-candidate.observation.json")
+    assert observation["response"] == standard_responses()["candidate"]
+    assert observation["reason"] == {"code": "PUBLICATION_COLLISION", "field": "record"}
+
+
+def test_oc1_injected_serializer_failure_keeps_a_rejected_observation(
+    tmp_path, monkeypatch
+):
+    plan = capture_plan()
+    responses = standard_responses()
+    responses["candidate"]["InventedSerializerTrap"] = True
+    original = cap.canonical
+
+    def trapped(value):
+        if isinstance(value, dict) and "InventedSerializerTrap" in value:
+            raise ValueError(PRIVATE_MARKER)
+        return original(value)
+
+    monkeypatch.setattr(cap, "canonical", trapped)
+    status, aws, out = run(tmp_path, plan, scripted(plan, responses))
+    assert (status["status"], status["stop_code"]) == (
+        "STOPPED",
+        "RESPONSE_SERIALIZATION_FAILED",
+    )
+    assert len(aws.calls) == 3
+    observation = load(out / "03-candidate.observation.json")
+    assert observation["outcome"] == "REJECTED"
+    assert observation["response"] is None and observation["record"] is None
+    assert not (out / "03-candidate.record.json").exists()
+    assert_no_private_text(out)
+
+
+def test_oc1_serializer_failure_everywhere_is_disclosed_unindexed(
+    tmp_path, monkeypatch
+):
+    def broken(value):
+        raise ValueError(PRIVATE_MARKER)
+
+    monkeypatch.setattr(cap, "canonical", broken)
+    plan = capture_plan()
+    status, aws, out = run(tmp_path, plan, scripted(plan, standard_responses()))
+    assert status["status"] == "INTERRUPTED_UNINDEXED"
+    assert status["stop_code"] == "PUBLICATION_SERIALIZATION_FAILED"
+    assert status["interruption_stage"] == "observation"
+    assert aws.calls == [("sts", "get_caller_identity", {})]
+    assert sorted(path.name for path in out.iterdir()) == ["capture-plan.json"]
+
+
+def test_oc1_actual_excessive_nesting_is_rejected_safely(tmp_path):
+    deep = "leaf"
+    for _ in range(1500):
+        deep = {"n": deep}
+    plan = capture_plan()
+    responses = standard_responses()
+    responses["candidate"]["InventedDeepField"] = deep
+    results = scripted(plan, responses)
+    results[2] = lambda: responses["candidate"]
+    status, aws, out = run(tmp_path, plan, results)
+    assert (status["status"], status["stop_code"]) == (
+        "STOPPED",
+        "RESPONSE_NOT_JSON_REPRESENTABLE",
+    )
+    assert len(aws.calls) == 3
+    observation = load(out / "03-candidate.observation.json")
+    assert observation["response"] is None and observation["outcome"] == "REJECTED"
+
+
+def test_oc1_depth_bound_matches_the_serializer():
+    def nested(depth):
+        value = "leaf"
+        for _ in range(depth - 1):
+            value = {"n": value}
+        return value
+
+    assert cap.representable(nested(cap.MAX_JSON_DEPTH))
+    assert not cap.representable(nested(cap.MAX_JSON_DEPTH + 1))
+    assert not cap.representable([nested(cap.MAX_JSON_DEPTH)])
+
+
+def test_oc1_clock_exception_after_response_keeps_the_response(tmp_path):
+    plan = capture_plan()
+    # Reads: STS start, STS end, baseline start, baseline end (fails).
+    clock = FailingClock(fail_at=4)
+    status, aws, out = run(tmp_path, plan, scripted(plan, standard_responses()), clock)
+    assert (status["status"], status["stop_code"]) == ("STOPPED", "CLOCK_READ_FAILED")
+    assert len(aws.calls) == 2
+    observation = load(out / "02-production_baseline.observation.json")
+    assert observation["reason"] == {
+        "code": "CLOCK_READ_FAILED",
+        "field": "response_received_utc",
+    }
+    assert observation["timing"]["response_received_utc"] is None  # not invented
+    assert observation["response"] == standard_responses()["production_baseline"]
+    assert observation["record"] is None
+    assert_no_private_text(out)
+
+
+@pytest.mark.parametrize(
+    "monotonic, code",
+    [
+        (Monotonic(fail_at=4), "CLOCK_READ_FAILED"),
+        (Monotonic(fail_at=4, value="not-a-number"), "CLOCK_INVALID"),
+    ],
+    ids=["raises", "non-numeric"],
+)
+def test_oc1_monotonic_failure_after_response_records_no_elapsed(
+    tmp_path, monotonic, code
+):
+    plan = capture_plan()
+    aws = FakeAWS(scripted(plan, standard_responses()))
+    out = tmp_path / "capture"
+    status = cap.capture(encode(plan), out, aws, Clock(), monotonic)
+    assert (status["status"], status["stop_code"]) == ("STOPPED", code)
+    assert len(aws.calls) == 2
+    observation = load(out / "02-production_baseline.observation.json")
+    assert observation["reason"] == {"code": code, "field": "elapsed_ms"}
+    assert observation["timing"]["elapsed_ms"] is None  # not invented
+    assert observation["timing"]["response_received_utc"] is not None
+    assert observation["response"] == standard_responses()["production_baseline"]
+
+
+@pytest.mark.parametrize(
+    "clock, monotonic",
+    [(FailingClock(fail_at=3), None), (Clock(), Monotonic(fail_at=3))],
+    ids=["utc-clock", "monotonic-clock"],
+)
+def test_oc1_clock_exception_before_a_call_makes_no_call(tmp_path, clock, monotonic):
+    plan = capture_plan()
+    aws = FakeAWS(scripted(plan, standard_responses()))
+    status = cap.capture(encode(plan), tmp_path / "capture", aws, clock, monotonic)
+    assert (status["stop_code"], status["calls_attempted"]) == ("CLOCK_READ_FAILED", 1)
+    assert len(aws.calls) == 1
+    assert not list((tmp_path / "capture").glob("02-*"))
+
+
+def test_oc1_unwritable_output_parent_is_a_fixed_input_code(tmp_path, monkeypatch):
+    def refuse(self, *args, **kwargs):
+        raise PermissionError(13, PRIVATE_MARKER, str(self))
+
+    monkeypatch.setattr(Path, "mkdir", refuse)
+    aws = FakeAWS([])
+    with pytest.raises(cap.InputError, match="^OUTPUT_UNAVAILABLE$"):
+        cap.capture(encode(capture_plan()), tmp_path / "capture", aws, Clock())
+    assert aws.factory_calls == []
+
+
+def _cli_failure(kind, tmp_path, monkeypatch):
+    plan = capture_plan()
+    responses = standard_responses()
+    clock = Clock()
+    if kind in ("record", "observation"):
+        fail_publication(monkeypatch, f"03-candidate.{kind}.json")
+    elif kind == "index":
+        fail_publication(monkeypatch, "capture-index.json")
+    elif kind == "partial":
+        fail_publication(monkeypatch, "03-candidate.observation.json", partial=True)
+    elif kind == "serializer":
+        responses["candidate"]["InventedSerializerTrap"] = True
+        original = cap.canonical
+
+        def trapped(value):
+            if isinstance(value, dict) and "InventedSerializerTrap" in value:
+                raise ValueError(PRIVATE_MARKER)
+            return original(value)
+
+        monkeypatch.setattr(cap, "canonical", trapped)
+    elif kind == "nesting":
+        deep = "leaf"
+        for _ in range(1500):
+            deep = {"n": deep}
+        responses["candidate"]["InventedDeepField"] = deep
+    elif kind == "clock":
+        clock = FailingClock(fail_at=6)
+    results = scripted(plan, responses)
+    if kind == "nesting":
+        results[2] = lambda: responses["candidate"]
+    if kind == "collision":
+        candidate = results[2]
+        target = tmp_path / "capture" / "03-candidate.record.json"
+
+        def concurrent_writer():
+            target.write_bytes(b"pre-existing")
+            return candidate
+
+        results[2] = concurrent_writer
+    return plan, FakeAWS(results), clock
+
+
+@pytest.mark.parametrize(
+    "kind, status_value, code",
+    [
+        ("record", "INTERRUPTED", "PUBLICATION_FAILED"),
+        ("observation", "INTERRUPTED", "PUBLICATION_FAILED"),
+        ("index", "INTERRUPTED_UNINDEXED", "PUBLICATION_FAILED"),
+        ("partial", "INTERRUPTED", "PUBLICATION_FAILED"),
+        ("collision", "INTERRUPTED", "PUBLICATION_COLLISION"),
+        ("serializer", "STOPPED", "RESPONSE_SERIALIZATION_FAILED"),
+        ("nesting", "STOPPED", "RESPONSE_NOT_JSON_REPRESENTABLE"),
+        ("clock", "STOPPED", "CLOCK_READ_FAILED"),
+    ],
+)
+def test_oc1_cli_failures_are_sanitized_and_nonzero(
+    tmp_path, capsys, monkeypatch, kind, status_value, code
+):
+    plan, aws, clock = _cli_failure(kind, tmp_path, monkeypatch)
+    out = tmp_path / "capture"
+    argv = ["--plan", write_plan(tmp_path, plan), "--out", str(out), "--live"]
+    assert cap.main(argv, aws, clock) == 1
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    status = json.loads(captured.out)
+    assert set(status) == STATUS_KEYS
+    assert (status["status"], status["stop_code"]) == (status_value, code)
+    assert status["status"] != "COMPLETE"
+    # Nothing after the failing read; an index failure follows all five reads.
+    assert len(aws.calls) == (5 if kind == "index" else 3)
+    for forbidden in (PRIVATE_MARKER, "private-path", str(tmp_path), "Traceback"):
+        assert forbidden not in captured.out + captured.err
+
+
+def test_oc1_cli_unwritable_output_is_rejected_without_detail(
+    tmp_path, capsys, monkeypatch
+):
+    def refuse(self, *args, **kwargs):
+        raise PermissionError(13, PRIVATE_MARKER, str(self))
+
+    monkeypatch.setattr(Path, "mkdir", refuse)
+    aws = FakeAWS([])
+    argv = [
+        "--plan",
+        write_plan(tmp_path, capture_plan()),
+        "--out",
+        str(tmp_path / "capture"),
+        "--live",
+    ]
+    assert cap.main(argv, aws, Clock()) == 2
+    captured = capsys.readouterr()
+    assert json.loads(captured.err) == {
+        "status": "INPUT_REJECTED",
+        "code": "OUTPUT_UNAVAILABLE",
+    }
+    assert PRIVATE_MARKER not in captured.out + captured.err
+    assert aws.factory_calls == []
+
+
+def test_oc1_publication_error_carries_fixed_fields_only_positive(tmp_path):
+    publisher = cap.Publisher(tmp_path)
+    publisher.write_json("a.json", {"first": True}, "record")
+    with pytest.raises(cap.PublicationError) as raised:
+        publisher.write_json("a.json", {"second": True}, "record")
+    assert raised.value.summary() == {
+        "code": "PUBLICATION_COLLISION",
+        "stage": "record",
+        "file": "a.json",
+        "incomplete_file_possible": False,
+        "pending_stop": None,
+    }
+    assert str(raised.value) == "PUBLICATION_COLLISION"

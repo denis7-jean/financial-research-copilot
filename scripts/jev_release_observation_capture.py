@@ -53,6 +53,8 @@ MAX_READ_SECONDS = 30
 MAX_INT_DIGITS = 64
 MAX_PLAN_BYTES = 64 * 1024
 MAX_RESPONSE_NODES = 100_000
+# Far deeper than any Lambda/STS response, far below the json recursion limit.
+MAX_JSON_DEPTH = 64
 
 # Same patterns as the accepted checker (a test asserts they stay identical).
 ACCOUNT = re.compile(r"[0-9]{12}")
@@ -75,6 +77,7 @@ INPUT_CODES = frozenset(
         "OUTPUT_INSIDE_REPOSITORY",
         "OUTPUT_NAME_INVALID",
         "OUTPUT_PARENT_MISSING",
+        "OUTPUT_UNAVAILABLE",
         "PLAN_CALL_LIMIT_INVALID",
         "PLAN_INVALID",
         "PLAN_OPERATION_UNSUPPORTED",
@@ -90,13 +93,23 @@ STOP_CODES = frozenset(
         "CALL_LIMIT_REACHED",
         "CLIENT_UNAVAILABLE",
         "CLOCK_INVALID",
+        "CLOCK_READ_FAILED",
         "READ_FAILED",
         "RESPONSE_BINDING_MISMATCH",
         "RESPONSE_FIELD_INVALID",
         "RESPONSE_FIELD_MISSING",
         "RESPONSE_NOT_JSON_REPRESENTABLE",
+        "RESPONSE_SERIALIZATION_FAILED",
         "RETRY_METADATA_MISSING",
         "UNEXPECTED_RETRY",
+    }
+)
+# Publication failures interrupt the capture; they are never a COMPLETE result.
+PUBLICATION_CODES = frozenset(
+    {
+        "PUBLICATION_COLLISION",
+        "PUBLICATION_FAILED",
+        "PUBLICATION_SERIALIZATION_FAILED",
     }
 )
 TIMING_SEMANTICS = {
@@ -125,6 +138,25 @@ class Stop(Exception):
     def __init__(self, code, field=None):
         super().__init__(code)
         self.code, self.field = code, field
+
+
+class PublicationError(Exception):
+    """A private output file could not be published; carries fixed fields only."""
+
+    def __init__(self, code, stage, file, incomplete_file_possible):
+        super().__init__(code)
+        self.code, self.stage, self.file = code, stage, file
+        self.incomplete_file_possible = incomplete_file_possible
+        self.pending_stop = None
+
+    def summary(self):
+        return {
+            "code": self.code,
+            "stage": self.stage,
+            "file": self.file,
+            "incomplete_file_possible": self.incomplete_file_possible,
+            "pending_stop": self.pending_stop,
+        }
 
 
 # Strict JSON, matching the accepted checker's parser.
@@ -162,13 +194,19 @@ def _has_surrogate(text):
 
 
 def representable(value):
-    """True only for finite, bounded, surrogate-free JSON-native data."""
-    stack, nodes = [value], 0
+    """True only for finite, bounded, surrogate-free JSON-native data.
+
+    Nesting is bounded too, so the recursive json encoder and decoder that
+    later serialize accepted data cannot hit RecursionError.
+    """
+    stack, nodes = [(value, 1)], 0
     while stack:
         nodes += 1
         if nodes > MAX_RESPONSE_NODES:
             return False
-        item = stack.pop()
+        item, depth = stack.pop()
+        if depth > MAX_JSON_DEPTH:
+            return False
         kind = type(item)
         if item is None or kind is bool:
             continue
@@ -182,12 +220,12 @@ def representable(value):
             if _has_surrogate(item):
                 return False
         elif kind is list:
-            stack.extend(item)
+            stack.extend((child, depth + 1) for child in item)
         elif kind is dict:
             for key, child in item.items():
                 if type(key) is not str or _has_surrogate(key):
                     return False
-                stack.append(child)
+                stack.append((child, depth + 1))
         else:
             return False
     return True
@@ -446,33 +484,58 @@ def claim_output(out_dir):
         parent = out.parent.resolve(strict=True)
     except (FileNotFoundError, NotADirectoryError) as error:
         raise InputError("OUTPUT_PARENT_MISSING") from error
-    _require(parent.is_dir(), "OUTPUT_PARENT_MISSING")
-    for ancestor in (parent, *parent.parents):
-        _require(not (ancestor / ".git").exists(), "OUTPUT_INSIDE_REPOSITORY")
-    target = parent / out.name
+    except OSError as error:
+        raise InputError("OUTPUT_UNAVAILABLE") from error
     try:
+        _require(parent.is_dir(), "OUTPUT_PARENT_MISSING")
+        for ancestor in (parent, *parent.parents):
+            _require(not (ancestor / ".git").exists(), "OUTPUT_INSIDE_REPOSITORY")
+        target = parent / out.name
         target.mkdir()
     except FileExistsError as error:
         raise InputError("OUTPUT_EXISTS") from error
+    except OSError as error:
+        # For example a permission error; never echoed, nothing was created.
+        raise InputError("OUTPUT_UNAVAILABLE") from error
     return target
 
 
 class Publisher:
-    """Exclusive-create writes into the claimed directory; never overwrites."""
+    """Exclusive-create writes into the claimed directory; never overwrites.
+
+    A failure raises PublicationError with fixed fields. Nothing is retried,
+    renamed or deleted: a partly written file stays where it is, is never
+    listed in `files`, and is disclosed as possibly incomplete.
+    """
 
     def __init__(self, directory):
         self.directory, self.files = directory, {}
 
-    def write_bytes(self, name, data):
+    def write_bytes(self, name, data, stage):
         if name in self.files:
-            raise FileExistsError(name)
-        with (self.directory / name).open("xb") as handle:
-            handle.write(data)
+            raise PublicationError("PUBLICATION_COLLISION", stage, name, False)
+        opened = False
+        try:
+            with (self.directory / name).open("xb") as handle:
+                opened = True
+                handle.write(data)
+        except FileExistsError:
+            raise PublicationError(
+                "PUBLICATION_COLLISION", stage, name, False
+            ) from None
+        except OSError:
+            raise PublicationError("PUBLICATION_FAILED", stage, name, opened) from None
         self.files[name] = sha256_hex(data)
         return self.files[name]
 
-    def write_json(self, name, value):
-        return self.write_bytes(name, canonical(value).encode("utf-8"))
+    def write_json(self, name, value, stage):
+        try:
+            data = canonical(value).encode("utf-8")
+        except (RecursionError, TypeError, ValueError):
+            raise PublicationError(
+                "PUBLICATION_SERIALIZATION_FAILED", stage, name, False
+            ) from None
+        return self.write_bytes(name, data, stage)
 
 
 def _utc_now():
@@ -487,6 +550,22 @@ def _utc(moment):
     if type(moment) is not datetime.datetime or moment.utcoffset() is None:
         raise Stop("CLOCK_INVALID", "clock")
     return moment.astimezone(datetime.timezone.utc)
+
+
+def _read_clock(read, field):
+    """Call an injectable clock; any exception it raises is a fixed stop code."""
+    try:
+        return read()
+    except Exception as error:
+        # Injectable clocks raise arbitrary types; the message is never kept.
+        raise Stop("CLOCK_READ_FAILED", field) from error
+
+
+def _read_monotonic(read, field):
+    value = _read_clock(read, field)
+    if type(value) not in (int, float) or not math.isfinite(value):
+        raise Stop("CLOCK_INVALID", field)
+    return value
 
 
 # Bounded reads.
@@ -532,25 +611,39 @@ class Capture:
         return self.clients[service]
 
     def observe(self, label, operation, request):
-        """One separately timed read; writes its observation file whatever happens."""
+        """One separately timed read.
+
+        Once a call has been made, its observation file is attempted for every
+        outcome. It can be missing only when publication itself fails, which
+        raises PublicationError and interrupts the capture.
+        """
         service, method = CALLS[operation]
         client = self.client(service)
         if self.attempted >= self.plan["max_calls"]:
             raise Stop("CALL_LIMIT_REACHED", operation)
-        started = _utc(self.clock())
+        # Both clocks are read before the call: a failure here makes no call.
+        started = _utc(_read_clock(self.clock, "request_started_utc"))
         if self.previous_start is not None and started <= self.previous_start:
             raise Stop("CLOCK_INVALID", "request_started_utc")
+        before = _read_monotonic(self.monotonic, "elapsed_ms")
         self.previous_start = started
         self.sequence += 1
         self.attempted += 1
-        before = self.monotonic()
         response = error = None
         try:
             response = getattr(client, method)(**request)
         except Exception as caught:
             # Any client failure is a failed read; only fixed fields are kept.
             error = caught
-        elapsed = self.monotonic() - before
+        # Post-response clock failures are recorded, never filled in.
+        clock_stop = None
+        try:
+            after = _read_monotonic(self.monotonic, "elapsed_ms")
+            if after < before:
+                raise Stop("CLOCK_INVALID", "elapsed_ms")
+            elapsed_ms = round((after - before) * 1000, 3)
+        except Stop as caught:
+            elapsed_ms, clock_stop = None, caught
         observation = {
             "schema": OBSERVATION_SCHEMA,
             "kind": "NEW_OBSERVATION",
@@ -564,7 +657,7 @@ class Capture:
             "timing": {
                 "request_started_utc": utc_text(started),
                 "response_received_utc": None,
-                "elapsed_ms": round(elapsed * 1000, 3),
+                "elapsed_ms": elapsed_ms,
                 "semantics": TIMING_SEMANTICS,
             },
             "sdk": {
@@ -581,9 +674,11 @@ class Capture:
             "record": None,
         }
         try:
-            received = _utc(self.clock())
-        except Stop:
+            received = _utc(_read_clock(self.clock, "response_received_utc"))
+        except Stop as caught:
             received = None
+            if caught.code == "CLOCK_READ_FAILED":
+                clock_stop = clock_stop or caught
         clock_valid = received is not None and received >= started
         if received is not None:
             observation["timing"]["response_received_utc"] = utc_text(received)
@@ -597,7 +692,10 @@ class Capture:
             if type(response) is not dict or not representable(response):
                 raise Stop("RESPONSE_NOT_JSON_REPRESENTABLE", operation)
             # A JSON round trip of JSON-native data is the identity: faithful copy.
-            response = json.loads(canonical(response))
+            try:
+                response = json.loads(canonical(response))
+            except (RecursionError, TypeError, ValueError):
+                raise Stop("RESPONSE_SERIALIZATION_FAILED", operation) from None
             observation["response"] = response
             observation["response_sha256"] = sha256_hex(
                 canonical(response).encode("utf-8")
@@ -609,6 +707,8 @@ class Capture:
             if metadata["retry_attempts"] != 0:
                 raise Stop("UNEXPECTED_RETRY", "ResponseMetadata")
             # Checked after the response is preserved, so a bad clock loses nothing.
+            if clock_stop is not None:
+                raise clock_stop
             if not clock_valid:
                 raise Stop("CLOCK_INVALID", "response_received_utc")
             if operation == "GetCallerIdentity":
@@ -623,6 +723,7 @@ class Capture:
                 "READ_FAILED" if caught.code == "READ_FAILED" else "REJECTED"
             )
             observation["reason"] = {"code": caught.code, "field": caught.field}
+        publication = None
         if stop is None and label in ROLES:
             record = {
                 "schema": RECORD_SCHEMA,
@@ -633,12 +734,27 @@ class Capture:
                 "response": response,
             }
             name = f"{self.sequence:02d}-{label}.record.json"
-            observation["record"] = {
-                "file": name,
-                "sha256": self.publisher.write_json(name, record),
-            }
+            try:
+                observation["record"] = {
+                    "file": name,
+                    "sha256": self.publisher.write_json(name, record, "record"),
+                }
+            except PublicationError as caught:
+                # Still try to preserve the response in its own observation file.
+                publication = caught
+                observation["outcome"] = "PUBLICATION_FAILED"
+                observation["reason"] = {"code": caught.code, "field": "record"}
         observation_name = f"{self.sequence:02d}-{label}.observation.json"
-        observation_sha256 = self.publisher.write_json(observation_name, observation)
+        try:
+            observation_sha256 = self.publisher.write_json(
+                observation_name, observation, "observation"
+            )
+        except PublicationError as caught:
+            publication = publication or caught
+        if publication is not None:
+            if stop is not None:
+                publication.pending_stop = {"code": stop.code, "field": stop.field}
+            raise publication
         if stop is not None:
             raise stop
         if observation["record"] is not None:
@@ -670,7 +786,6 @@ def capture(plan_bytes, out_dir, client_factory, clock=_utc_now, monotonic=None)
     plan = load_plan(plan_bytes)
     plan_sha256 = sha256_hex(plan_bytes)
     publisher = Publisher(claim_output(out_dir))
-    publisher.write_bytes("capture-plan.json", plan_bytes)
     run = Capture(
         plan,
         plan_sha256,
@@ -679,19 +794,27 @@ def capture(plan_bytes, out_dir, client_factory, clock=_utc_now, monotonic=None)
         clock,
         monotonic or time.monotonic,
     )
-    stop = None
+    stop = interruption = None
     try:
+        publisher.write_bytes("capture-plan.json", plan_bytes, "plan")
         run.run()
     except Stop as caught:
         stop = caught
+    except PublicationError as caught:
+        interruption = caught
+    if interruption is not None:
+        status = "INTERRUPTED"
+    else:
+        status = "COMPLETE" if stop is None else "STOPPED"
     reference = plan.get("authorization_reference")
     index = {
         "schema": INDEX_SCHEMA,
         "capture_id": plan["capture_id"],
         "plan_file": "capture-plan.json",
         "plan_sha256": plan_sha256,
-        "status": "COMPLETE" if stop is None else "STOPPED",
+        "status": status,
         "stop": None if stop is None else {"code": stop.code, "field": stop.field},
+        "interruption": None if interruption is None else interruption.summary(),
         "calls": {"planned": plan["max_calls"], "attempted": run.attempted},
         "account_verified": run.account_verified,
         "records": run.records,
@@ -706,11 +829,23 @@ def capture(plan_bytes, out_dir, client_factory, clock=_utc_now, monotonic=None)
         "timing_semantics": TIMING_SEMANTICS,
         "limitations": LIMITATIONS,
     }
-    index_sha256 = publisher.write_json("capture-index.json", index)
+    # One attempt at the index; it is a different file, not a retry. On a
+    # failed filesystem the capture is honestly reported as unindexed.
+    try:
+        index_sha256 = publisher.write_json("capture-index.json", index, "index")
+    except PublicationError as caught:
+        index_sha256 = None
+        status = "INTERRUPTED_UNINDEXED"
+        interruption = interruption or caught
+    if interruption is not None:
+        code = interruption.code
+    else:
+        code = None if stop is None else stop.code
     return {
         "schema": STATUS_SCHEMA,
-        "status": index["status"],
-        "stop_code": None if stop is None else stop.code,
+        "status": status,
+        "stop_code": code,
+        "interruption_stage": None if interruption is None else interruption.stage,
         "calls_planned": plan["max_calls"],
         "calls_attempted": run.attempted,
         "accepted_records": len(run.records),
