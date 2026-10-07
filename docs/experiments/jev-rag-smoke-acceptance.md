@@ -2,7 +2,9 @@
 
 Claude, 2026-10-07. This is an **implementation-independent** acceptance contract for the forthcoming isolated RAG smoke controls, written in parallel with Codex's offline implementation and **without reading it**.
 
-It defines what any implementation must make true, when, and what it must never claim. The scenarios in `tests/fixtures/jev_rag_smoke_acceptance.json` are written so that a reviewer can drive them through whatever interface is eventually accepted.
+**Revision 2** corrects RAC-1 to RAC-6 from Codex's independent review `jev-rag-smoke-acceptance-codex-review-20261007-73c2b980.md` (SHA-256 `ebe409d2…`). The contract was corrected on its merits, not adjusted to fit any implementation. Section 8 maps each correction.
+
+It defines what any implementation must make true, when, and what it must never claim. The scenarios in `tests/fixtures/jev_rag_smoke_acceptance.json` are **declarative**: invented premises and required results, written so that a reviewer can map them onto whatever interface is eventually accepted. They are not executed by any acceptance engine, and none exists.
 
 It is not:
 - an execution framework, an API, or an owner approval;
@@ -35,22 +37,27 @@ Source behaviour cited, with blob SHA-256 at the base:
   - `citations` is the set of **retrieved** sources (l.76), not citations validated against the answer.
 - **`app/agents/qa_agent.py` (`5163c220…`):** confidence is `1.0` if any citations, else `0.5` (l.52), a heuristic.
 
-## 2. Phases
+## 2. Phases (RAC-5)
 
-| Phase | What holds | Evidence kind |
+| Phase | Where and when | What must hold |
 |---|---|---|
-| **P0 — before the parent Invoke** | All of section 6 are approved and bound. The trusted inputs are hash-bound, the exact event is bound, client and transfer configuration is resolved to zero retries, caps and the Decimal reservation are recorded, the exclusive run claim is acquired, and no duplicate exists. | Prerequisites, all checkable **before** any outbound call |
-| **P1 — inside the run, per stage** | Each stage's gate passes **before** the next external dispatch (section 3). | Gates that can stop the run |
-| **P2 — after the run** | Returned results, usage, request IDs, send counts, Lambda INIT/REPORT, evidence completeness. | Observations; they can fail acceptance, but never retroactively "undo" dispatch |
+| **P0 — before the parent Invoke** | operator side, before any outbound call | **Approved bindings:** the artifact (code SHA), event and query, configuration, both trusted-object identities (AC-03), models, caps and evidence records. **Parent client:** the actually resolved invocation client has zero retries and a bounded timeout. **Owner decisions:** all of section 6 granted. **Worst-case sufficiency:** the sum of every approved inner attempt's worst-case reservation, plus the infrastructure allowance, fits the approved ceilings, and the task-wide reservation is recorded. **Exclusive operator claim:** one durable claim per authorized run, with no existing claim for the plan. A reviewed client *factory* or artifact is P0 evidence of **intended** inner behaviour only. |
+| **P1 — inside the function, before each inner dispatch** | runtime, per stage | **Actual inner clients:** the resolved inner SDK clients (and any transfer) show zero retries, the exact timeouts and endpoint, and installed parameter and send gates, checked **before that client's first request**. **Stage gates:** each stage's gate (section 3) passes before the next dispatch. Per-attempt reservation precedes each dispatch. |
+| **P2 — observations after dispatch** | runtime and operator | Observed sends and retries, request IDs, usage and charges, results, Lambda INIT/REPORT, evidence publication. |
 
-A P2 observation never substitutes for a P0 prerequisite. For example, observing zero retries does not satisfy "zero retries configured".
+**Ordering rules:**
+- P2 observations never satisfy a P0 or P1 requirement. For example, zero observed retries do not show that retries were configured to zero.
+- Per-attempt exposure checks at P1 do not replace P0 worst-case sufficiency, which remains a **future execution prerequisite**.
 
 ## 3. Acceptance clauses
 
 - **AC-01 Attempt budget.**
-  - **Limits:** at most **1** parent Invoke, **1** routing, **1** embedding and **1** QA-generation attempt; **0** SDK, provider or managed-transfer retries; **0** replacements or resends.
-  - **What counts:** an attempt counts when it is **sent**, whatever its outcome. An unknown outcome consumes the attempt.
-  - **Not allowed:** no summarizer call, judge or second model of any kind.
+  - **Limits:** at most **1** parent Invoke, **1** routing, **1** embedding and **1** QA-generation attempt; **0** SDK, provider or transfer retries; **0** replacements or resends.
+  - **What counts:** every delivered request is counted individually, whatever its outcome.
+  - **Not allowed:** no summarizer call, judge or second model.
+  - **An extra send has two cases (RAC-3):**
+    - **(a) blocked before delivery:** stop, with no new exposure for the blocked send.
+    - **(b) already delivered, discovered afterwards:** stop. Record it as its own request with its own usage or exposure (AC-07). It is never authorized retroactively.
 - **AC-02 Strict routing.** Any of the following stops the run **before** the index read, embedding and generation:
   - a router invoke error or parse failure;
   - confidence below the routing threshold;
@@ -59,44 +66,61 @@ A P2 observation never substitutes for a P0 prerequisite. For example, observing
   - an unknown routing outcome.
 
   The production fallback behaviour stays unchanged **outside** the opt-in smoke.
-- **AC-03 Trusted inputs before deserialization.**
-  - **Checks first:** exact bucket owner, key, ETag or size, then raw SHA-256 and size of **both** objects.
-  - **Strict metadata parse:** no duplicate keys or non-finite literals; contiguous integer `chunk_id` equal to the row number; string source and text; source in the five-file allowlist.
-  - All of this happens **before** `read_index` or any metadata use.
-  - **On mismatch, a changed object or an ambiguous read:** stop. There is no deserialization, no alternate snapshot, no rebuild and no repair.
+- **AC-03 Trusted object identity before deserialization (RAC-1).** For **each** of the two objects, all of the following must hold:
+  - **(a) approved identity:** the exact approved bucket owner, bucket and key;
+  - **(b) conditional request:** the request carries the conditional identity: expected bucket owner plus `IfMatch` equal to the approved ETag, and `VersionId` equal to the approved version when the binding has one. When the binding records no version, that explicit null relationship is part of the binding;
+  - **(c) response joins:** the response's ETag, version (or its absence) and content length equal the approved values;
+  - **(d) exact bytes:** an exact byte size **and** a full raw SHA-256 equal to the approved values.
+
+  **Size never substitutes for conditional identity:** matching size or hash does **not** cure a missing condition or a changed identity.
+  - Both objects must pass before any metadata is consumed or the index is deserialized. Strict metadata parsing then applies: no duplicate keys or non-finite values; contiguous integer `chunk_id` equal to the row number; string source and text; sources in the allowlist.
+  - **On any failure** (a missing condition, a changed identity, a failed precondition or an ambiguous read): stop. There is no alternate snapshot, retry, rebuild or repair.
 - **AC-04 Index structure.** Before embedding is dispatched, the index must be:
   - flat inner-product (`IndexFlatIP`, inner-product metric);
   - dimension 1024;
   - `ntotal` equal to the metadata row count (2,220 for the bound snapshot).
-- **AC-05 Embedding.** The vector must have exactly 1,024 finite values with an approximately unit norm (normalization was requested); the numeric tolerance is fixed at implementation review. Usage, if reported, must be a non-negative integer.
+- **AC-05 Embedding (RAC-4).** Before search or generation:
+  - the vector has exactly 1,024 finite numeric (non-bool) values with an approximately unit norm (normalization was requested); the numeric tolerance is fixed at implementation review;
+  - **the applicable usage is present and valid:** an input-token count that is a built-in non-negative integer within the supplied bound.
 
-  Any violation stops the run before search and generation.
+  **On failure:**
+  - missing or malformed usage stops the run and retains the **full** reservation;
+  - out-of-bound usage is recorded unclamped and stops the run;
+  - zero usage is never inferred, and a valid vector never stands in for usage.
 - **AC-06 Search and sources.**
   - Exactly **k = 5** results, with each index an integer in `[0, ntotal)`. Negative or out-of-range indices are a **stop**, never skipped or wrapped.
   - Indices are distinct, scores finite and non-increasing.
   - Every source is in the allowlist.
-  - Expected-source presence (≥1 JPMorgan source for the proposed question) is checked **before** generation. Failing it stops the run; it is never retried with another k or query.
-- **AC-07 Accounting.**
-  - **Reserve first:** exact Decimal or integer money is reserved before every dispatch, within an approved task-wide reservation made before the parent Invoke.
-  - **Settle:** settle only from valid, built-in non-negative integer usage within the reserved bounds.
-  - **Unknown outcomes:** missing or malformed usage, a timeout after send, an interrupted or uncertain dispatch, or a function error after send all **retain the full reservation** as potentially billed.
-  - **Overruns:** an actual usage above a cap or reservation is **recorded unclamped**, latches abort, and forbids all later dispatch.
-- **AC-08 Evidence.**
-  - **Before any dispatch:** an exclusive, durable run claim. A duplicate or crashed prior claim is refused.
-  - **Run journal:** a complete ordered journal of attempts and sends, plus request IDs, usage and stop reasons.
-  - **Completion** requires a successful returned status **and** a matching evidence-index hash. Parseable bytes alone are not completion.
-  - **Partial writes** are disclosed, never bound as successful, and never trigger a rerun.
-  - **Sanitization:** console and journal output carry no retrieved text, prompts, answers, secrets, signed URLs or provider messages. Private retention follows the owner's disclosure decision.
-- **AC-09 What "RAG success" means.** **All** of the following must hold:
+  - Expected-source presence (≥1 expected source for the bound question) is checked **before** generation. Failing it stops the run; it is never retried with another k or query.
+- **AC-07 Accounting (RAC-2, RAC-3, RAC-4).**
+  - **Records:** exact Decimal or integer money, with **one accounting entry per delivered request**.
+  - **Reserve first:** each approved request is reserved before dispatch, within the P0 task-wide reservation.
+  - **Settle:** settle only from usage that is independently valid **for that request**. A response rejected as a whole does not yield trustworthy usage unless its usage is separately established.
+  - **Unknown outcomes:** missing, malformed or unestablished usage, a timeout after send, uncertain dispatch, or a function error after send all retain the **full** reservation.
+  - **Overruns:** recorded **unclamped**; they latch abort.
+  - **Unapproved delivered requests** (an extra send, a summarizer, an unexpected endpoint):
+    - each is recorded separately, with its known usage or its unknown exposure;
+    - none is folded into another stage's single reservation;
+    - the reservation coverage is marked **violated** where it is exceeded, and the ceiling is marked **not established** unless it is independently provable.
+  - **Infrastructure requests** (S3 reads, logs) are counted against the infrastructure allowance, never against a model reservation.
+  - **Prior holds:** a refused or duplicate attempt **never** releases, refunds or alters another attempt's or run's claims, attempt records or holds.
+- **AC-08 Evidence (RAC-6).** **Evidence completion** and the **experiment outcome** are independent.
+  - **Evidence is complete and confirmed** only when the exclusive claim existed, the full ordered journal of every attempt, send, usage and stop was published, and the operator holds the successful returned status **and** a matching evidence-index hash.
+  - **Evidence is incomplete** when publication is partial, unconfirmed or missing, or the Lambda REPORT is unavailable. **This holds even if the answer looks successful.** Partial files are disclosed and never bound as successful, and there is no rerun.
+  - **Complete evidence of a failure** (for example an overrun, failed retrieval or a stop) is still complete evidence. It never implies RAG success, accounting success, qualification or release.
+  - **Sanitization:** console and journal output carry no retrieved text, prompts, answers, secrets, signed URLs or provider messages.
+- **AC-09 What "RAG success" (structural) means.** **All** of the following must hold:
+  - complete, confirmed evidence (AC-08);
   - Lambda Invoke success **and** nested HTTP 200;
   - `task_type` `qa` from a successful, non-fallback route;
   - AC-03 to AC-06 passed;
   - a non-empty retrieved context;
-  - a non-empty answer that is neither the no-evidence answer nor an empty-retrieval outcome;
-  - valid usage for all three model calls;
-  - complete evidence (AC-08).
+  - valid usage for all three model calls, all within their reservations;
+  - a non-empty answer that is neither the no-evidence answer, an empty-retrieval outcome, nor a **genuine abstention**.
 
-  HTTP 200 alone is **never** success. An empty retrieval, an abstention, a summary or a fallback can all be HTTP 200.
+  **Abstention is classified by the operator, not by code.** It is a recorded semantic classification of the privately retained answer, made under the approved disclosure, with the answer hash and the classifier's identity. It is not an automatic judge, and structural checks never prove answer correctness.
+
+  HTTP 200 alone is **never** success.
 - **AC-10 Lambda measurements.**
   - **Record:** INIT and REPORT duration, billed duration and max memory, separately from the client-observed duration.
   - **Health figures are context only:** 155–156 MB and a 2,141.94 ms init are health-only and are **not** RAG baselines.
@@ -111,19 +135,29 @@ A P2 observation never substitutes for a P0 prerequisite. For example, observing
 - **AC-13 Scope.**
   - The smoke controls are opt-in and isolated: there are no production default changes, no extra endpoints, and the custom request log stays off.
   - Behaviour outside the smoke stays golden-test identical.
-  - An unexpected service, endpoint or summarizer call is a violation and a stop.
+  - An unexpected endpoint, service or summarizer is a violation and a stop, under AC-01 (a) or (b).
 
-## 4. Fixture use
+## 4. Fixture schema `jev-rag-smoke-acceptance-scenarios-v2` (changes from v1)
 
-`tests/fixtures/jev_rag_smoke_acceptance.json` (schema `jev-rag-smoke-acceptance-scenarios-v1`) holds invented, interface-neutral scenarios. Each scenario records:
-- the clauses it exercises;
-- the phase or stage at which the condition occurs;
-- an invented `given`;
-- the required `outcome`;
-- `dispatches_allowed_after` (stages that may still send);
-- `prohibited_after`, the required `accounting` and `claims_not_permitted`.
+**Fields:**
+- **`outcome` is split (RAC-6):** into `experiment_outcome` and `evidence_outcome`.
+  - `experiment_outcome` adds `RESULT_NOT_ESTABLISHED`, for when evidence is incomplete.
+  - `evidence_outcome` is one of `EVIDENCE_COMPLETE_CONFIRMED` or `EVIDENCE_INCOMPLETE`.
+  - `PASS_STRUCTURAL` requires complete, confirmed evidence.
+- **`accounting` changes from a stage→code map to a list of per-request entries (RAC-3):** `{request, stage, approved, delivered (YES|NO|UNKNOWN), usage, treatment}`.
+- **`reservation_coverage` and `ceiling_status`** make guarantees explicit. A ceiling status is never asserted when it is not established.
+- **`prior_run` (RAC-2):** the earlier claim, attempts and holds, with a required `UNCHANGED` post-state.
 
-Vocabulary is defined in the file. Prices, caps, usage and texts are **invented placeholders**, not production facts or proposed limits. A reviewer maps each scenario onto the accepted implementation's actual seams and checks the outcome, the absence of later sends and the accounting. A scenario that cannot be expressed through the implementation is itself a review finding.
+**Vocabulary changes:**
+- `NO_DISPATCH` → `NO_DISPATCH_THIS_ATTEMPT`. It is scoped to the current attempt and **never** releases another attempt's hold.
+- New treatments: `RECORD_UNRESERVED_ACTUAL`, `RECORD_UNRESERVED_EXPOSURE` and `INFRASTRUCTURE_ALLOWANCE`.
+- New stage `INFRASTRUCTURE`.
+- New usage states `VALID`, `VALID_OVER_BOUND`, `MISSING`, `MALFORMED`, `UNKNOWN`, `UNTRUSTED` and `NONE`.
+- Claims: `COMPLETE` becomes `EVIDENCE_COMPLETE`; added `PRIOR_HOLD_RELEASED`, `SENDS_AUTHORIZED` and `CEILING_HELD`. The prohibited `REPORT_COMPLETE` becomes `REPORT_EVIDENCE_COMPLETE`.
+
+**IDs.** Scenario IDs S01–S38 are kept. Split or added cases are S39–S48.
+
+All values remain invented placeholders. They are not production facts, proposed limits, prices or approvals.
 
 ## 5. External prerequisites (not verified here; no live check authorized)
 
@@ -140,9 +174,9 @@ Proposed values come from the plan. **None is approved or enforceable until the 
 
 | # | Decision | Proposed (unapproved) |
 |---|---|---|
-| D1 | Data disclosure and retention: the question to Titan and Haiku, top-5 public-corpus chunks and source strings to Haiku, private retention of full responses | One public JPMorgan FY2025 question; public corpus only; metadata-only logs |
+| D1 | Data disclosure and retention: the question to Titan and Haiku, top-5 public-corpus chunks and source strings to Haiku, private retention of full responses, and operator abstention review | One public JPMorgan FY2025 question; public corpus only; metadata-only logs |
 | D2 | Optional numeric spot check | Structural only; a spot check needs a separately located authoritative filing |
-| D3 | Output caps `R` (routing) and `G` (generation), and the gross inference spending ceiling | Worked example only: R=256, G=256/512; no ceiling selected |
+| D3 | Output caps `R` (routing) and `G` (generation), the gross inference ceiling, and the expected-source condition | Worked example only: R=256, G=256/512; no ceiling selected |
 | D4 | Infrastructure, log and retention allowance | None selected |
 | D5 | Isolated resources and IAM: new function, role and log group; exact two-object S3 read; exact model and profile ARNs | Least-privilege outline in the plan |
 | D6 | Memory, timeout, ephemeral storage, request deadline and log size | 512 MiB / 30 s / 512 MiB *if* approved; not proven for RAG |
@@ -150,7 +184,25 @@ Proposed values come from the plan. **None is approved or enforceable until the 
 
 ## 7. Validation and scope receipt
 
-- The fixture parses strictly: no duplicate keys or non-finite values, unique scenario IDs, every clause reference defined here, and every enumeration value from the declared vocabulary.
-- All bindings above were re-hashed from saved evidence and the base tree.
-- `git diff --check` is clean.
-- **Not done:** no AWS or network calls, credential or `.env` access, model or native execution, index deserialization, installs, builds, resource changes, merge or push. Codex's in-progress implementation was not read.
+- The fixture parses strictly: no duplicate keys or non-finite values, and every enumeration value comes from the declared vocabulary.
+- Every clause is defined and covered by at least one scenario.
+- **Structural rules checked:**
+  - settlement only with valid usage;
+  - `NO_DISPATCH_THIS_ATTEMPT` only for undelivered requests;
+  - unapproved delivered requests never settle or share a reservation;
+  - `PASS_STRUCTURAL` only with complete, confirmed evidence;
+  - prior holds unchanged.
+- **Invented arithmetic counterexamples** (S05, S41) hold.
+- All bindings in section 1 were re-hashed, and `git diff --check` is clean.
+- **Not done:** no AWS or network calls, credential or `.env` access, model or native execution, installs, builds, merge or push.
+
+## 8. RAC-1 to RAC-6 correction map
+
+| Finding | Contract change | Fixture change |
+|---|---|---|
+| RAC-1 object identity | AC-03 rewritten: approved identity, conditional request identity, explicit version relationship, response joins, size **and** hash; size never substitutes | S14 limited to a failed precondition or ambiguous read; new **S39** (same size and hash, condition missing) and **S40** (identity changed, bytes identical) |
+| RAC-2 duplicate accounting | AC-07 prior-hold rule | S05 gains `prior_run` (claim, attempts, 9.000000 hold) with an `UNCHANGED` post-state; `NO_DISPATCH_THIS_ATTEMPT` is scoped; new claim `PRIOR_HOLD_RELEASED` |
+| RAC-3 extra sends | AC-01 (a)/(b), AC-07 per-request entries and infrastructure allowance | S10 is a second send blocked before delivery; **S41** is an extra routing send already delivered (3.000000 held plus 1.000000 unreserved actual, so coverage is violated and the ceiling not established); S37 is an endpoint blocked before delivery; **S42** is a delivered summarizer as its own `SUMMARIZE` entry; **S43** is a delivered infrastructure request |
+| RAC-4 embedding usage | AC-05 requires valid usage; AC-07 adds "whole-response rejection gives no trusted usage" | S16 and S18 state the valid-usage premise; S17 changes to `UNTRUSTED` → retain the full reservation; S19 adds malformed variants; new **S44** for an embedding usage overrun |
+| RAC-5 phases | Section 2 rewritten as P0 (bindings, parent client, sufficiency, operator claim), P1 (actual inner clients and send gates), P2 (observations) | S04 is the parent client at P0; new **S45** is the inner client resolved with retries at P1, before its first request; S03 is worst-case sufficiency at P0 |
+| RAC-6 outcomes | AC-08 separates the evidence and experiment meanings; AC-09 adds operator abstention classification | All scenarios gain both outcomes; S24 and S26 are complete, confirmed failure evidence; S28 is operator-classified; S33 and S34 are incomplete with the result not established; new **S46** (answer looks successful but publication is unconfirmed), **S47** (confirmed failed-retrieval record) and **S48** (structural success with full confirmed evidence) |
