@@ -382,3 +382,121 @@ remain. No live path, capture/recovery framework, source integration, AWS/networ
 call, credentials/.env, native execution, installation, container, build, paid
 call, resource change, deployment, push or Reviewer Protocol v2 change occurred.
 Stop for Claude's focused OP-1 delta review.
+
+## OP-1b / OP-1c / R3 offline correction — 2026-10-08
+
+Correction base: `20d34bcfdf25bcd872a5b640794591a9d7eed275`, on the existing
+`phase0/jev-rag-smoke-operator` branch. Before editing, the three base Git blobs
+and both uncommitted Claude reports were verified at their supplied SHA-256
+bindings. Both reports remain untouched and excluded from staging.
+
+Only `consumer_accounting` changes in production; its AST comparison proves
+every other operator function/class unchanged. Every prior test/helper AST is
+also preserved, including both original OP-1 counterexamples. The accepted
+producer, handler, P0, contract/fixtures, packaging and application behavior are
+unchanged.
+
+### Necessary consumer joins
+
+- **OP-1b:** the unchanged producer settles only via `_returned_usage` with
+  attributable returned usage. A settled model attempt now requires a valid
+  nonnegative finite charge, the producer's two-field usage representation
+  (`inputTokens` and `outputTokens`, exact nonnegative integers), and
+  `AUTHORIZED_REQUEST` attribution. Embedding output remains zero. Missing or
+  contradictory settlement evidence cannot release a hold. Valid zero usage
+  and zero charge remain accepted; valid settled token overruns remain recorded.
+- **OP-1c:** an unsettled charged attempt, including zero charge, or an attempt
+  marked `UNATTRIBUTED_RESPONSE` must retain its stage in `unestablished_stages`.
+  Genuine retry-inconsistency output remains consumable as failure evidence:
+  returned usage/charge survive, the full hold remains, and the bound is not
+  established. Retry metadata does not establish delivery counts or usage scope
+  for any other request.
+- **R3:** independently group attempt holds as the accepted producer does:
+  router/generation to Haiku, embedding to Titan, excluding index/metadata from
+  model totals. Sum with the existing exact `money_total` helper and require
+  exact Decimal equality to each reported retained-hold total. No rounding,
+  clamping, reservation release or price/charge recomputation occurs. Expected
+  arithmetic failures reject with sanitized `HANDLER_RESULT_INVALID`; unrelated
+  programming errors still propagate.
+
+Well-typed contradictory evidence returns fixed `HANDLER_RESULT_CONTRADICTORY`.
+Invalid charge representations retain `HANDLER_RESULT_INVALID`. These checks
+establish necessary internal consistency only, not authenticated usage,
+authorization, full accounting verification or execution readiness.
+
+### Reproduction and validation
+
+Fresh raw committed-base source export and invented real-handler seams reproduce
+all three gaps: settlement after a generation timeout without usage/charge;
+removing the retry charge's stage and claiming an established WITHIN bound; and
+reporting zero Haiku holds alongside a three-unit retained attempt. **3
+defect-presence probes pass** on the unchanged committed base. The initial
+sandbox runs instead stopped at the filesystem claim gate: `Path.resolve`
+denied access to pytest-created directories. Guarded tests then ran outside the
+process sandbox; no protected permission changes or validator bypass occurred.
+
+Corrected full-operator tests assert direct `inspect_handler` rejection, exact
+response.bin bytes and hash retention, claim and attempt marker preservation,
+incomplete evidence, UNESTABLISHED mapping, confirmation refusal, duplicate
+refusal, one parent call, and unchanged full parent reservations. Variations
+exercise missing/invalid usage, charge and attribution, wrong provider/hold
+totals, and stage removal. Positive cases preserve the original actual-producer
+coverage: settled success/overrun, uncertain numerically bounded holds, retries,
+blocked sends, priced/zero-charge/unknown/unpriced extras and compact results.
+Additional actual journal-write failures preserve settled or held accounting
+without later downstream calls. A separately labelled invented consumer fixture
+checks sums beyond default Decimal precision and S3/model grouping; it is not
+represented as a producer-emitted price policy.
+
+Final focused validation: **423 passed**, no skips, one inherited unknown
+`asyncio_mode` warning. Operator 170; P0 83; accounting 31; handler 53; smoke 86.
+Python **3.11.15**, Ruff **0.15.14**. The guard remains active with **zero outbound
+attempts**. Only invented transports and inspected pure-Python native substitutes
+are used. Scoped Ruff lint/format and whitespace pass. No packaging test or
+canonical lock check was rerun; the earlier checkout lock/CRLF limitation remains
+unchanged. Git's LF-to-CRLF notices are not whitespace failures.
+
+```powershell
+$op1bcPython = 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe'
+$op1bcScratch = 'C:\Projects\AWS Project\dependency-acquisition\rag-operator-op1bc-r3-20261008-6bd981ac'
+& $op1bcPython -B "$op1bcScratch\validate.py" working -v3
+# This executes run_offline.py -q -p no:cacheprovider --tb=short, with a fresh
+# --basetemp and JUnit receipt, against exactly these five suites:
+# tests/test_jev_rag_smoke_operator.py tests/test_jev_rag_smoke_preinvoke.py
+# tests/test_jev_rag_smoke_accounting.py tests/test_jev_rag_smoke_handler.py
+# tests/test_jev_rag_smoke.py
+# It also executes guarded Ruff check --no-cache and format --check on exactly
+# scripts/jev_rag_smoke_operator.py and tests/test_jev_rag_smoke_operator.py,
+# then git diff --check. Exact commands/results/hashes are in its JSON receipt.
+& $op1bcPython -B "$op1bcScratch\checks.py" export
+& $op1bcPython -B "$op1bcScratch\validate.py" raw
+```
+
+Raw staged source/test blobs are matched to validated working-copy hashes. The
+same focused suites run on the fresh raw Git export, without normalizing any
+protected checkout files. Private receipts distinguish committed blobs from
+working-copy hashes; exports are source validation inputs, not build artifacts.
+Final commit, ordered parent, exact three-path delta and receipt bindings are
+recorded in the exclusive task completion receipt outside Git.
+
+### Preservation and next review
+
+Twelve other worktree HEAD/branch/status and readable changed-file bindings,
+twelve fixed inputs, ten protected artifacts (including the accepted ZIP), both
+review hashes and all 194 untouched operator Git blobs are compared. Against
+the earlier sealed preservation inventory, **133 of 1217 files are readable and
+match**; **1084 prior pytest files are inaccessible** under the current Windows
+user. Their contents are not newly certified. No ACL changes or access workaround
+occur. New task outputs stay in the private scratch directory above.
+
+Claude's focused delta review should inspect the settlement evidence check,
+unattributed-stage join, exact provider hold sums and the full-parent regressions
+at the new commit, separately from the two earlier accepted/rejected subjects.
+O1–O4 remain as documented above. Real transport/SDK exception mapping, trusted
+operator and log evidence, owner data/prices/token bounds/limits, credentials and
+private permissions, pre-Invoke sufficiency, new exact artifact/native validation,
+confirmed parent completion, semantic assessment and qualification remain gated.
+
+No AWS/network calls, credential or .env access, native execution, installs,
+containers, builds, paid calls, integration, deployment, push or Reviewer
+Protocol v2 changes occurred. Stop for Claude's OP-1b/OP-1c/R3 delta review.

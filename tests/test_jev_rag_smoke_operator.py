@@ -307,6 +307,315 @@ def test_unknown_outcome_and_duplicate_never_resend_or_release(bundle, error):
     assert record["reservation_release"] == "NONE_PARENT_HOLDS_RETAINED"
 
 
+def op1bc_r3_forgery(value, case):
+    """Alter received invented evidence, never the accepted producer fixtures."""
+    accounting = value["accounting"]
+    if case == "released_without_evidence":
+        attempt = value["attempts"]["generation"]
+        assert not attempt["settled"] and "usage" not in attempt
+        assert "charge_usd" not in attempt
+        attempt.update(settled=True, hold_usd="0")
+        accounting["retained_holds_usd"]["haiku"] = "0"
+        value.update(status="STOPPED", code="SEARCH_RESULT_INVALID")
+    elif case in ("retry_without_stage", "charged_authorized_without_stage"):
+        attempt = value["attempts"]["router"]
+        assert not attempt["settled"] and "charge_usd" in attempt
+        assert attempt["usage_attribution"] == "UNATTRIBUTED_RESPONSE"
+        if case == "charged_authorized_without_stage":
+            attempt["usage_attribution"] = "AUTHORIZED_REQUEST"
+        accounting.update(
+            unestablished_stages=[],
+            exposure_bound_established=True,
+            reservation_coverage="WITHIN_RECORDED_RESERVATIONS",
+        )
+    elif case == "unattributed_without_charge_or_stage":
+        value["attempts"]["router"]["usage_attribution"] = "UNATTRIBUTED_RESPONSE"
+        assert "charge_usd" not in value["attempts"]["router"]
+    elif case in ("forged_zero_total", "wrong_provider", "wrong_total"):
+        assert value["attempts"]["router"]["hold_usd"] == "3"
+        accounting["retained_holds_usd"]["haiku"] = (
+            "2.9999999999999999999999999999" if case == "wrong_total" else "0"
+        )
+        if case == "wrong_provider":
+            accounting["retained_holds_usd"]["titan"] = "3"
+    else:
+        attempt = value["attempts"]["router"]
+        assert (
+            attempt["settled"] and attempt["usage_attribution"] == "AUTHORIZED_REQUEST"
+        )
+        if case in ("charge_missing", "usage_missing", "attribution_missing"):
+            del attempt[
+                {
+                    "charge_missing": "charge_usd",
+                    "usage_missing": "usage",
+                    "attribution_missing": "usage_attribution",
+                }[case]
+            ]
+        elif case == "charge_null":
+            attempt["charge_usd"] = None
+        elif case == "charge_invalid":
+            attempt["charge_usd"] = "NaN"
+        elif case == "usage_null":
+            attempt["usage"] = None
+        elif case == "usage_extra":
+            attempt["usage"]["totalTokens"] = sum(attempt["usage"].values())
+        elif case == "usage_output_missing":
+            del attempt["usage"]["outputTokens"]
+        elif case in ("usage_bool", "usage_float", "usage_negative"):
+            attempt["usage"]["inputTokens"] = {
+                "usage_bool": True,
+                "usage_float": 1.0,
+                "usage_negative": -1,
+            }[case]
+        elif case == "attribution_wrong":
+            attempt["usage_attribution"] = "UNKNOWN"
+        else:
+            raise AssertionError(case)
+    return value
+
+
+@pytest.mark.parametrize(
+    "case,mode,code",
+    [
+        (
+            "released_without_evidence",
+            "generation_timeout",
+            "HANDLER_RESULT_CONTRADICTORY",
+        ),
+        ("retry_without_stage", "retry", "HANDLER_RESULT_CONTRADICTORY"),
+        ("charged_authorized_without_stage", "retry", "HANDLER_RESULT_CONTRADICTORY"),
+        (
+            "unattributed_without_charge_or_stage",
+            "retained_hold",
+            "HANDLER_RESULT_CONTRADICTORY",
+        ),
+        ("forged_zero_total", "retained_hold", "HANDLER_RESULT_CONTRADICTORY"),
+        ("wrong_provider", "retained_hold", "HANDLER_RESULT_CONTRADICTORY"),
+        ("wrong_total", "retained_hold", "HANDLER_RESULT_CONTRADICTORY"),
+        *[
+            (case, "success", "HANDLER_RESULT_CONTRADICTORY")
+            for case in (
+                "charge_missing",
+                "usage_missing",
+                "attribution_missing",
+                "usage_null",
+                "usage_extra",
+                "usage_output_missing",
+                "usage_bool",
+                "usage_float",
+                "usage_negative",
+                "attribution_wrong",
+            )
+        ],
+        ("charge_null", "success", "HANDLER_RESULT_INVALID"),
+        ("charge_invalid", "success", "HANDLER_RESULT_INVALID"),
+    ],
+)
+def test_op1bc_r3_inspect_and_parent_reject_without_releasing_or_resending(
+    bundle, monkeypatch, case, mode, code
+):
+    if mode == "generation_timeout":
+        bundle["inner"].f.model.responses[2] = TimeoutError(SENTINEL)
+    else:
+        op1_producer(bundle, mode, monkeypatch)
+    captured = []
+
+    def transform(value):
+        value = op1bc_r3_forgery(value, case)
+        raw = operator.canonical(value)
+        with pytest.raises(operator.OperatorError, match="^" + code + "$"):
+            operator.inspect_handler(raw, value["policy_sha256"], value["run_id"])
+        captured.append(raw)
+        return value
+
+    bundle["parent"].transform = transform
+    result = invoke(bundle)
+    record = index(bundle, result)
+    assert result["status"] == "INTERRUPTED" and result["code"] == code
+    assert record["assessment"]["model_accounting"] is None
+    assert record["assessment"]["contract_exposure"] == "UNESTABLISHED"
+    assert not record["assessment"]["evidence_complete"]
+    assert record["reservation_release"] == "NONE_PARENT_HOLDS_RETAINED"
+    assert record["initial_reservations_usd"] == {
+        "ROUTE": "3",
+        "EMBED": "1",
+        "GENERATE": "5",
+        "haiku": "8",
+        "titan": "1",
+        "models": "9",
+        "infrastructure": "0.1",
+        "whole_run": "9.1",
+    }
+    directory = bundle["root"] / result["execution_id"]
+    assert (directory / "response.bin").read_bytes() == captured[0]
+    assert record["files"]["response.bin"]["sha256"] == operator.digest(captured[0])
+    assert (directory / "claim.json").is_file()
+    assert (directory / "invocation-attempt.json").is_file()
+    before = {path.name: path.read_bytes() for path in directory.iterdir()}
+    with pytest.raises(operator.OperatorError, match="^PUBLICATION_UNCONFIRMED$"):
+        operator.confirm(result, directory)
+    with pytest.raises(operator.OperatorError, match="^EXECUTION_ALREADY_CLAIMED$"):
+        invoke(bundle)
+    assert before == {path.name: path.read_bytes() for path in directory.iterdir()}
+    assert (
+        len(bundle["parent"].calls) == bundle["parent"].sent == bundle["factories"] == 1
+    )
+
+
+def test_op1b_valid_zero_charge_settles_real_returned_usage(bundle):
+    bundle["inner"].f.model.responses[0]["usage"] = {
+        "inputTokens": 0,
+        "outputTokens": 0,
+    }
+    result = invoke(bundle)
+    record = index(bundle, result)
+    assert result["status"] == "COMPLETE" and record["assessment"]["evidence_complete"]
+    received = operator.strict_json(
+        (bundle["root"] / result["execution_id"] / "response.bin").read_bytes()
+    )
+    attempt = received["attempts"]["router"]
+    assert attempt["settled"] and attempt["hold_usd"] == "0"
+    assert operator.Decimal(attempt["charge_usd"]) == 0
+    assert attempt["usage"] == {"inputTokens": 0, "outputTokens": 0}
+    assert attempt["usage_attribution"] == "AUTHORIZED_REQUEST"
+
+
+def test_op1c_retry_retains_usage_charge_full_hold_and_unknown_scope(
+    bundle, monkeypatch
+):
+    op1_producer(bundle, "retry", monkeypatch)
+    result = invoke(bundle)
+    record = index(bundle, result)
+    received = operator.strict_json(
+        (bundle["root"] / result["execution_id"] / "response.bin").read_bytes()
+    )
+    attempt = received["attempts"]["router"]
+    assert result["status"] == "COMPLETE" and record["assessment"]["evidence_complete"]
+    assert (
+        received["status"] == "UNCERTAIN"
+        and received["code"] == "ATTEMPT_COUNT_INVALID"
+    )
+    assert (
+        not attempt["settled"]
+        and attempt["hold_usd"] == attempt["reservation_usd"] == "3"
+    )
+    assert attempt["usage_attribution"] == "UNATTRIBUTED_RESPONSE"
+    assert attempt["usage_scope"] == "RETURNED_RESPONSE_ONLY"
+    assert set(attempt["usage"]) == {"inputTokens", "outputTokens"}
+    assert operator.Decimal(attempt["charge_usd"]) > 0
+    assert received["accounting"]["unestablished_stages"] == ["router"]
+    assert not received["accounting"]["exposure_bound_established"]
+    assert received["accounting"]["retained_holds_usd"]["haiku"] == "3"
+    assert len(bundle["inner"].f.model.calls) == 1 and not bundle["inner"].f.s3.calls
+
+
+@pytest.mark.parametrize("forge", [False, True])
+def test_r3_exact_decimal_grouping_not_default_context_rounding(forge):
+    # Invented consumer arithmetic fixture, not claimed to be a policy-emitted price.
+    first = "3.00000000000000000000000000001"
+    second = "5.00000000000000000000000000002"
+    value = {
+        "status": "UNCERTAIN",
+        "code": "UNCERTAIN_PROVIDER_OUTCOME",
+        "local_events": [],
+        "attempts": {
+            stage: {"settled": False, "hold_usd": amount, "reservation_usd": amount}
+            for stage, amount in (
+                ("router", first),
+                ("generation", second),
+                ("embedding", "1.2"),
+                ("index", "7"),
+                ("metadata", "9"),
+            )
+        },
+        "accounting": {
+            "unestablished_stages": [],
+            "exposure_bound_established": True,
+            "ceiling_established": False,
+            "reservation_coverage": "WITHIN_RECORDED_RESERVATIONS",
+            "retained_holds_usd": {
+                "haiku": "8" if forge else "8.00000000000000000000000000003",
+                "titan": "1.2",
+            },
+            "extra_request_count": 0,
+            "extra_requests": [],
+            "extra_requests_sha256": operator.digest(operator.canonical([])),
+        },
+    }
+    if forge:
+        with pytest.raises(
+            operator.OperatorError, match="^HANDLER_RESULT_CONTRADICTORY$"
+        ):
+            operator.consumer_accounting(value)
+    else:
+        operator.consumer_accounting(value)
+
+
+@pytest.mark.parametrize("kind", ["attempt", "usage"])
+def test_op1bc_r3_real_producer_journal_failure_preserves_accounting(
+    bundle, monkeypatch, kind
+):
+    real_open = Path.open
+    inner_directory = bundle["inner"].root / bundle["inner"].f.config["run_id"]
+
+    def fail(path, *args, **kwargs):
+        if path.parent == inner_directory and path.name.endswith(f"-{kind}.json"):
+            raise OSError(SENTINEL)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fail)
+    result = invoke(bundle)
+    record = index(bundle, result)
+    received = operator.strict_json(
+        (bundle["root"] / result["execution_id"] / "response.bin").read_bytes()
+    )
+    assert result["status"] == "COMPLETE" and record["assessment"]["evidence_complete"]
+    assert received["status"] == "UNCERTAIN"
+    assert received["code"] == "LOCAL_EVIDENCE_UNAVAILABLE"
+    attempt = received["attempts"]["router"]
+    if kind == "usage":
+        assert attempt["settled"] and attempt["hold_usd"] == "0"
+        assert attempt["usage_attribution"] == "AUTHORIZED_REQUEST"
+        assert operator.Decimal(attempt["charge_usd"]) > 0
+        assert received["accounting"]["retained_holds_usd"]["haiku"] == "0"
+    else:
+        assert not attempt["settled"] and "charge_usd" not in attempt
+        assert received["accounting"]["retained_holds_usd"]["haiku"] == "3"
+    assert len(bundle["inner"].f.model.calls) == (1 if kind == "usage" else 0)
+    assert not bundle["inner"].f.s3.calls
+
+
+@pytest.mark.parametrize(
+    "error", [ValueError(SENTINEL), operator.InvalidOperation(SENTINEL)]
+)
+def test_r3_expected_arithmetic_failure_is_sanitized(bundle, monkeypatch, error):
+    value = inner.invoke(bundle["inner"])
+    from app.services import rag_smoke_policy
+
+    def fail(_):
+        raise error
+
+    monkeypatch.setattr(rag_smoke_policy, "money_total", fail)
+    with pytest.raises(operator.OperatorError, match="^HANDLER_RESULT_INVALID$"):
+        operator.inspect_handler(
+            operator.canonical(value), value["policy_sha256"], value["run_id"]
+        )
+
+
+def test_r3_unrelated_programming_failure_still_propagates(bundle, monkeypatch):
+    value = inner.invoke(bundle["inner"])
+    from app.services import rag_smoke_policy
+
+    def fail(_):
+        raise RuntimeError("invented programming defect")
+
+    monkeypatch.setattr(rag_smoke_policy, "money_total", fail)
+    with pytest.raises(RuntimeError, match="^invented programming defect$"):
+        operator.inspect_handler(
+            operator.canonical(value), value["policy_sha256"], value["run_id"]
+        )
+
+
 @pytest.mark.parametrize(
     "setting,code",
     [

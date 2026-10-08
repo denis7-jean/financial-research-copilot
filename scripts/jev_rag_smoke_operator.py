@@ -374,6 +374,10 @@ def consumer_accounting(value):
     depends on its private caps, so only the necessary implications are asserted
     here; a conservative false ceiling is not strengthened into a passing one.
     """
+    from decimal import DecimalException
+
+    from app.services.rag_smoke_policy import money_total
+
     accounting = value["accounting"]
     stages = accounting.get("unestablished_stages")
     vocabulary = {"router", "index", "metadata", "embedding", "generation"}
@@ -417,6 +421,7 @@ def consumer_accounting(value):
     else:
         require(type(accounting["extra_requests"]) is list, "HANDLER_RESULT_INVALID")
     held = False
+    holds = {"haiku": [Decimal(0)], "titan": [Decimal(0)]}
     for stage, attempt in value["attempts"].items():
         require(
             stage in vocabulary
@@ -433,11 +438,41 @@ def consumer_accounting(value):
         )
         # Exact handler branch uses the producer's reservation string != "0".
         held |= not attempt["settled"] and attempt["reservation_usd"] != "0"
+        if attempt["settled"]:
+            usage = attempt.get("usage")
+            require(
+                stage in {"router", "embedding", "generation"}
+                and "charge_usd" in attempt
+                and type(usage) is dict
+                and set(usage) == {"inputTokens", "outputTokens"}
+                and all(
+                    type(tokens) is int and tokens >= 0 for tokens in usage.values()
+                )
+                and (stage != "embedding" or usage["outputTokens"] == 0)
+                and attempt.get("usage_attribution") == "AUTHORIZED_REQUEST",
+                "HANDLER_RESULT_CONTRADICTORY",
+            )
+        if ("charge_usd" in attempt and not attempt["settled"]) or attempt.get(
+            "usage_attribution"
+        ) == "UNATTRIBUTED_RESPONSE":
+            require(stage in stages, "HANDLER_RESULT_CONTRADICTORY")
+        # Match SmokePolicy.accounting: S3 holds are excluded from model totals.
+        if stage not in {"index", "metadata"}:
+            holds["titan" if stage == "embedding" else "haiku"].append(hold)
         if (
             "charge_usd" in attempt
             and decimal_value(attempt["charge_usd"]) > reservation
         ):
             require(coverage == "VIOLATED", "HANDLER_RESULT_CONTRADICTORY")
+    for provider, amounts in holds.items():
+        try:
+            total = money_total(amounts)
+        except (DecimalException, ValueError, OverflowError):
+            raise OperatorError("HANDLER_RESULT_INVALID") from None
+        require(
+            decimal_value(accounting["retained_holds_usd"][provider]) == total,
+            "HANDLER_RESULT_CONTRADICTORY",
+        )
     # A recorded token overrun also violates coverage, even if dollars fit.
     for event in value["local_events"]:
         record = event["record"]
