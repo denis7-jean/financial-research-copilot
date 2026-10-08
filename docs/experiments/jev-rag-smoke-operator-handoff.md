@@ -248,3 +248,137 @@ chosen by this increment. No Reviewer Protocol v2 bytes or readiness change.
 Stop for Claude's independent operator review. No live CLI, network/AWS calls,
 credentials, native execution, installs, containers, builds, inference, resource
 changes, integration, deployment or push occurred.
+
+## OP-1 correction — focused offline delta
+
+Correction base: `1ad9db2f01f348cd61e8c4ab557eda15d7597172`, same operator
+branch/worktree. The preceding implementation/validation receipt is historical;
+this increment does not overwrite it. Claude's REQUEST CHANGES report is preserved
+uncommitted and unchanged at raw SHA-256
+`6aa44c71f3e1ba092f1ecf4e7d1923ebbafd2c7a74acbe4a37c148358881ad7e`.
+Codex correction/self-review remains pending Claude's focused OP-1 delta review.
+
+Production code changes are confined to `inspect_handler` and new
+`consumer_accounting`. AST comparison verifies all other module nodes are
+unchanged. No accepted producer, operator dispatch/publication/confirmation,
+P0, packaging or declarative-contract code is altered.
+
+Checks are derived from the actual accepted
+`SmokePolicy.accounting`, `record_extra_request`, `_returned_usage` and the
+handler's exception/footer branches:
+
+- unestablished_stages is a list of distinct strings from router/index/metadata/
+  embedding/generation/unidentified_model_request. Wrong types/vocabulary return
+  HANDLER_RESULT_INVALID; duplicates and inconsistent well-typed fields return
+  HANDLER_RESULT_CONTRADICTORY.
+- exposure_bound_established equals not unestablished_stages. Coverage has the
+  producer precedence VIOLATED first, otherwise UNESTABLISHED when stages exist,
+  otherwise WITHIN_RECORDED_RESERVATIONS. Positive known unreserved charges,
+  attempt charges exceeding their reservation, and hash-bound usage journals
+  reporting a token overrun require VIOLATED. Known token overruns can violate
+  coverage even when the charge is below the reservation.
+- A true ceiling requires an established bound and non-VIOLATED coverage. There
+  is deliberately no inverse rule forcing a true ceiling: the actual producer
+  also compares exposure to its caps, which are not arguments to this consumer.
+  This is necessary consistency validation, not independent recomputation or
+  authentication of prices, caps, every charge, or a whole-task budget pass.
+- Attempts must have typed reservation/hold/settled fields. A settled attempt has
+  zero hold; an unsettled one retains its reservation. Status uses the handler's
+  exact unsettled nonzero-reservation test, plus unestablished stages and its
+  three uncertain-failure codes. Ordinary SmokeStop statuses match that branch.
+  Close/evidence failures, local execution errors and compact-output footer
+  behavior retain their separate accepted rules. UNCERTAIN does not imply that
+  the numeric bound is unestablished; STOPPED with a known settled overrun is valid.
+- Never-delivered extras must have usage and charge_usd explicitly null, including
+  rejection of a fabricated zero charge. Delivered/unknown extras still map to
+  the contract violation regardless of a zero charge or local coverage. Unknown
+  delivery or absent pricing/charge must retain the corresponding stage marker.
+- Count and lowercase full list hash are required even when the list is omitted.
+  Zero count binds canonical empty-list bytes. Present null is not omission.
+  The actual handler's compact form has UNCERTAIN/RESULT_TOO_LARGE, no local_events
+  and no extra_requests list; full answer-size rejection remains STOPPED. Missing
+  compact list bytes stay INCOMPLETE, not established within or reconstructed.
+
+All checks precede a returned mapping. Contradictions leave the index mapping
+UNESTABLISHED and evidence_complete=false, with fixed sanitized
+HANDLER_RESULT_CONTRADICTORY. Existing response.bin bytes/hash, request metadata,
+P0 claim, full parent reservations and attempt marker remain intact. A second
+entry is refused without a second factory/send or changing any prior file.
+Local publication COMPLETE remains separate from evidence completeness and RAG
+success; genuine failure evidence can still be complete. No reservation is
+released and valid usage never becomes authorization.
+
+### Reproduction and final validation
+
+Fresh raw committed-base export reproduces both original defects: STOPPED with
+router unestablished, bound=false, ceiling=true, WITHIN coverage; and a real
+blocked extra transformed to delivery=NO with charge="5". **2 defect-presence
+tests pass**, independently confirming both base results incorrectly publish
+within/complete. No changing worktree code is used for that reproduction.
+
+Corrected parent tests retain exact transformed raw bytes and assert rejection,
+UNESTABLISHED mapping, incomplete evidence, one parent call, duplicate refusal
+and byte-identical prior holds/files. Variations cover missing/malformed/duplicate/
+unsupported stages, conflicting flags/status, blocked usage/zero charge, compact
+missing/invalid hash/count and omission-versus-null/full-list contradictions.
+
+Positive cases execute the actual accepted handler/accounting seams with invented
+inputs/faults: structural success, ordinary stop, uncertain retained reservation,
+router/index/metadata retry inconsistencies, token and charge overruns, identified
+delivered/unknown/missing/unpriced/zero-charge extras, blocked send, unidentified
+extra evidence, client close, local evidence, full answer-size rejection and
+compact output. The compact tests lower the test-only result limit (as existing
+handler regressions do); this exercises the stricter actual footer, not a
+weakened producer. The older minimal transformed-extra fixture is replaced by
+actual policy observation; its mapping/charge/success assertions are retained.
+
+Final focused result: **395 passed**, no skips, one inherited asyncio_mode
+warning. Operator 142, P0 83, accounting 31, handler 53, smoke 86. Interpreter
+Python **3.11.15**, Ruff **0.15.14**, existing legal-agent environment. Inspected
+pure-Python fake native modules and transports only. Offline guard active and
+zero outbound attempts in tests and scoped Ruff. No packaging/lock regression
+was run or encountered; its historical CRLF issue remains unchanged above.
+
+```powershell
+$env:HANDLER_TEST_ROOT = 'C:\Projects\AWS Project\worktrees\jev-rag-smoke-operator'
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-operator-op1-20261008-29c6fd83\run_offline.py' -q -p no:cacheprovider --tb=short --basetemp='C:\Projects\AWS Project\dependency-acquisition\rag-operator-op1-20261008-29c6fd83\pytest-focused-final' tests/test_jev_rag_smoke_operator.py tests/test_jev_rag_smoke_preinvoke.py tests/test_jev_rag_smoke_accounting.py tests/test_jev_rag_smoke_handler.py tests/test_jev_rag_smoke.py
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-operator-op1-20261008-29c6fd83\run_ruff.py' check --no-cache scripts/jev_rag_smoke_operator.py tests/test_jev_rag_smoke_operator.py
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-operator-op1-20261008-29c6fd83\run_ruff.py' format --check scripts/jev_rag_smoke_operator.py tests/test_jev_rag_smoke_operator.py
+git diff --check
+```
+
+Ruff cache and all new test outputs are outside Git. Lint, formatting and
+whitespace pass. Staged raw blobs are joined to the validated working-copy
+source/test hashes before the explicit three-path local commit. Final parent,
+blob versus working-copy hashes and preservation bindings are in exclusive
+private receipts under
+`C:\Projects\AWS Project\dependency-acquisition\rag-operator-op1-20261008-29c6fd83`.
+Twelve other worktrees, protected inputs/ZIP/sealed bindings and the exact
+uncommitted OP-1 report are compared before/after. No permissions change or
+protected line-ending normalization occurs. Claude's inaccessible preservation
+scope remains the previously disclosed limitation, not new independent verification.
+
+### Nonblocking limitations and review handoff
+
+O1–O4 stay visible and unchanged:
+
+1. Real SDK exception translation and partial-byte preservation belong to a
+   separately reviewed future operational adapter; the simulated protocol is
+   not expanded here.
+2. Supplied REPORT memory values still accept finite nonnegative floats. Actual
+   AWS capture/type/provenance remains an operational requirement.
+3. confirm relies on the caller preserving the actual returned value; it cannot
+   authenticate a reconstructed or forged return from index bytes.
+4. Dispatch count includes an entered invoke whose parameter hook blocked before
+   sending. It is conservative, not a delivered-call count.
+
+Claude should review exactly this consumer/helper, status/footer exceptions,
+compact/extra invariants and fresh counterexamples/producer positives. Do not
+promote passing tests into independently accepted correction, authenticated
+observations, full accounting/contract enforcement or execution readiness.
+All prior operator/live-observer, owner/data/budget, credential/permissions,
+artifact/native, confirmed execution evidence, semantic and qualification gates
+remain. No live path, capture/recovery framework, source integration, AWS/network
+call, credentials/.env, native execution, installation, container, build, paid
+call, resource change, deployment, push or Reviewer Protocol v2 change occurred.
+Stop for Claude's focused OP-1 delta review.

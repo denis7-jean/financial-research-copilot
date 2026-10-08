@@ -367,6 +367,117 @@ def text_size(value):
         raise OperatorError("HANDLER_RESULT_INVALID") from None
 
 
+def consumer_accounting(value):
+    """Necessary producer invariants, not a fresh cost/authorization calculation.
+
+    SmokePolicy.accounting gives exact bound/coverage precedence. Ceiling also
+    depends on its private caps, so only the necessary implications are asserted
+    here; a conservative false ceiling is not strengthened into a passing one.
+    """
+    accounting = value["accounting"]
+    stages = accounting.get("unestablished_stages")
+    vocabulary = {"router", "index", "metadata", "embedding", "generation"}
+    require(
+        type(stages) is list and all(type(stage) is str for stage in stages),
+        "HANDLER_RESULT_INVALID",
+    )
+    require(
+        set(stages) <= vocabulary | {"unidentified_model_request"},
+        "HANDLER_RESULT_INVALID",
+    )
+    require(len(stages) == len(set(stages)), "HANDLER_RESULT_CONTRADICTORY")
+    bound = accounting["exposure_bound_established"]
+    coverage = accounting["reservation_coverage"]
+    require(bound == (not stages), "HANDLER_RESULT_CONTRADICTORY")
+    require(
+        coverage == "VIOLATED"
+        or coverage == ("UNESTABLISHED" if stages else "WITHIN_RECORDED_RESERVATIONS"),
+        "HANDLER_RESULT_CONTRADICTORY",
+    )
+    require(
+        not accounting["ceiling_established"] or (bound and coverage != "VIOLATED"),
+        "HANDLER_RESULT_CONTRADICTORY",
+    )
+    require(
+        p0.hash_value(accounting.get("extra_requests_sha256")), "HANDLER_RESULT_INVALID"
+    )
+    if accounting["extra_request_count"] == 0:
+        require(
+            accounting["extra_requests_sha256"] == digest(encode([])),
+            "HANDLER_RESULT_CONTRADICTORY",
+        )
+    compact = "extra_requests" not in accounting
+    if compact:
+        require(
+            value["status"] == "UNCERTAIN"
+            and value["code"] == "RESULT_TOO_LARGE"
+            and not value["local_events"],
+            "HANDLER_RESULT_CONTRADICTORY",
+        )
+    else:
+        require(type(accounting["extra_requests"]) is list, "HANDLER_RESULT_INVALID")
+    held = False
+    for stage, attempt in value["attempts"].items():
+        require(
+            stage in vocabulary
+            and type(attempt) is dict
+            and {"reservation_usd", "hold_usd", "settled"} <= set(attempt)
+            and type(attempt["settled"]) is bool,
+            "HANDLER_RESULT_INVALID",
+        )
+        reservation = decimal_value(attempt["reservation_usd"])
+        hold = decimal_value(attempt["hold_usd"])
+        require(
+            hold == (Decimal(0) if attempt["settled"] else reservation),
+            "HANDLER_RESULT_CONTRADICTORY",
+        )
+        # Exact handler branch uses the producer's reservation string != "0".
+        held |= not attempt["settled"] and attempt["reservation_usd"] != "0"
+        if (
+            "charge_usd" in attempt
+            and decimal_value(attempt["charge_usd"]) > reservation
+        ):
+            require(coverage == "VIOLATED", "HANDLER_RESULT_CONTRADICTORY")
+    # A recorded token overrun also violates coverage, even if dollars fit.
+    for event in value["local_events"]:
+        record = event["record"]
+        if (
+            type(record) is dict
+            and record.get("kind") == "usage"
+            and record.get("overrun") is True
+        ):
+            require(coverage == "VIOLATED", "HANDLER_RESULT_CONTRADICTORY")
+    uncertain_codes = {
+        "UNCERTAIN_PROVIDER_OUTCOME",
+        "LOCAL_OR_UNCERTAIN_FAILURE",
+        "EVIDENCE_PUBLICATION_FAILED",
+    }
+    uncertainty = bool(stages) or held or value["code"] in uncertain_codes
+    if value["status"] in ("STOPPED", "STRUCTURAL_SUCCESS"):
+        require(not uncertainty, "HANDLER_RESULT_CONTRADICTORY")
+    # Footer/close and local-import failures have different rules from SmokeStop.
+    if value["code"] in {"CLIENT_CLOSE_FAILED", "LOCAL_EVIDENCE_UNAVAILABLE"}:
+        require(value["status"] == "UNCERTAIN", "HANDLER_RESULT_CONTRADICTORY")
+    elif value["code"] == "LOCAL_EXECUTION_UNAVAILABLE":
+        require(
+            value["status"] == ("UNCERTAIN" if value["attempts"] else "STOPPED"),
+            "HANDLER_RESULT_CONTRADICTORY",
+        )
+    elif value["code"] == "RESULT_TOO_LARGE":
+        require(
+            value["status"] == ("UNCERTAIN" if compact or uncertainty else "STOPPED"),
+            "HANDLER_RESULT_CONTRADICTORY",
+        )
+    elif (
+        value["code"] in handler.STOP_CODES | {"SMOKE_STOPPED"}
+        and value["code"] != "RESULT_TOO_LARGE"
+    ):
+        require(
+            value["status"] == ("UNCERTAIN" if uncertainty else "STOPPED"),
+            "HANDLER_RESULT_CONTRADICTORY",
+        )
+
+
 def inspect_handler(raw, policy_hash, run_id):
     """Structural consumer, not a semantic judge or complete acceptance engine."""
     value = parse(raw, RESPONSE_LIMIT, "HANDLER_RESULT_INVALID")
@@ -434,6 +545,7 @@ def inspect_handler(raw, policy_hash, run_id):
         and 0 <= accounting["extra_request_count"] <= 1000,
         "HANDLER_RESULT_INVALID",
     )
+    consumer_accounting(value)
     extras = accounting.get("extra_requests")
     count = accounting["extra_request_count"]
     mapping = "INCOMPLETE"  # compact output cannot reconstruct omitted observations
@@ -449,12 +561,32 @@ def inspect_handler(raw, policy_hash, run_id):
             require(
                 type(extra) is dict
                 and extra.get("delivery") in ("NO", "YES", "UNKNOWN")
-                and extra.get("approved") is False,
+                and extra.get("approved") is False
+                and {"usage", "charge_usd"} <= set(extra),
                 "HANDLER_RESULT_INVALID",
             )
+            if extra["delivery"] == "NO":
+                require(
+                    extra["usage"] is None and extra["charge_usd"] is None,
+                    "HANDLER_RESULT_CONTRADICTORY",
+                )
             if extra.get("charge_usd") is not None:
-                decimal_value(extra["charge_usd"])
+                actual = decimal_value(extra["charge_usd"])
+                if actual > 0:
+                    require(
+                        accounting["reservation_coverage"] == "VIOLATED",
+                        "HANDLER_RESULT_CONTRADICTORY",
+                    )
             if extra["delivery"] != "NO":
+                require(
+                    extra.get("stage") in {"router", "embedding", "generation"},
+                    "HANDLER_RESULT_INVALID",
+                )
+                if extra["delivery"] == "UNKNOWN" or extra["charge_usd"] is None:
+                    require(
+                        extra["stage"] in accounting["unestablished_stages"],
+                        "HANDLER_RESULT_CONTRADICTORY",
+                    )
                 unauthorized = True
                 mapping = "VIOLATED_RECORD_UNRESERVED_EXPOSURE"
     require(

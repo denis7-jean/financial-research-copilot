@@ -602,27 +602,14 @@ def test_unrelated_programming_error_propagates_and_claim_blocks_next_attempt(bu
 
 
 def test_unknown_extra_contract_mapping_preserves_accounting_and_known_charge(bundle):
-    def transform(value):
-        accounting = value["accounting"]
-        accounting["extra_requests"] = [
-            {"delivery": "YES", "approved": False, "charge_usd": None}
-        ]
-        accounting["extra_request_count"] = 1
-        accounting["extra_requests_sha256"] = operator.digest(
-            operator.canonical(accounting["extra_requests"])
-        )
-        accounting["reservation_coverage"] = "UNESTABLISHED"
-        accounting["exposure_bound_established"] = accounting["ceiling_established"] = (
-            False
-        )
-        value["status"], value["code"], value["result"] = (
-            "UNCERTAIN",
-            "EXTRA_REQUEST_OBSERVED",
-            None,
-        )
-        return value
+    real_factory = bundle["inner"].factory
 
-    bundle["parent"].transform = transform
+    def factory(policy):
+        clients = real_factory(policy)
+        accounting_tests.observe_extra(bundle["inner"].f, policy, usage=None)
+        return clients
+
+    bundle["inner"].factory = factory
     result = invoke(bundle)
     record = index(bundle, result)
     assert (
@@ -963,3 +950,301 @@ def test_claim_metadata_failure_retains_claim_and_never_constructs_client(
     )
     with pytest.raises(operator.OperatorError, match="EXECUTION_ALREADY_CLAIMED"):
         invoke(bundle)
+
+
+def op1_producer(bundle, mode, monkeypatch):
+    """Configure invented inputs/faults, then let the accepted handler derive fields."""
+    run = bundle["inner"]
+    if mode == "ordinary_stop":
+        run.f.native.index.search = lambda values, k: ([[1.0] * 5], [[0] * 5])
+    elif mode == "retained_hold":
+        run.f.model.responses[0] = TimeoutError(SENTINEL)
+    elif mode == "retry":
+        run.f.model.responses[0]["ResponseMetadata"] = {"RetryAttempts": 1}
+    elif mode in ("token_overrun", "charge_overrun"):
+        run.f.model.responses[0]["usage"] = {
+            "inputTokens": 10001 if mode == "token_overrun" else 100000,
+            "outputTokens": 0 if mode == "token_overrun" else 100000,
+        }
+    elif mode == "blocked":
+        run.f.model.send_events = 2
+    elif mode in ("index_retry", "metadata_retry"):
+        run.f.s3.responses[0 if mode == "index_retry" else 1]["ResponseMetadata"] = {
+            "RetryAttempts": 1
+        }
+    elif mode == "close":
+        run.f.model.close = lambda: (_ for _ in ()).throw(OSError(SENTINEL))
+    elif mode == "local_evidence":
+        monkeypatch.setattr(
+            inner.smoke,
+            "evidence_snapshot",
+            lambda policy: (_ for _ in ()).throw(
+                inner.smoke.EnvelopeError("LOCAL_EVIDENCE_UNAVAILABLE")
+            ),
+        )
+    elif mode == "unidentified":
+        real_factory = run.factory
+
+        def factory(policy):
+            clients = real_factory(policy)
+            real_call = run.f.model.call
+
+            def call(operation, kwargs):
+                real_call(operation, kwargs)
+                policy.record_extra_request(
+                    "router",
+                    delivery="YES",
+                    request_evidence_sha256="not-a-hash",
+                    model_id=run.f.config["models"]["haiku"],
+                    region="us-east-1",
+                    tier="standard",
+                )
+
+            run.f.model.call = call
+            return clients
+
+        run.factory = factory
+    elif mode == "answer_limit":
+        run.f.model.responses[2]["output"]["message"]["content"][0]["text"] = "x" * (
+            inner.smoke.MAX_ANSWER_BYTES + 1
+        )
+    elif mode.startswith("compact"):
+        monkeypatch.setattr(inner.smoke, "MAX_RESULT_BYTES", 2500)
+        if mode == "compact_blocked":
+            run.f.model.send_events = 2
+    elif mode in ("delivered", "unknown", "missing_usage", "zero", "unpriced"):
+        real_factory = run.factory
+
+        def factory(policy):
+            clients = real_factory(policy)
+            accounting_tests.observe_extra(
+                run.f,
+                policy,
+                delivery="UNKNOWN" if mode == "unknown" else "YES",
+                usage=None
+                if mode == "missing_usage"
+                else {"inputTokens": 0 if mode == "zero" else 1, "outputTokens": 0},
+                binding={
+                    "model_id": run.f.config["models"]["haiku"],
+                    "region": "eu-west-1",
+                    "tier": "standard",
+                }
+                if mode == "unpriced"
+                else None,
+            )
+            return clients
+
+        run.factory = factory
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "success",
+        "ordinary_stop",
+        "retained_hold",
+        "retry",
+        "token_overrun",
+        "charge_overrun",
+        "blocked",
+        "index_retry",
+        "metadata_retry",
+        "close",
+        "local_evidence",
+        "unidentified",
+        "answer_limit",
+        "delivered",
+        "unknown",
+        "missing_usage",
+        "zero",
+        "unpriced",
+        "compact",
+        "compact_blocked",
+    ],
+)
+def test_op1_legitimate_accepted_producer_results(bundle, monkeypatch, mode):
+    op1_producer(bundle, mode, monkeypatch)
+    result = invoke(bundle)
+    record = index(bundle, result)
+    assert result["status"] == "COMPLETE" and result["code"] is None
+    assert record["assessment"]["evidence_complete"]
+    raw = (bundle["root"] / result["execution_id"] / "response.bin").read_bytes()
+    returned = operator.strict_json(raw)
+    accounting = returned["accounting"]
+    assert record["assessment"]["model_accounting"] == accounting
+    assert accounting["exposure_bound_established"] == (
+        not accounting["unestablished_stages"]
+    )
+    assert len(bundle["parent"].calls) == 1
+    if mode in ("delivered", "unknown", "missing_usage", "zero", "unpriced"):
+        assert (
+            record["assessment"]["contract_exposure"]
+            == "VIOLATED_RECORD_UNRESERVED_EXPOSURE"
+        )
+        assert (
+            len(run_calls := bundle["inner"].f.model.calls) == 1
+            and not bundle["inner"].f.s3.calls
+        )
+        assert run_calls[0][0] == "Converse"
+    if mode == "zero":
+        assert accounting["reservation_coverage"] == "WITHIN_RECORDED_RESERVATIONS"
+        assert accounting["ceiling_established"] and returned["status"] == "STOPPED"
+        assert operator.Decimal(accounting["extra_requests"][0]["charge_usd"]) == 0
+    if mode == "token_overrun":
+        assert (
+            accounting["reservation_coverage"] == "VIOLATED"
+            and accounting["exposure_bound_established"]
+        )
+        assert returned["status"] == "STOPPED" and returned["code"] == "USAGE_OVERRUN"
+        attempt = returned["attempts"]["router"]
+        assert operator.Decimal(attempt["charge_usd"]) < operator.Decimal(
+            attempt["reservation_usd"]
+        )
+    if mode in ("retained_hold", "close"):
+        assert (
+            accounting["exposure_bound_established"]
+            and accounting["ceiling_established"]
+        )
+        assert returned["status"] == "UNCERTAIN"
+    if mode.startswith("compact"):
+        assert "extra_requests" not in accounting and operator.p0.hash_value(
+            accounting["extra_requests_sha256"]
+        )
+        assert record["assessment"]["contract_exposure"] == "INCOMPLETE"
+    if mode == "unidentified":
+        assert accounting["unestablished_stages"] == ["unidentified_model_request"]
+        assert returned["status"] == "UNCERTAIN"
+    if mode == "answer_limit":
+        assert (
+            returned["status"] == "STOPPED" and returned["code"] == "RESULT_TOO_LARGE"
+        )
+        assert "extra_requests" in accounting
+
+
+@pytest.mark.parametrize(
+    "case,code",
+    [
+        ("claude_a", "HANDLER_RESULT_CONTRADICTORY"),
+        ("claude_b", "HANDLER_RESULT_CONTRADICTORY"),
+        ("stages_dict", "HANDLER_RESULT_INVALID"),
+        ("stage_int", "HANDLER_RESULT_INVALID"),
+        ("stages_missing", "HANDLER_RESULT_INVALID"),
+        ("stage_unknown", "HANDLER_RESULT_INVALID"),
+        ("stage_duplicate", "HANDLER_RESULT_CONTRADICTORY"),
+        ("bound_true_with_stage", "HANDLER_RESULT_CONTRADICTORY"),
+        ("bound_false_without_stage", "HANDLER_RESULT_CONTRADICTORY"),
+        ("coverage_unestablished_empty", "HANDLER_RESULT_CONTRADICTORY"),
+        ("coverage_within_unestablished", "HANDLER_RESULT_CONTRADICTORY"),
+        ("ceiling_without_bound", "HANDLER_RESULT_CONTRADICTORY"),
+        ("ceiling_violated", "HANDLER_RESULT_CONTRADICTORY"),
+        ("stopped_with_hold", "HANDLER_RESULT_CONTRADICTORY"),
+        ("uncertain_ordinary_stop", "HANDLER_RESULT_CONTRADICTORY"),
+        ("blocked_usage", "HANDLER_RESULT_CONTRADICTORY"),
+        ("blocked_zero_charge", "HANDLER_RESULT_CONTRADICTORY"),
+        ("compact_missing_hash", "HANDLER_RESULT_INVALID"),
+        ("compact_hash_type", "HANDLER_RESULT_INVALID"),
+        ("compact_empty_wrong_hash", "HANDLER_RESULT_CONTRADICTORY"),
+        ("compact_missing_count", "HANDLER_RESULT_INVALID"),
+        ("compact_list_null", "HANDLER_RESULT_INVALID"),
+        ("compact_restore_list", "HANDLER_RESULT_CONTRADICTORY"),
+    ],
+)
+def test_op1_contradictions_reject_preserve_raw_and_never_resend(
+    bundle, monkeypatch, case, code
+):
+    mode = (
+        "blocked"
+        if case in ("claude_b", "blocked_usage", "blocked_zero_charge")
+        else "retained_hold"
+        if case == "stopped_with_hold"
+        else "ordinary_stop"
+    )
+    if case.startswith("compact"):
+        mode = "compact"
+    op1_producer(bundle, mode, monkeypatch)
+    captured = []
+
+    def transform(value):
+        accounting = value["accounting"]
+        if case == "claude_a":
+            accounting.update(
+                unestablished_stages=["router"],
+                exposure_bound_established=False,
+                ceiling_established=True,
+                reservation_coverage="WITHIN_RECORDED_RESERVATIONS",
+            )
+        elif case in ("claude_b", "blocked_zero_charge", "blocked_usage"):
+            extra = accounting["extra_requests"][0]
+            if case == "blocked_usage":
+                extra["usage"] = {"inputTokens": 1, "outputTokens": 0}
+            else:
+                extra["charge_usd"] = "5" if case == "claude_b" else "0"
+            accounting["extra_requests_sha256"] = operator.digest(
+                operator.canonical(accounting["extra_requests"])
+            )
+        elif case == "stages_missing":
+            del accounting["unestablished_stages"]
+        elif case.startswith("stages_") or case in (
+            "stage_int",
+            "stage_unknown",
+            "stage_duplicate",
+        ):
+            accounting["unestablished_stages"] = (
+                {}
+                if case == "stages_dict"
+                else [1]
+                if case == "stage_int"
+                else ["future_stage"]
+                if case == "stage_unknown"
+                else ["router", "router"]
+            )
+        elif case == "bound_true_with_stage":
+            accounting["unestablished_stages"] = ["router"]
+        elif case == "bound_false_without_stage":
+            accounting["exposure_bound_established"] = False
+        elif case == "coverage_unestablished_empty":
+            accounting["reservation_coverage"] = "UNESTABLISHED"
+        elif case in ("coverage_within_unestablished", "ceiling_without_bound"):
+            accounting["unestablished_stages"] = ["router"]
+            accounting["exposure_bound_established"] = False
+            accounting["reservation_coverage"] = (
+                "WITHIN_RECORDED_RESERVATIONS"
+                if case == "coverage_within_unestablished"
+                else "UNESTABLISHED"
+            )
+            accounting["ceiling_established"] = case == "ceiling_without_bound"
+        elif case == "ceiling_violated":
+            accounting["reservation_coverage"] = "VIOLATED"
+        elif case == "stopped_with_hold":
+            value["status"] = "STOPPED"
+        elif case == "uncertain_ordinary_stop":
+            value["status"] = "UNCERTAIN"
+        elif case == "compact_missing_hash":
+            del accounting["extra_requests_sha256"]
+        elif case == "compact_hash_type":
+            accounting["extra_requests_sha256"] = None
+        elif case == "compact_empty_wrong_hash":
+            accounting["extra_requests_sha256"] = "0" * 64
+        elif case == "compact_missing_count":
+            del accounting["extra_request_count"]
+        elif case == "compact_list_null":
+            accounting["extra_requests"] = None
+        elif case == "compact_restore_list":
+            accounting["extra_requests"] = []
+        captured.append(operator.canonical(value))
+        return value
+
+    bundle["parent"].transform = transform
+    result = invoke(bundle)
+    record = index(bundle, result)
+    assert result["status"] == "INTERRUPTED" and result["code"] == code
+    assert record["assessment"]["contract_exposure"] == "UNESTABLISHED"
+    assert not record["assessment"]["evidence_complete"]
+    directory = bundle["root"] / result["execution_id"]
+    assert (directory / "response.bin").read_bytes() == captured[0]
+    assert record["files"]["response.bin"]["sha256"] == operator.digest(captured[0])
+    before = {path.name: path.read_bytes() for path in directory.iterdir()}
+    with pytest.raises(operator.OperatorError, match="EXECUTION_ALREADY_CLAIMED"):
+        invoke(bundle)
+    assert before == {path.name: path.read_bytes() for path in directory.iterdir()}
+    assert len(bundle["parent"].calls) == bundle["factories"] == 1
