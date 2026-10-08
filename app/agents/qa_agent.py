@@ -6,8 +6,10 @@ from pydantic import BaseModel
 
 from app.errors import failure_from
 from app.services.bedrock_client import retrieve_and_generate
+from app.services.rag_smoke_policy import current_policy
 
-load_dotenv()
+if current_policy() is None:
+    load_dotenv()
 
 
 def _log(event: str, payload: dict) -> None:

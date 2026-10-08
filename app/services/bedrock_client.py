@@ -8,12 +8,30 @@ from app.observability import annotate, record_converse_usage, stage
 from app.services.retriever import retrieve_chunks
 from app.services.rag_smoke_policy import current_policy
 
-load_dotenv()
+if current_policy() is None:
+    load_dotenv()
 
 BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 NO_EVIDENCE_ANSWER = "No relevant documents found."
 
-bedrock = boto3.client("bedrock-runtime", region_name="us-east-1")
+bedrock = (
+    boto3.client("bedrock-runtime", region_name="us-east-1")
+    if current_policy() is None
+    else None
+)
+
+
+def _ordinary_client():
+    # A module first imported by an isolated smoke must still work ordinarily.
+    # Dedicated smoke clients never populate or replace this ordinary cache.
+    global bedrock, BEDROCK_MODEL_ID
+    if bedrock is None:
+        load_dotenv()
+        BEDROCK_MODEL_ID = os.getenv(
+            "BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        )
+        bedrock = boto3.client("bedrock-runtime", region_name="us-east-1")
+    return bedrock
 
 
 def retrieve_and_generate(query: str, knowledge_base_id: str = None) -> dict:
@@ -23,6 +41,8 @@ def retrieve_and_generate(query: str, knowledge_base_id: str = None) -> dict:
     outcome="empty_retrieval". Retrieval, invocation and malformed-response
     failures raise app.errors.ServiceFailure.
     """
+    if current_policy() is None:
+        _ordinary_client()
     chunks = retrieve_chunks(query, n_results=5)
     annotate("retrieved_chunks", len(chunks))
 
@@ -70,7 +90,7 @@ def retrieve_and_generate(query: str, knowledge_base_id: str = None) -> dict:
                 request["inferenceConfig"] = {"maxTokens": smoke.config["output_tokens"]["generation"]}
                 response = smoke.invoke("generation", "Converse", request)
             else:
-                response = bedrock.converse(**request)
+                response = _ordinary_client().converse(**request)
         except Exception as e:
             raise failure_from("qa_generate", e) from e
     record_converse_usage("qa_generate", BEDROCK_MODEL_ID, response)
