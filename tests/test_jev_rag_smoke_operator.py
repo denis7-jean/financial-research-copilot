@@ -307,6 +307,234 @@ def test_unknown_outcome_and_duplicate_never_resend_or_release(bundle, error):
     assert record["reservation_release"] == "NONE_PARENT_HOLDS_RETAINED"
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "1E-999999999",
+        "1E-999999999999",
+        "1E+999990",
+        "0E-999999999",
+        "0E-999999999999",
+        "0E+999999999",
+        "-0E-999999999",
+        "1E-513",
+        "1E+512",
+        "0E-513",
+        "0E+512",
+        "9" * 513,
+    ],
+)
+def test_r3a_unsafe_money_rejects_before_sum_through_parent(bundle, monkeypatch, text):
+    from app.services import rag_smoke_policy
+
+    bundle["inner"].f.model.responses[0] = TimeoutError(SENTINEL)
+    captured, sums = [], []
+
+    def intercept(values):
+        sums.append([v.as_tuple() for v in values])
+        raise AssertionError("unsafe response reached the sum boundary")
+
+    def transform(value):
+        value["attempts"]["router"].update(reservation_usd=text, hold_usd=text)
+        raw = operator.canonical(value)
+        # Install only after the unchanged producer has emitted its response.
+        monkeypatch.setattr(rag_smoke_policy, "money_total", intercept)
+        with pytest.raises(operator.OperatorError, match="^HANDLER_RESULT_INVALID$"):
+            operator.inspect_handler(raw, value["policy_sha256"], value["run_id"])
+        captured.append(raw)
+        return value
+
+    bundle["parent"].transform = transform
+    result = invoke(bundle)
+    record = index(bundle, result)
+    assert not sums
+    assert (
+        result["status"] == "INTERRUPTED" and result["code"] == "HANDLER_RESULT_INVALID"
+    )
+    assert record["assessment"]["model_accounting"] is None
+    assert record["assessment"]["contract_exposure"] == "UNESTABLISHED"
+    assert not record["assessment"]["evidence_complete"]
+    assert record["reservation_release"] == "NONE_PARENT_HOLDS_RETAINED"
+    assert record["initial_reservations_usd"]["whole_run"] == "9.1"
+    directory = bundle["root"] / result["execution_id"]
+    assert (directory / "response.bin").read_bytes() == captured[0]
+    assert record["files"]["response.bin"]["sha256"] == operator.digest(captured[0])
+    assert (directory / "claim.json").is_file() and (
+        directory / "invocation-attempt.json"
+    ).is_file()
+    before = {path.name: path.read_bytes() for path in directory.iterdir()}
+    with pytest.raises(operator.OperatorError, match="^PUBLICATION_UNCONFIRMED$"):
+        operator.confirm(result, directory)
+    with pytest.raises(operator.OperatorError, match="^EXECUTION_ALREADY_CLAIMED$"):
+        invoke(bundle)
+    assert before == {path.name: path.read_bytes() for path in directory.iterdir()}
+    assert (
+        len(bundle["parent"].calls) == bundle["parent"].sent == bundle["factories"] == 1
+    )
+    assert not sums
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "1E-512",
+        "1E+511",
+        "9" * 512,
+        "1E-12",
+        "0.000000000001",
+        "1.000E-12",
+        "0E-512",
+        "0E+511",
+        "-0.000",
+        "0.00",
+    ],
+)
+def test_r3a_boundaries_and_equivalent_values_preserve_exact_metadata(text):
+    value = operator.decimal_value(text)
+    assert value == operator.Decimal(text)
+    assert len(value.as_tuple().digits) <= 512
+    assert -512 <= value.as_tuple().exponent <= 511
+    assert value.adjusted() <= 511
+    if value.is_zero():
+        assert value.as_tuple() == operator.Decimal(0).as_tuple()
+
+
+@pytest.mark.parametrize(
+    "field", ["retained_holds_usd", "known_charges_usd", "charge_usd"]
+)
+def test_r3a_all_consumed_money_paths_reject_unsafe_exponents(
+    bundle, monkeypatch, field
+):
+    from app.services import rag_smoke_policy
+
+    value = inner.invoke(bundle["inner"])
+    if field == "charge_usd":
+        value["attempts"]["router"][field] = "1E-999999999999"
+    else:
+        value["accounting"][field]["haiku"] = "1E-999999999999"
+    calls = []
+
+    def intercept(values):
+        calls.append(values)
+        raise AssertionError("unsafe response reached sum")
+
+    monkeypatch.setattr(rag_smoke_policy, "money_total", intercept)
+    with pytest.raises(operator.OperatorError, match="^HANDLER_RESULT_INVALID$"):
+        operator.inspect_handler(
+            operator.canonical(value), value["policy_sha256"], value["run_id"]
+        )
+    assert not calls
+
+
+def r3a_consumer_fixture(first, second, total):
+    """Invented consumer arithmetic, not producer-derived policy prices."""
+    return {
+        "status": "UNCERTAIN",
+        "code": "UNCERTAIN_PROVIDER_OUTCOME",
+        "local_events": [],
+        "attempts": {
+            stage: {"settled": False, "hold_usd": amount, "reservation_usd": amount}
+            for stage, amount in (("router", first), ("generation", second))
+        },
+        "accounting": {
+            "unestablished_stages": [],
+            "exposure_bound_established": True,
+            "ceiling_established": False,
+            "reservation_coverage": "WITHIN_RECORDED_RESERVATIONS",
+            "retained_holds_usd": {"haiku": total, "titan": "0"},
+            "extra_request_count": 0,
+            "extra_requests": [],
+            "extra_requests_sha256": operator.digest(operator.canonical([])),
+        },
+    }
+
+
+@pytest.mark.parametrize("digits", [70, 90, 512])
+def test_r3a_long_coefficients_keep_exact_sum_and_reject_rounded_total(digits):
+    first = "1" + "0" * (digits - 1)
+    exact = "1" + "0" * (digits - 2) + "5"
+    value = r3a_consumer_fixture(first, "5", exact)
+    operator.consumer_accounting(value)
+    value["accounting"]["retained_holds_usd"]["haiku"] = first
+    with pytest.raises(operator.OperatorError, match="^HANDLER_RESULT_CONTRADICTORY$"):
+        operator.consumer_accounting(value)
+
+
+def test_r3a_maximum_span_has_bounded_precision_and_no_rounding(monkeypatch):
+    from app.services import rag_smoke_policy
+
+    # 1E+511 + 1E-512, represented without expanding more than 512 coefficient digits.
+    # The full exact result has 1024 digits and is outside the declared consumer
+    # representation budget; inspect the bounded sum itself, not a passing record.
+    value = r3a_consumer_fixture("1E+511", "1E-512", "1E+511")
+    original = rag_smoke_policy.money_total
+    precisions, totals = [], []
+
+    def observe(values):
+        values = list(values)
+        precision = max(
+            80,
+            max(v.adjusted() for v in values)
+            - min(v.as_tuple().exponent for v in values)
+            + len(str(len(values)))
+            + 3,
+        )
+        precisions.append(precision)
+        total = original(values)
+        totals.append(total.as_tuple())
+        return total
+
+    monkeypatch.setattr(rag_smoke_policy, "money_total", observe)
+    with pytest.raises(operator.OperatorError, match="^HANDLER_RESULT_CONTRADICTORY$"):
+        operator.consumer_accounting(value)
+    assert precisions == [1027]
+    assert totals[0].exponent == -512 and len(totals[0].digits) == 1024
+    assert totals[0].digits[0] == totals[0].digits[-1] == 1
+
+
+def test_r3a_admitted_zero_reaches_sum_only_with_safe_metadata(bundle, monkeypatch):
+    from app.services import rag_smoke_policy
+
+    bundle["inner"].f.model.responses[0] = TimeoutError(SENTINEL)
+    value = inner.invoke(bundle["inner"])
+    value["attempts"]["router"].update(reservation_usd="0E-512", hold_usd="0E-512")
+    value["accounting"]["retained_holds_usd"]["haiku"] = "0E-512"
+    original, seen = rag_smoke_policy.money_total, []
+
+    def observe(values):
+        values = list(values)
+        seen.extend(values)
+        assert all(not v.is_zero() or v.as_tuple().exponent == 0 for v in values)
+        return original(values)
+
+    monkeypatch.setattr(rag_smoke_policy, "money_total", observe)
+    raw = operator.canonical(value)
+    operator.inspect_handler(raw, value["policy_sha256"], value["run_id"])
+    assert seen and operator.canonical(value) == raw
+
+
+def test_r3a_unclamped_real_producer_charge_survives_consumer(bundle):
+    incoming = 10**90 + 7
+    bundle["inner"].f.model.responses[0]["usage"] = {
+        "inputTokens": incoming,
+        "outputTokens": 0,
+    }
+    result = invoke(bundle)
+    record = index(bundle, result)
+    value = operator.strict_json(
+        (bundle["root"] / result["execution_id"] / "response.bin").read_bytes()
+    )
+    assert result["status"] == "COMPLETE" and record["assessment"]["evidence_complete"]
+    actual = operator.Decimal(value["attempts"]["router"]["charge_usd"])
+    # Accepted invented input rate is $100/million: independent integer ratio.
+    assert actual.as_integer_ratio() == (incoming, 10000)
+    assert value["status"] == "STOPPED" and value["code"] == "USAGE_OVERRUN"
+    assert (
+        record["assessment"]["model_accounting"]["reservation_coverage"] == "VIOLATED"
+    )
+    assert len(bundle["inner"].f.model.calls) == 1 and not bundle["inner"].f.s3.calls
+
+
 def op1bc_r3_forgery(value, case):
     """Alter received invented evidence, never the accepted producer fixtures."""
     accounting = value["accounting"]

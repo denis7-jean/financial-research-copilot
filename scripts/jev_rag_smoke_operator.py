@@ -350,10 +350,24 @@ def read_response(response):
 
 
 def decimal_value(value):
+    """Bound exact arithmetic by metadata, never by expanding or rounding text."""
     try:
         require(type(value) is str and len(value) <= 512, "HANDLER_RESULT_INVALID")
         amount = Decimal(value)
         require(amount.is_finite() and amount >= 0, "HANDLER_RESULT_INVALID")
+        parts = amount.as_tuple()
+        # Preserve the existing 512-character/coefficient budget and long sums.
+        # Nonzero operands then have exponent [-512, 511], adjusted <= 511.
+        require(
+            len(parts.digits) <= 512
+            and parts.exponent >= -512
+            and amount.adjusted() <= 511,
+            "HANDLER_RESULT_INVALID",
+        )
+        # A zero exponent can widen money_total too; validate it above, then
+        # return exact exponent-zero metadata without changing the raw record.
+        if amount.is_zero():
+            return Decimal(0)
         return amount
     except InvalidOperation:
         raise OperatorError("HANDLER_RESULT_INVALID") from None

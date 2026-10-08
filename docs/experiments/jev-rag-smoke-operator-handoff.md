@@ -500,3 +500,125 @@ confirmed parent completion, semantic assessment and qualification remain gated.
 No AWS/network calls, credential or .env access, native execution, installs,
 containers, builds, paid calls, integration, deployment, push or Reviewer
 Protocol v2 changes occurred. Stop for Claude's OP-1b/OP-1c/R3 delta review.
+
+## R3-a offline correction — 2026-10-08
+
+Base: `2d9a385ea31a803a0dd1d2f6779bc505e8f1671e`, existing operator branch.
+The exact HEAD, three committed-blob hashes and all three uncommitted Claude
+reports were verified before editing. The latest REQUEST CHANGES report binds
+to this base and raw SHA-256
+`7592e0aade30f2bbb39d42bc4afdeb34c17cebd3202152f0adbe0914fe049c9f`.
+All reviews remain unchanged and excluded from staging.
+
+### Numeric domain and bounded-cost proof
+
+Only `decimal_value` changes in production. Accepted producer `money_total`,
+policy, handler and P0 remain untouched. The consumer now admits only:
+
+- a string of at most **512 characters**, as before;
+- a finite nonnegative Decimal with at most **512 coefficient digits**;
+- a tuple exponent **at least -512** and adjusted magnitude **at most 511**.
+
+Checks use `as_tuple`, `adjusted`, `is_finite` and `is_zero`, without fixed-point
+expansion, context normalization or rounding. For every nonzero operand,
+`adjusted = exponent + coefficient_length - 1`; its exponent therefore lies in
+**[-512, 511]**. A zero's adjusted value equals its exponent: an extreme-exponent
+zero fails the same checks. An admitted zero returns exact `Decimal(0)` so its
+irrelevant quantum cannot amplify the subsequent sum. Source strings and raw
+response bytes remain unchanged, including signed or fractional zero evidence.
+
+The bounds follow the existing 512-character representation budget: it already
+permits 512-digit ordinary integer coefficients, whose maximum adjusted value
+is 511. The fractional span allows scientific values down to `1E-512`; it is far
+larger than the accepted producer's price scale (at most 12 fractional digits,
+then division by a million). It preserves `1E-12`, long exact sums and admitted
+unclamped charges, including the 90-digit-token producer regression. An arbitrary
+small positive amount below that quantum or magnitude at/above `1E+512` is now
+intentionally outside the consumer domain, even when scientific text is short.
+Bounds apply to the supplied coefficient/quantum: an equivalent trailing-zero
+representation outside them also rejects; it is not normalized to bypass them.
+
+Each provider's hold sum has at most three operands (two Haiku stages plus the
+initial zero; Titan has one stage plus zero). The unchanged `money_total` recipe
+therefore requests at most
+`max(80, 511 - (-512) + len(str(3)) + 3) = 1027` precision digits. Each operand
+has at most 512 coefficient digits. Parsing/metadata and exact addition are thus
+bounded independently of short scientific exponent text. The worst permitted
+span is tested with a 1024-digit exact result; an unrepresentable/rounded reported
+total cannot pass the existing representation budget and equality join. No
+MemoryError catch, global catch-all, rounding, clamping or reservation release
+is added. Unsafe money retains fixed `HANDLER_RESULT_INVALID`.
+
+### Regression and validation evidence
+
+Five fresh instrumented probes on raw committed-base bytes show that
+`1E-999999999`, `1E-999999999999`, excessive positive magnitude and zeros with
+positive/negative extreme exponents reach the former sum boundary. The instrument
+records tuple metadata and immediately raises a private signal: it never calls
+the real sum or widens precision. **5 base defect-presence probes pass**. No
+large-allocation or gigabyte experiment is performed.
+
+The corrected tests instrument the boundary only after the unchanged producer
+emits its response. Unsafe holds, reservations, charges and aggregate monetary
+fields reject before any sum. Full-operator cases preserve byte-exact response
+and hash, claim/attempt marker and full parent reservations; keep accounting null,
+mapping UNESTABLISHED and evidence incomplete; refuse confirmation and repeat
+entry; and perform one simulated parent send. Boundary and just-outside cases,
+equivalent supported notation, safe zero metadata, 70/90/512-digit exact sums and
+unclamped actual producer charges are covered. Every original operator test and
+helper AST is preserved, including OP-1, OP-1b, OP-1c and R3 counterexamples and
+real-producer positives. The only changed production-function AST is
+`decimal_value`.
+
+Final focused validation: **454 passed**, no skips, one inherited unknown
+`asyncio_mode` warning. Operator 201; P0 83; accounting 31; handler 53; smoke 86.
+Python **3.11.15**, Ruff **0.15.14**, offline guard active with **zero outbound
+attempts**. Fake transports and inspected pure-Python native substitutes only.
+Scoped lint/format and whitespace pass. Guarded tests run outside the process
+sandbox because of its previously demonstrated denial of pytest-directory
+`Path.resolve`; no protected permissions or validators are changed.
+
+Private scratch/receipts:
+`C:\Projects\AWS Project\dependency-acquisition\rag-operator-r3a-20261008-27c594bd`.
+Exact commands, log hashes, JUnit, Python version, raw source exports and
+committed-blob versus working-copy bindings are retained there.
+
+```powershell
+$r3aPython = 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe'
+$r3aScratch = 'C:\Projects\AWS Project\dependency-acquisition\rag-operator-r3a-20261008-27c594bd'
+& $r3aPython -B "$r3aScratch\validate.py" working
+# Guarded run_offline.py -q -p no:cacheprovider --tb=short, fresh --basetemp/JUnit:
+# tests/test_jev_rag_smoke_operator.py tests/test_jev_rag_smoke_preinvoke.py
+# tests/test_jev_rag_smoke_accounting.py tests/test_jev_rag_smoke_handler.py
+# tests/test_jev_rag_smoke.py
+# Then guarded Ruff check --no-cache and format --check on only the two changed
+# Python files, plus git diff --check.
+& $r3aPython -B "$r3aScratch\prepare.py" export
+& $r3aPython -B "$r3aScratch\validate.py" raw
+```
+
+The raw staged export runs the same focused suites. Staged blobs are joined to
+validated source/test hashes before the explicit three-path local commit.
+Protected checkout bytes and line-ending policy are not normalized; the prior
+lock/CRLF limitation remains unchanged and its packaging suite is not rerun.
+
+### Preservation and focused handoff
+
+Compare twelve other worktrees' HEAD/branch/status and readable changed bytes,
+all 194 untouched operator Git blobs, three report hashes, ten protected artifacts
+including the accepted ZIP, and twelve fixed inputs. The sealed inventory remains
+133 readable matching files and 1084 inaccessible prior pytest files, out of 1217;
+the latter are not newly content-certified and no permissions are changed.
+All task outputs are exclusive new private records; historical receipts remain
+unchanged.
+
+Claude should independently review this exact numeric domain, zero handling,
+1027-digit cost proof, safe base instrumentation and full-parent rejection
+evidence. O1–O4 and all previously documented operator, trusted-observation,
+owner/data/price/budget, credential/permissions, artifact/native, confirmed parent,
+semantic and qualification gates remain unresolved. This is necessary offline
+consistency, not full cost verification or execution authorization.
+
+No AWS/network calls, actual credentials/.env reads, native execution, installs,
+containers, builds, paid calls, integration, deployment, push or Reviewer
+Protocol v2 changes. Stop for Claude's focused R3-a delta review.
