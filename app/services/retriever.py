@@ -13,7 +13,8 @@ from app.errors import ServiceFailure, failure_from
 from app.observability import annotate, record_model_call, stage
 from app.services.rag_smoke_policy import current_policy, strict_json, check
 
-load_dotenv()
+if current_policy() is None:
+    load_dotenv()
 
 EMBEDDING_MODEL_ID = "amazon.titan-embed-text-v2:0"
 
@@ -22,11 +23,32 @@ S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
 FAISS_INDEX_S3_KEY = os.getenv("FAISS_INDEX_S3_KEY")
 FAISS_META_S3_KEY = os.getenv("FAISS_META_S3_KEY")
 
-s3 = boto3.client("s3", region_name="us-east-1")
-bedrock = boto3.client("bedrock-runtime", region_name="us-east-1")
+s3 = boto3.client("s3", region_name="us-east-1") if current_policy() is None else None
+bedrock = (
+    boto3.client("bedrock-runtime", region_name="us-east-1")
+    if current_policy() is None
+    else None
+)
 
 _index = None
 _metadata = None
+
+
+def _ordinary_client(service):
+    # Smoke clients stay exclusively on their policy; ordinary caches unchanged.
+    global s3, bedrock, S3_BUCKET_NAME, FAISS_INDEX_S3_KEY, FAISS_META_S3_KEY
+    if service == "s3":
+        if s3 is None:
+            load_dotenv()
+            S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+            FAISS_INDEX_S3_KEY = os.getenv("FAISS_INDEX_S3_KEY")
+            FAISS_META_S3_KEY = os.getenv("FAISS_META_S3_KEY")
+            s3 = boto3.client("s3", region_name="us-east-1")
+        return s3
+    if bedrock is None:
+        load_dotenv()
+        bedrock = boto3.client("bedrock-runtime", region_name="us-east-1")
+    return bedrock
 
 
 class SmokeNativeAdapter:
@@ -79,8 +101,9 @@ def _load_index_if_needed():
 
     print("Loading FAISS index from S3...")
     with stage("retrieval.index_load"):
-        s3.download_file(S3_BUCKET_NAME, FAISS_INDEX_S3_KEY, local_index_path)
-        s3.download_file(S3_BUCKET_NAME, FAISS_META_S3_KEY, local_meta_path)
+        client = _ordinary_client("s3")
+        client.download_file(S3_BUCKET_NAME, FAISS_INDEX_S3_KEY, local_index_path)
+        client.download_file(S3_BUCKET_NAME, FAISS_META_S3_KEY, local_meta_path)
 
         index = faiss.read_index(local_index_path)
         with open(local_meta_path, "r") as f:
@@ -110,7 +133,7 @@ def embed_query(query: str) -> np.ndarray:
     start = time.monotonic()
     with stage("retrieval.embed"):
         try:
-            response = bedrock.invoke_model(
+            response = _ordinary_client("bedrock-runtime").invoke_model(
                 modelId=EMBEDDING_MODEL_ID,
                 body=body,
                 contentType="application/json",

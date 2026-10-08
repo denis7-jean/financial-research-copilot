@@ -426,8 +426,9 @@ def test_repository_pins_and_source_layout_static_only():
         pins
     )
     sources = lp.source_files(root, TARGET["handler"])
-    assert len(sources) == 18
+    assert len(sources) == 19
     assert "app/services/rag_smoke_policy.py" in sources
+    assert "app/rag_smoke_handler.py" in sources
     # Static closure of import names; no app/client/model initialization.
     pretend_files = {module + "/__init__.py": b"" for module in lp.RUNTIME_IMPORTS}
     lp.runtime_imports(sources, pins, pretend_files)
@@ -453,6 +454,16 @@ def test_repository_import_closure_rejects_missing_application_module(missing):
 def test_fixed_allowlist_requires_smoke_source_file(invented):
     root, _, _, calls, _, _ = invented
     (root / "app/services/rag_smoke_policy.py").unlink()
+    rejects("missing_file", lambda: lp.source_files(root, TARGET["handler"]))
+    assert not calls
+
+
+def test_fixed_allowlist_requires_isolated_handler_and_keeps_root_handler(invented):
+    root, _, _, calls, _, _ = invented
+    before = lp.source_files(root, TARGET["handler"])
+    assert "app/rag_smoke_handler.py" in before
+    assert before["lambda_handler.py"] == before["app/lambda_handler.py"]
+    (root / "app/rag_smoke_handler.py").unlink()
     rejects("missing_file", lambda: lp.source_files(root, TARGET["handler"]))
     assert not calls
 

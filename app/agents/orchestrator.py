@@ -1,13 +1,13 @@
+from __future__ import annotations
+
 import json
 import time
 import uuid
+from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
 
-from app.agents.qa_agent import QAAgent, QAResponse
-from app.agents.router import RouterAgent
 from app.agents.router_configuration import RouterConfiguration, build_router
-from app.agents.summarizer_agent import SummarizerAgent, SummaryResponse
 from app.errors import ServiceFailure, failure_from
 from app.services.rag_smoke_policy import SmokePolicy, SmokeStop
 from app.observability import (
@@ -18,7 +18,9 @@ from app.observability import (
     stage,
 )
 
-load_dotenv()
+if TYPE_CHECKING:
+    from app.agents.qa_agent import QAResponse
+    from app.agents.summarizer_agent import SummaryResponse
 
 
 def _log(event: str, payload: dict) -> None:
@@ -54,6 +56,10 @@ class CopilotOrchestrator:
         if type(policy) is not SmokePolicy:
             raise SmokeStop("POLICY_REQUIRED")
         with policy.activate(query):
+            # Import under the active policy: no ordinary service client/cache.
+            from app.agents.qa_agent import QAAgent
+            from app.agents.router import RouterAgent
+
             decision = RouterAgent(smoke_policy=policy).route(query)
             if decision.task_type != "qa":
                 policy.fail("ROUTER_MISROUTE")
@@ -68,6 +74,11 @@ class CopilotOrchestrator:
             }
 
     def __init__(self, *, router_configuration=None, jev_transport=None):
+        load_dotenv()
+        from app.agents.qa_agent import QAAgent
+        from app.agents.router import RouterAgent
+        from app.agents.summarizer_agent import SummarizerAgent
+
         # Preserve legacy construction/fixtures on the default Haiku path.
         configuration = router_configuration or RouterConfiguration.from_environment()
         self._router = (

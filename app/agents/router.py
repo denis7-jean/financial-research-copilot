@@ -11,7 +11,8 @@ from app.observability import record_converse_usage, record_failure, set_route
 from app.agents.routing_contract import RouterDecision
 from app.services.rag_smoke_policy import SmokeStop, current_policy, strict_json
 
-load_dotenv()
+if current_policy() is None:
+    load_dotenv()
 
 
 def _log(event: str, payload: dict) -> None:
@@ -57,6 +58,8 @@ class RouterAgent:
 
     def __init__(self, *, smoke_policy=None):
         self._smoke = smoke_policy
+        if smoke_policy is None:
+            load_dotenv()
         self._client = (
             None if smoke_policy is not None
             else boto3.client("bedrock-runtime", region_name="us-east-1")

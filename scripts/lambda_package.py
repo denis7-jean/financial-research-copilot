@@ -57,6 +57,7 @@ SOURCE_NAMES = (
     "app/__init__.py",
     "app/main.py",
     "app/lambda_handler.py",
+    "app/rag_smoke_handler.py",
     "app/errors.py",
     "app/observability.py",
     "app/agents/__init__.py",
