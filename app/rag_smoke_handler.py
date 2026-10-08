@@ -17,7 +17,7 @@ from app.services.rag_smoke_policy import (
 )
 
 SCHEMA = "rag-smoke-invocation-v1"
-RESULT_SCHEMA = "rag-smoke-handler-result-v1"
+RESULT_SCHEMA = "rag-smoke-handler-result-v2"
 PAYLOAD_BINDING_VARIABLE = "COPILOT_RAG_SMOKE_PAYLOAD_SHA256"
 MAX_EVENT_BYTES = 131_072
 MAX_RESULT_BYTES = 131_072
@@ -42,6 +42,8 @@ STOP_CODES = frozenset(
         "EXTRA_SEND",
         "ENDPOINT_INVALID",
         "ATTEMPT_COUNT_INVALID",
+        "EXTRA_REQUEST_OBSERVED",
+        "EXTRA_EVIDENCE_INVALID",
         "RESERVATION_EXHAUSTED",
         "USAGE_INVALID",
         "USAGE_OVERRUN",
@@ -269,7 +271,7 @@ def bounded_result(result):
     }
 
 
-def response(status, code, *, policy=None, result=None, events=None):
+def response(status, code, *, policy=None, result=None, events=None, compact=False):
     return {
         "schema": RESULT_SCHEMA,
         "scope": "STRUCTURAL_SMOKE_NOT_QUALIFICATION",
@@ -281,6 +283,7 @@ def response(status, code, *, policy=None, result=None, events=None):
         "exposure_usd": {k: str(v) for k, v in policy.exposure.items()}
         if policy
         else {},
+        "accounting": policy.accounting(compact=compact) if policy else {},
         "local_events": events or [],
         "result": result,
         "parent_claim_verified": False,
@@ -334,13 +337,18 @@ def handler(
         status, code = "STRUCTURAL_SUCCESS", None
     except SmokeStop as error:
         code = str(error) if str(error) in STOP_CODES else "SMOKE_STOPPED"
-        uncertain = code in {
-            "UNCERTAIN_PROVIDER_OUTCOME",
-            "LOCAL_OR_UNCERTAIN_FAILURE",
-            "EVIDENCE_PUBLICATION_FAILED",
-        } or any(
-            not value["settled"] and value["reservation_usd"] != "0"
-            for value in policy.attempts.values()
+        uncertain = (
+            code
+            in {
+                "UNCERTAIN_PROVIDER_OUTCOME",
+                "LOCAL_OR_UNCERTAIN_FAILURE",
+                "EVIDENCE_PUBLICATION_FAILED",
+            }
+            or bool(policy.unestablished_stages)
+            or any(
+                not value["settled"] and value["reservation_usd"] != "0"
+                for value in policy.attempts.values()
+            )
         )
         status = "UNCERTAIN" if uncertain else "STOPPED"
         result = None
@@ -374,5 +382,5 @@ def handler(
         OverflowError,
     ):
         # Holds/attempts survive a bounded-output rejection; full local journals remain.
-        output = response("UNCERTAIN", "RESULT_TOO_LARGE", policy=policy)
+        output = response("UNCERTAIN", "RESULT_TOO_LARGE", policy=policy, compact=True)
     return output

@@ -471,15 +471,20 @@ def test_missing_session_usage_never_fabricates_settlement(run):
     assert run.order == ["Converse", "GetObject", "GetObject", "InvokeModel"]
 
 
-def test_sdk_retry_mismatch_keeps_n2_limitation_visible(run):
+def test_sdk_retry_mismatch_preserves_scoped_usage_without_settlement(run):
     run.f.model.responses[0]["ResponseMetadata"]["RetryAttempts"] = 1
     result = invoke(run)
     assert result["code"] == "ATTEMPT_COUNT_INVALID"
     assert result["status"] == "UNCERTAIN" and not run.f.s3.calls
     assert not result["attempts"]["router"]["settled"]
-    assert "charge_usd" not in result["attempts"]["router"]
-    # Existing N2: retry inconsistency prevents accepted policy usage settlement.
-    # This test records the limitation, not coverage of already-delivered extras.
+    entry = result["attempts"]["router"]
+    assert entry["charge_usd"] == "0.000077"
+    assert entry["hold_usd"] == entry["reservation_usd"]
+    assert entry["usage_scope"] == "RETURNED_RESPONSE_ONLY"
+    assert entry["usage_attribution"] == "UNATTRIBUTED_RESPONSE"
+    assert not result["accounting"]["exposure_bound_established"]
+    assert result["accounting"]["extra_requests"] == []
+    assert result["publication_confirmed"] is False
 
 
 def test_cold_smoke_imports_construct_no_ordinary_clients(run, monkeypatch):

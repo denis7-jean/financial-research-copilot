@@ -379,8 +379,12 @@ def test_router_failure_never_reaches_rag(tmp_path, change, code, capsys):
     with pytest.raises(SmokeStop, match=code):
         CopilotOrchestrator.process_smoke(QUERY, policy=p)
     assert not f.s3.calls and len(f.model.calls) == 1 and f.model.wire_sends <= 1
-    if change in ("exception", "usage", "retry", "hooks", "extra"):
+    if change in ("exception", "usage", "extra"):
         assert p.exposure["haiku"] == Decimal("0.220352")
+    if change in ("retry", "hooks"):
+        assert p.exposure["haiku"] == Decimal("0.220429")
+        assert p.attempts["router"]["charge_usd"] == "0.000077"
+        assert not p.accounting()["exposure_bound_established"]
     assert SENTINEL not in capsys.readouterr().out
 
 

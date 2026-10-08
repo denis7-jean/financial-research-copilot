@@ -93,11 +93,25 @@ def money(value):
 def charge(incoming, outgoing, evidence):
     # Validated bounded decimal inputs; precision exceeds the full product size.
     with localcontext() as ctx:
-        ctx.prec = 80
+        ctx.prec = max(80, len(str(incoming)) + len(str(outgoing)) + 50)
         return (
             incoming * money(evidence["input_usd_per_million"])
             + outgoing * money(evidence["output_usd_per_million"])
         ) / Decimal(1_000_000)
+
+
+def money_total(values):
+    """Exact addition also for valid, unclamped charges far above the bound."""
+    values = list(values)
+    with localcontext() as ctx:
+        ctx.prec = max(
+            80,
+            max(v.adjusted() for v in values)
+            - min(v.as_tuple().exponent for v in values)
+            + len(str(len(values)))
+            + 3,
+        )
+        return sum(values, Decimal(0))
 
 
 def current_policy():
@@ -368,6 +382,222 @@ class SmokePolicy:
         self.sequence = 0
         self.metadata = None
         self.index = None
+        self.extra_requests = []
+        self.extra_evidence = set()
+        self.unestablished_stages = set()
+        self.coverage_violated = False
+
+    def accounting(self, *, compact=False):
+        """Model-only local evidence, never a task-wide or invoiced cost bound.
+
+        Unattributed response charges add to retained holds conservatively; the
+        hold may overlap that charge. Unknown extra exposure is not assigned a
+        fabricated amount. Hashes do not authenticate the supplied observations.
+        """
+        holds = {key: Decimal(0) for key in self.exposure}
+        known = dict(holds)
+        for stage, attempt in self.attempts.items():
+            provider = "titan" if stage == "embedding" else "haiku"
+            if stage in ("index", "metadata"):
+                continue
+            holds[provider] = money_total(
+                (holds[provider], Decimal(attempt["hold_usd"]))
+            )
+            known[provider] = money_total(
+                (known[provider], Decimal(attempt.get("charge_usd", "0")))
+            )
+        for extra in self.extra_requests:
+            if extra["charge_usd"] is not None:
+                known[extra["provider"]] = money_total(
+                    (known[extra["provider"]], Decimal(extra["charge_usd"]))
+                )
+        result = {
+            "scope": "LOCAL_MODEL_ACCOUNTING_NOT_TASK_TOTAL",
+            "known_charges_usd": {k: str(v) for k, v in known.items()},
+            "retained_holds_usd": {k: str(v) for k, v in holds.items()},
+            "exposure_bound_established": not self.unestablished_stages,
+            "ceiling_established": (
+                not self.unestablished_stages
+                and not self.coverage_violated
+                and all(self.exposure[k] <= self.caps[k] for k in self.exposure)
+                and money_total(self.exposure.values()) <= self.caps["total"]
+            ),
+            "reservation_coverage": (
+                "VIOLATED"
+                if self.coverage_violated
+                else "UNESTABLISHED"
+                if self.unestablished_stages
+                else "WITHIN_RECORDED_RESERVATIONS"
+            ),
+            "unestablished_stages": sorted(self.unestablished_stages),
+            "extra_request_count": len(self.extra_requests),
+            "extra_requests_sha256": digest(canonical(self.extra_requests)),
+        }
+        if not compact:
+            result["extra_requests"] = self.extra_requests
+        return result
+
+    def _usage(self, provider, payload):
+        check(type(payload) is dict, "USAGE_INVALID")
+        usage = (
+            payload.get("usage")
+            if provider == "haiku"
+            else {
+                "inputTokens": payload.get("inputTextTokenCount"),
+                "outputTokens": 0,
+            }
+        )
+        check(
+            type(usage) is dict
+            and all(
+                type(usage.get(key)) is int and usage[key] >= 0
+                for key in ("inputTokens", "outputTokens")
+            ),
+            "USAGE_INVALID",
+        )
+        if "totalTokens" in usage:
+            check(
+                type(usage["totalTokens"]) is int
+                and usage["totalTokens"]
+                == usage["inputTokens"] + usage["outputTokens"],
+                "USAGE_INVALID",
+            )
+        # Do not retain arbitrary provider fields or text as usage evidence.
+        return {key: usage[key] for key in ("inputTokens", "outputTokens")}
+
+    def record_extra_request(
+        self,
+        stage,
+        *,
+        delivery,
+        request_evidence_sha256,
+        model_id,
+        region,
+        tier,
+        usage=None,
+    ):
+        """Record an independently identified *already observed* model request.
+
+        This local evidence seam cannot send or authorize anything. The caller
+        must establish a distinct request and its own usage; a digest alone is
+        not proof. Retry metadata never calls this method or supplies counts.
+        Multiple observations may be recorded after abort, but no dispatch may.
+        """
+        check(current_policy() is self, "EXTRA_EVIDENCE_INVALID")
+        self.halted = True
+        valid_reference = (
+            stage in ("router", "embedding", "generation")
+            and delivery in ("YES", "UNKNOWN")
+            and type(request_evidence_sha256) is str
+            and _HASH.fullmatch(request_evidence_sha256)
+            and request_evidence_sha256 not in self.extra_evidence
+        )
+        if not valid_reference:
+            self.unestablished_stages.add("unidentified_model_request")
+            self.fail("EXTRA_EVIDENCE_INVALID")
+        self.extra_evidence.add(request_evidence_sha256)
+        provider = "titan" if stage == "embedding" else "haiku"
+        priced_binding = (
+            model_id == self.config["models"][provider]
+            and region == self.config["region"]
+            and tier == "standard"
+        )
+        actual, valid = None, None
+        if usage is not None:
+            try:
+                valid = self._usage("haiku", {"usage": usage})
+                check(
+                    provider != "titan" or valid["outputTokens"] == 0, "USAGE_INVALID"
+                )
+                if priced_binding:
+                    actual = charge(
+                        valid["inputTokens"],
+                        valid["outputTokens"],
+                        self.prices[provider],
+                    )
+            except SmokeStop:
+                valid = None
+        extra = {
+            "request": f"{stage}-extra-{len(self.extra_requests) + 1}",
+            "stage": stage,
+            "provider": provider,
+            "approved": False,
+            "delivery": delivery,
+            "reservation_usd": "0",
+            "settled": False,
+            "request_evidence_sha256": request_evidence_sha256,
+            "pricing_binding": "PINNED_MODEL_REGION_STANDARD"
+            if priced_binding
+            else "UNESTABLISHED",
+            "usage": valid,
+            "usage_scope": "THIS_EXTRA_REQUEST_ONLY",
+            "usage_status": "VALID_UNPRICED"
+            if valid is not None and not priced_binding
+            else "VALID"
+            if valid is not None
+            else "MISSING"
+            if usage is None
+            else "INVALID",
+            "charge_usd": str(actual) if actual is not None else None,
+            "over_approved_token_bound": valid is not None
+            and (
+                valid["inputTokens"] > self.prices[provider]["input_token_bound"]
+                or valid["outputTokens"]
+                > (0 if provider == "titan" else self.config["output_tokens"][stage])
+            ),
+        }
+        self.extra_requests.append(extra)
+        # Actual charges never become retroactively authorized or clamped.
+        if actual is not None:
+            self.exposure[provider] = money_total((self.exposure[provider], actual))
+            if actual > 0:
+                self.coverage_violated = True
+        if actual is None or delivery == "UNKNOWN":
+            self.unestablished_stages.add(stage)
+        self._journal("extra-request", **extra)
+
+    def _returned_usage(self, stage, provider, usage, amount, attributable):
+        actual = charge(
+            usage["inputTokens"], usage["outputTokens"], self.prices[provider]
+        )
+        exceeded = (
+            usage["inputTokens"] > self.prices[provider]["input_token_bound"]
+            or usage["outputTokens"]
+            > (0 if provider == "titan" else self.config["output_tokens"][stage])
+            or actual > amount
+        )
+        entry = self.attempts[stage]
+        entry.update(
+            usage=usage,
+            usage_scope="RETURNED_RESPONSE_ONLY",
+            usage_attribution="AUTHORIZED_REQUEST"
+            if attributable
+            else "UNATTRIBUTED_RESPONSE",
+            charge_usd=str(actual),
+            settled=attributable,
+            hold_usd="0" if attributable else str(amount),
+        )
+        self.exposure[provider] = (
+            money_total((self.exposure[provider], actual, amount.copy_negate()))
+            if attributable
+            else money_total((self.exposure[provider], actual))
+        )
+        if exceeded:
+            self.coverage_violated = True
+        self._journal(
+            "usage",
+            stage=stage,
+            input_tokens=usage["inputTokens"],
+            output_tokens=usage["outputTokens"],
+            charge_usd=str(actual),
+            reservation_usd=str(amount),
+            overrun=exceeded,
+            usage_scope=entry["usage_scope"],
+            usage_attribution=entry["usage_attribution"],
+            settled=attributable,
+            hold_usd=entry["hold_usd"],
+        )
+        return exceeded
 
     def fail(self, code):
         self.halted = True
@@ -511,7 +741,31 @@ class SmokePolicy:
         permit = self.permit
         check(permit is not None and not self.halted, "UNEXPECTED_SEND")
         permit["sends"] += 1
-        check(permit["sends"] == 1 and permit["parameter_checks"] == 1, "EXTRA_SEND")
+        if permit["sends"] != 1 or permit["parameter_checks"] != 1:
+            # before-send raises before transport delivery; this callback is not
+            # evidence that a second request was delivered or billed.
+            permit["blocked_sends"] += 1
+            self.extra_requests.append(
+                {
+                    "request": f"{permit['stage']}-blocked-{permit['sends']}",
+                    "stage": permit["stage"],
+                    "provider": None
+                    if permit["stage"] in ("index", "metadata")
+                    else "titan"
+                    if permit["stage"] == "embedding"
+                    else "haiku",
+                    "approved": False,
+                    "delivery": "NO",
+                    "reservation_usd": "0",
+                    "settled": False,
+                    "usage": None,
+                    "usage_scope": None,
+                    "charge_usd": None,
+                    "usage_status": "NOT_DELIVERED",
+                }
+            )
+            self._journal("blocked-send", **self.extra_requests[-1])
+            self.fail("EXTRA_SEND")
         url = urlsplit(request.url)
         if permit["operation"] == "GetObject":
             obj = self.config["objects"][permit["stage"]]
@@ -533,6 +787,7 @@ class SmokePolicy:
                 "ENDPOINT_INVALID",
             )
         check(url.scheme == "https", "ENDPOINT_INVALID")
+        permit["approved_sends"] += 1
 
     def invoke(self, stage, operation, request, *, decode=None):
         check(
@@ -591,12 +846,18 @@ class SmokePolicy:
                 self.prices[provider],
             )
             check(
-                self.exposure[provider] + amount <= self.caps[provider]
-                and sum(self.exposure.values()) + amount <= self.caps["total"],
+                money_total((self.exposure[provider], amount)) <= self.caps[provider]
+                and money_total((*self.exposure.values(), amount))
+                <= self.caps["total"],
                 "RESERVATION_EXHAUSTED",
             )
-            self.exposure[provider] += amount
-        self.attempts[stage] = {"reservation_usd": str(amount), "settled": False}
+            self.exposure[provider] = money_total((self.exposure[provider], amount))
+        self.attempts[stage] = {
+            "reservation_usd": str(amount),
+            "settled": False,
+            "hold_usd": str(amount),
+            "delivery": "UNKNOWN",
+        }
         # Exclusive durable record precedes every SDK call, including uncertain ones.
         self._journal(
             "attempt",
@@ -612,6 +873,8 @@ class SmokePolicy:
             "request": request,
             "parameter_checks": 0,
             "sends": 0,
+            "approved_sends": 0,
+            "blocked_sends": 0,
         }
         try:
             client = self.clients[service]
@@ -623,65 +886,35 @@ class SmokePolicy:
                     "GetObject": "get_object",
                 }[operation],
             )(**request)
+            metadata = (
+                response.get("ResponseMetadata") if type(response) is dict else None
+            )
+            retries = metadata.get("RetryAttempts") if type(metadata) is dict else None
+            count_valid = (
+                type(retries) is int
+                and retries == 0
+                and self.permit["sends"] == self.permit["parameter_checks"] == 1
+                and self.permit["approved_sends"] == 1
+            )
+            self.attempts[stage]["retry_attempts"] = (
+                retries if type(retries) is int and retries >= 0 else None
+            )
+            self.attempts[stage]["delivery"] = "YES" if count_valid else "UNKNOWN"
+            if not count_valid:
+                # Signals an inconsistency, not an exact delivered-request count.
+                self.unestablished_stages.add(stage)
             if decode is not None:
                 response, payload = decode(response)
             else:
                 payload = response
-            retries = response.get("ResponseMetadata", {}).get("RetryAttempts")
-            check(
-                type(retries) is int
-                and retries == 0
-                and self.permit["sends"] == self.permit["parameter_checks"] == 1,
-                "ATTEMPT_COUNT_INVALID",
-            )
             if provider:
-                usage = (
-                    payload.get("usage")
-                    if provider == "haiku"
-                    else {
-                        "inputTokens": payload.get("inputTextTokenCount"),
-                        "outputTokens": 0,
-                    }
+                usage = self._usage(provider, payload)
+                exceeded = self._returned_usage(
+                    stage, provider, usage, amount, count_valid
                 )
-                check(
-                    type(usage) is dict
-                    and all(
-                        type(usage.get(key)) is int and usage[key] >= 0
-                        for key in ("inputTokens", "outputTokens")
-                    ),
-                    "USAGE_INVALID",
-                )
-                if "totalTokens" in usage:
-                    check(
-                        type(usage["totalTokens"]) is int
-                        and usage["totalTokens"]
-                        == usage["inputTokens"] + usage["outputTokens"],
-                        "USAGE_INVALID",
-                    )
-                actual = charge(
-                    usage["inputTokens"], usage["outputTokens"], self.prices[provider]
-                )
-                exceeded = (
-                    usage["inputTokens"] > self.prices[provider]["input_token_bound"]
-                    or usage["outputTokens"]
-                    > (
-                        0
-                        if provider == "titan"
-                        else self.config["output_tokens"][stage]
-                    )
-                    or actual > amount
-                )
-                self._journal(
-                    "usage",
-                    stage=stage,
-                    input_tokens=usage["inputTokens"],
-                    output_tokens=usage["outputTokens"],
-                    charge_usd=str(actual),
-                    reservation_usd=str(amount),
-                    overrun=exceeded,
-                )
-                self.exposure[provider] += actual - amount
-                self.attempts[stage].update(settled=True, charge_usd=str(actual))
+            check(count_valid, "ATTEMPT_COUNT_INVALID")
+            check(not self.halted, "EXTRA_REQUEST_OBSERVED")
+            if provider:
                 check(not exceeded, "USAGE_OVERRUN")
                 if provider == "haiku":
                     output = payload.get("output")
@@ -707,6 +940,11 @@ class SmokePolicy:
         except Exception:
             self.fail("UNCERTAIN_PROVIDER_OUTCOME")
         finally:
+            self.attempts[stage]["send_checks"] = {
+                "callbacks": self.permit["sends"],
+                "approved_before_send": self.permit["approved_sends"],
+                "blocked_before_send": self.permit["blocked_sends"],
+            }
             self.permit = None
 
     def read_body(self, response, limit):
