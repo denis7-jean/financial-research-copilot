@@ -67,15 +67,15 @@ their dotenv calls when first imported under an active smoke policy. Subsequent
 ordinary use can lazily create its ordinary clients; normal requests, defaults
 and financial-answer behavior pass existing regressions.
 
-**Inherited loader limitation:** QAAgent is outside the authorized writable
-list and remains unchanged. Its top-level `load_dotenv()` still runs when the
-real QA chain first imports that module. The cold probe records this one call
-using a metadata-only spy; it reads no file. New handler import and malformed
-input paths remain pure, but this implementation does not claim the complete
-valid-call import graph is dotenv-free. An additional-file permission request
-was submitted; no such edit is included without an answer. The artifact excludes
-.env files, and future credential/configuration verification must account for
-this inherited behavior. No credentials or .env contents were accessed here.
+**H1 corrected in the focused follow-up:** the original handler commit inherited
+QAAgent's unconditional module-level `load_dotenv()` call. Under the owner's
+explicit three-path correction grant, QAAgent now uses the existing
+`current_policy()` guard, matching router/retriever/generation. It skips the
+loader under an active policy and preserves the ordinary import-time call when
+there is no active policy. The recording-only cold probe observes zero loader
+invocations throughout the valid smoke chain. No real loader, credential or .env
+read is used to establish this result. Dedicated SDK credential-provider activity
+remains a separate operational prerequisite; this guard does not remove it.
 
 ## Dedicated clients and actual application chain
 
@@ -182,9 +182,9 @@ used; private Reviewer v2 inputs were not opened or refreshed.
 
 ## Independent review and next gates
 
-Claude should review the exact nine-path delta: canonical-event trust boundary,
+The original review covered the exact nine-path delta: canonical-event trust boundary,
 complete validation before clients, cold import/client separation (including the
-disclosed QA loader), actual SDK configuration/hooks, positive five-stage chain,
+then-unconditional QA loader), actual SDK configuration/hooks, positive five-stage chain,
 stop/uncertain behavior, output bounds, retained usage/local evidence, unchanged
 ordinary behavior and explicit packaging closure.
 
@@ -194,3 +194,73 @@ persistent claim verification; credential/configuration/IAM boundaries; N2
 resolution; confirmed hash-bound parent completion evidence; a new exact artifact
 and native/startup validation; semantic assessment and later qualification.
 No integration, live execution, build, resource change or deployment is implied.
+
+## H1-only correction for focused Claude delta review
+
+Correction direct base: `e6a5e1fb97b174d3c369f08526215310e951be07`.
+The unchanged, uncommitted Claude report has raw working-copy SHA-256
+`98d433791bd2b8167cd48bc7abd3099b69bf8aa10bdb22974473ed87f1ac95ac`.
+Its REQUEST CHANGES disposition identifies H1 as the sole blocking defect.
+The owner's new grant explicitly authorizes qa_agent.py in addition to this
+handoff and the handler test file. These are the only three correction paths.
+
+The production correction is one import and one conditional: the existing
+module-level loader runs only when `current_policy() is None`. The standalone
+ordinary loader remains unchanged. No handler, policy, P0, packaging, contract,
+route, environment setting or ordinary entry point is modified.
+
+Fresh committed-base export reproduction used a recording-only spy installed
+before cold imports. It recorded exactly one QAAgent call with no arguments,
+under an active policy, after the dedicated-client factory. No loader or file
+read occurred. The same private probes independently reproduced the unchanged
+CRLF lock failure using the original committed test assertion and showed that
+the canonical committed lock passes it: 2 probes passed. This is defect detection,
+not an assertion that the original smoke chain was loader-free.
+
+The corrected existing cold test now requires zero loader invocations across
+the complete five-stage smoke chain with ordinary SDK construction forbidden.
+Three new cases cover ordinary-first and smoke-first execution followed by
+ordinary router/QA use, plus cold malformed-input purity. Direct recording spies
+check invocation, irrespective of the guard's dotenv-disabling environment flag.
+The ordinary-first case positively observes QAAgent's no-policy import loader;
+subsequent ordinary use retains/recreates ordinary fake clients and pinned Haiku
+defaults, never adopting dedicated smoke clients or changing ordinary index caches.
+The malformed case observes no loader, client, factory or downstream operation.
+All patch/module state is restored before the final offline-guard assertion.
+
+Validation used Python 3.11.15, Ruff 0.15.14 and inspected pure-Python native
+substitutes, with zero outbound attempts. Focused handler: 53 passed. Broader
+working copy: 554 passed, 1 unchanged lock/CRLF failure, 1 Windows symlink skip.
+The fresh raw staged Git-byte export (bound to identical final committed source
+blobs) passes 555 tests with the same one skip. The complete packaging file runs
+without changing the lock, requirements or canonical-byte assertions. Plugin
+autoload is disabled; the existing asyncio_mode warning remains nonblocking.
+
+Private task directory:
+`C:\Projects\AWS Project\dependency-acquisition\rag-handler-h1-20261008-7d892b61`.
+Reproducible final source-byte validation command:
+
+```powershell
+$env:HANDLER_TEST_ROOT = 'C:\Projects\AWS Project\dependency-acquisition\rag-handler-h1-20261008-7d892b61\staged-export'
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-handler-h1-20261008-7d892b61\run_offline.py' tests/test_jev_rag_smoke_handler.py tests/test_jev_rag_smoke.py tests/test_jev_rag_smoke_preinvoke.py tests/test_agents.py tests/test_router.py tests/test_api.py tests/test_observability.py tests/test_jev_candidate.py tests/test_lambda_package.py -q -ra -p no:cacheprovider --basetemp 'C:\Projects\AWS Project\dependency-acquisition\rag-handler-h1-20261008-7d892b61\pytest-staged' --junitxml 'C:\Projects\AWS Project\dependency-acquisition\rag-handler-h1-20261008-7d892b61\staged.xml'
+```
+
+Guarded Ruff `check app/agents/qa_agent.py tests/test_jev_rag_smoke_handler.py`
+passes, as does `format --check tests/test_jev_rag_smoke_handler.py`. QAAgent's
+format drift is present in the raw committed correction base and retained;
+unrelated formatting is not rewritten. Git whitespace checks pass. The earlier
+working-copy broader run preceded test-only formatting; the raw staged run covers
+the final Python bytes. Documentation-only additions do not require another suite.
+
+Metadata snapshots verify ten other worktrees' HEAD/status/readable changed
+files, protected fixed inputs, accepted ZIP, 1,217 sealed bindings and this
+uncommitted Claude report unchanged. Final receipt distinguishes raw working-copy
+and committed-blob SHA-256 values and binds validation outputs. No protected
+line-ending normalization, private credential read or permission change occurred.
+
+Claude's next review scope is exactly this H1 guard, direct loader spies,
+ordinary/smoke import-order isolation and the three-path diff. Codex validation
+and self-review do not establish independent acceptance. N2 and every remaining
+operator, credential, data, budget, evidence, artifact/native, semantic and
+qualification gate above remain unresolved. Stop for focused H1 delta review;
+there is no integration or live-execution authorization in this correction.

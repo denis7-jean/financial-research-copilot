@@ -2,6 +2,7 @@
 
 import ast
 import copy
+from contextlib import contextmanager
 import importlib
 import io
 import json
@@ -12,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from app import rag_smoke_handler as smoke
-from app.services.rag_smoke_policy import canonical, digest, strict_json
+from app.services.rag_smoke_policy import canonical, current_policy, digest, strict_json
 from tests import offline_guard
 from tests.test_jev_rag_smoke import QUERY, SENTINEL, invented
 
@@ -524,8 +525,8 @@ def test_cold_smoke_imports_construct_no_ordinary_clients(run, monkeypatch):
             assert sys.modules["app.services.retriever"].s3 is None
             assert sys.modules["app.services.retriever"].bedrock is None
             assert sys.modules["app.services.bedrock_client"].bedrock is None
-            # Existing QAAgent alone retains its unchanged import-time loader.
-            assert loaders == ["called"]
+            # The spy records invocation directly, never reading a dotenv file.
+            assert loaders == []
     finally:
         for name in names:
             if originals[name] is None:
@@ -539,3 +540,135 @@ def test_cold_smoke_imports_construct_no_ordinary_clients(run, monkeypatch):
             else:
                 setattr(parent, attribute, attributes[name])
     assert offline_guard.is_installed() and not offline_guard.blocked_requests
+
+
+@contextmanager
+def cold_chain_loader_spy(monkeypatch):
+    """Record real import sites before cold imports; never call the loader."""
+    import boto3
+    import dotenv
+
+    from tests.conftest import FakeBedrock, converse_text
+
+    names = (
+        "app.agents.orchestrator",
+        "app.agents.qa_agent",
+        "app.agents.router",
+        "app.services.bedrock_client",
+        "app.services.retriever",
+    )
+    originals = {name: sys.modules.get(name) for name in names}
+    parents = {name: importlib.import_module(name.rsplit(".", 1)[0]) for name in names}
+    attributes = {
+        name: getattr(parents[name], name.rsplit(".", 1)[1], None) for name in names
+    }
+    calls, clients = [], []
+
+    def record(*args, **kwargs):
+        calls.append(
+            (sys._getframe(1).f_globals["__name__"], args, kwargs, current_policy())
+        )
+
+    def client(service, **kwargs):
+        assert current_policy() is None, "ordinary construction during smoke"
+        assert kwargs == {"region_name": "us-east-1"}
+        fake = FakeBedrock(
+            converse_responses=[
+                converse_text('{"task_type":"qa","confidence":1,"reasoning":"fake"}')
+            ]
+        )
+        clients.append((service, fake))
+        return fake
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("SDK session forbidden in recording-only test")
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(dotenv, "load_dotenv", record)
+            patch.setattr(boto3, "client", client)
+            patch.setattr(boto3.session, "Session", forbidden)
+            for name in names:
+                sys.modules.pop(name, None)
+            yield SimpleNamespace(calls=calls, clients=clients, patch=patch)
+    finally:
+        for name in names:
+            if originals[name] is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = originals[name]
+            parent, attr = parents[name], name.rsplit(".", 1)[1]
+            if attributes[name] is None:
+                parent.__dict__.pop(attr, None)
+            else:
+                setattr(parent, attr, attributes[name])
+    assert offline_guard.is_installed() and not offline_guard.blocked_requests
+
+
+@pytest.mark.parametrize("ordinary_first", [True, False])
+def test_loader_guard_preserves_ordinary_clients_and_defaults(
+    run, monkeypatch, ordinary_first
+):
+    with cold_chain_loader_spy(monkeypatch) as spy:
+        if ordinary_first:
+            importlib.import_module("app.agents.qa_agent")
+            assert ("app.agents.qa_agent", (), {}, None) in spy.calls
+            retriever = sys.modules["app.services.retriever"]
+            generation = sys.modules["app.services.bedrock_client"]
+            caches = (retriever.s3, retriever.bedrock, generation.bedrock)
+            ordinary_index, ordinary_metadata = object(), object()
+            retriever._index, retriever._metadata = ordinary_index, ordinary_metadata
+            model = generation.BEDROCK_MODEL_ID
+        spy.calls.clear()
+        prior_clients = len(spy.clients)
+        result = invoke(run)
+        assert result["status"] == "STRUCTURAL_SUCCESS"
+        assert len(run.order) == 5
+        assert spy.calls == [] and len(spy.clients) == prior_clients
+        assert current_policy() is None
+        retriever = sys.modules["app.services.retriever"]
+        generation = sys.modules["app.services.bedrock_client"]
+        if ordinary_first:
+            assert (retriever.s3, retriever.bedrock, generation.bedrock) == caches
+            assert retriever._index is ordinary_index
+            assert retriever._metadata is ordinary_metadata
+            assert generation.BEDROCK_MODEL_ID == model
+        else:
+            assert retriever.s3 is retriever.bedrock is generation.bedrock is None
+            assert retriever._index is retriever._metadata is None
+
+        # Subsequent ordinary use constructs/uses only ordinary fake clients.
+        s3 = retriever._ordinary_client("s3")
+        embedding = retriever._ordinary_client("bedrock-runtime")
+        model_client = generation._ordinary_client()
+        assert all(
+            c is not run.f.model and c is not run.f.s3
+            for c in (s3, embedding, model_client)
+        )
+        if ordinary_first:
+            assert (s3, embedding, model_client) == caches
+        else:
+            assert spy.calls and all(call[3] is None for call in spy.calls)
+        RouterAgent = sys.modules["app.agents.router"].RouterAgent
+        router = RouterAgent()
+        assert spy.calls[-1] == ("app.agents.router", (), {}, None)
+        assert router._model_id == generation.BEDROCK_MODEL_ID
+        assert router._model_id == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        assert router.route(QUERY).task_type == "qa"
+        spy.patch.setattr(generation, "retrieve_chunks", lambda *a, **kw: [])
+        qa = sys.modules["app.agents.qa_agent"].QAAgent()
+        assert qa.run(QUERY).answer == generation.NO_EVIDENCE_ANSWER
+        assert generation.bedrock is model_client
+        assert not model_client.converse_calls and not embedding.invoke_calls
+        assert all(call[3] is None for call in spy.calls)
+
+
+def test_cold_malformed_smoke_never_invokes_loader(run, monkeypatch):
+    with cold_chain_loader_spy(monkeypatch) as spy:
+        run.event["query"] = ""
+        result = invoke(run)
+        assert result["status"] == "STOPPED"
+        assert not spy.calls and not spy.clients
+        assert not run.factories and not run.order
+        assert "app.agents.qa_agent" not in sys.modules
+        assert "app.services.bedrock_client" not in sys.modules
