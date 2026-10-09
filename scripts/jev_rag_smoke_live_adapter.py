@@ -5,6 +5,9 @@ reservations before construction/dispatch. This cannot enter simulate().
 """
 
 from dataclasses import dataclass, field
+import base64
+import binascii
+from decimal import Decimal
 import hashlib
 import json
 import re
@@ -16,6 +19,9 @@ REGION = "us-east-1"
 SDK_PIN = "1.42.96"
 RESPONSE_LIMIT = 131_072  # Accepted handler/operator MAX_RESULT_BYTES.
 EVENT_LIMIT = 131_072
+TAIL_ENCODED_LIMIT = 5_464
+TAIL_LIMIT = 4_096
+REPORT_CONTRACT = "jev-rag-smoke-platform-report-v1"
 ID = re.compile(r"[A-Za-z0-9_-]{1,80}\Z")
 CODES = frozenset(
     "INPUT_INVALID CLIENT_CONFIG_INVALID PARENT_ALREADY_ATTEMPTED "
@@ -23,7 +29,7 @@ CODES = frozenset(
     "PARENT_OUTCOME_UNKNOWN PARENT_RESPONSE_INVALID PARENT_BODY_INVALID "
     "PARENT_BODY_TOO_LARGE PARENT_CLOSE_FAILED CLIENT_CLOSE_FAILED "
     "PARENT_HOOKS_INVALID PARENT_RETRY_INVALID PARENT_VERSION_MISMATCH "
-    "PARENT_DEFECT_PROPAGATED".split()
+    "PARENT_DEFECT_PROPAGATED PARENT_LOG_MISSING PARENT_LOG_INVALID REPORT_INVALID".split()
 )
 
 
@@ -94,6 +100,252 @@ def canonical_payload(raw):
         raise AdapterError("INPUT_INVALID") from None
 
 
+def report_number(token):
+    """Non-expanding bounds before Decimal use; 64 digits and exponent [-64,64]."""
+    require(
+        type(token) is str
+        and len(token) <= 128
+        and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]{1,2})?", token),
+        "REPORT_INVALID",
+    )
+    value = Decimal(token)
+    parts = value.as_tuple()
+    require(
+        len(parts.digits) <= 64
+        and -64 <= parts.exponent <= 64
+        and -64 <= value.adjusted() <= 64,
+        "REPORT_INVALID",
+    )
+    return value
+
+
+def report_integer(token):
+    require(
+        type(token) is str and re.fullmatch(r"[0-9]{1,64}", token),
+        "REPORT_INVALID",
+    )
+    return int(token)
+
+
+def report_json(line):
+    def pairs(items):
+        value = {}
+        for key, item in items:
+            require(key not in value, "REPORT_INVALID")
+            value[key] = item
+        return value
+
+    def constant(_):
+        raise AdapterError("REPORT_INVALID")
+
+    def number(token):
+        report_number(token.removeprefix("-"))
+        return Decimal(token)
+
+    def integer(token):
+        report_integer(token.removeprefix("-"))
+        return int(token)
+
+    value = json.loads(
+        line,
+        object_pairs_hook=pairs,
+        parse_float=number,
+        parse_int=integer,
+        parse_constant=constant,
+    )
+
+    def depth(item, level=0):
+        require(level <= 32, "REPORT_INVALID")
+        if type(item) is dict:
+            for child in item.values():
+                depth(child, level + 1)
+        elif type(item) is list:
+            for child in item:
+                depth(child, level + 1)
+
+    depth(value)
+    return value
+
+
+def parse_report(raw, executed_version, qualifier):
+    """A same-response TAIL association, not authentication or complete log evidence.
+
+    Caller must publish raw evidence before calling. SDK ID is not an input.
+    Leading unrelated fragments are ignored; malformed platform candidates reject.
+    """
+    require(type(raw) is bytes and len(raw) <= TAIL_LIMIT, "REPORT_INVALID")
+    require(
+        type(executed_version) is str
+        and (
+            executed_version == "$LATEST"
+            or re.fullmatch(r"[1-9][0-9]{0,19}", executed_version)
+        )
+        and type(qualifier) is str
+        and (qualifier == "$LATEST" or qualifier == executed_version),
+        "REPORT_INVALID",
+    )
+    reports, identities, versions = [], [], []
+    start_count = end_count = 0
+    try:
+        # A byte cut can split a UTF-8 character only in the first fragment.
+        lines = raw.split(b"\n")
+        for ordinal, fragment in enumerate(lines):
+            try:
+                line = fragment.decode("utf-8").strip()
+            except UnicodeError:
+                require(
+                    ordinal == 0
+                    and len(lines) > 1
+                    and not any(
+                        marker in fragment
+                        for marker in (
+                            b"REPORT",
+                            b"START",
+                            b"END",
+                            b"platform",
+                            b'"type"',
+                        )
+                    ),
+                    "REPORT_INVALID",
+                )
+                continue
+            if not line:
+                continue
+            if line.startswith("{"):
+                try:
+                    event = report_json(line)
+                except (ValueError, TypeError, RecursionError, OverflowError):
+                    raise AdapterError("REPORT_INVALID") from None
+                require(type(event) is dict, "REPORT_INVALID")
+                kind = event.get("type")
+                if kind not in {
+                    "platform.report",
+                    "platform.start",
+                    "platform.runtimeDone",
+                }:
+                    continue
+                record = event.get("record")
+                require(type(record) is dict, "REPORT_INVALID")
+                request_id = record.get("requestId")
+                require(
+                    type(request_id) is str and ID.fullmatch(request_id),
+                    "REPORT_INVALID",
+                )
+                identities.append(request_id)
+                if kind == "platform.start":
+                    start_count += 1
+                    if "version" in record:
+                        versions.append(record["version"])
+                elif kind == "platform.report":
+                    metrics = record.get("metrics")
+                    required = {
+                        "durationMs",
+                        "billedDurationMs",
+                        "memorySizeMB",
+                        "maxMemoryUsedMB",
+                    }
+                    require(
+                        type(metrics) is dict
+                        and set(metrics) >= required
+                        and set(metrics)
+                        <= required | {"initDurationMs", "restoreDurationMs"},
+                        "REPORT_INVALID",
+                    )
+                    report = {"request_id": request_id}
+                    for source, dest in (
+                        ("durationMs", "duration_ms"),
+                        ("billedDurationMs", "billed_duration_ms"),
+                        ("memorySizeMB", "memory_size_mib"),
+                        ("maxMemoryUsedMB", "max_memory_used_mib"),
+                        ("initDurationMs", "init_duration_ms"),
+                    ):
+                        number = metrics.get(source)
+                        if source == "initDurationMs" and source not in metrics:
+                            report[dest] = None
+                            continue
+                        if source in {"durationMs", "initDurationMs"}:
+                            require(type(number) in {int, Decimal}, "REPORT_INVALID")
+                            report[dest] = str(report_number(str(number)))
+                        else:
+                            require(
+                                type(number) is int and number >= 0, "REPORT_INVALID"
+                            )
+                            report[dest] = report_integer(str(number))
+                    reports.append(report)
+                    if "restoreDurationMs" in metrics:
+                        number = metrics["restoreDurationMs"]
+                        require(type(number) in {int, Decimal}, "REPORT_INVALID")
+                        report["restore_duration_ms"] = str(report_number(str(number)))
+            elif line.startswith("START"):
+                match = re.fullmatch(
+                    r"START RequestId: ([A-Za-z0-9_-]{1,80}) Version: (\$LATEST|[1-9][0-9]{0,19})",
+                    line,
+                )
+                require(match is not None, "REPORT_INVALID")
+                identities.append(match[1])
+                versions.append(match[2])
+                start_count += 1
+            elif line.startswith("END"):
+                match = re.fullmatch(r"END RequestId: ([A-Za-z0-9_-]{1,80})", line)
+                require(match is not None, "REPORT_INVALID")
+                identities.append(match[1])
+                end_count += 1
+            elif line.startswith("REPORT"):
+                match = re.fullmatch(
+                    r"REPORT RequestId: ([A-Za-z0-9_-]{1,80})\s+Duration: ([^ ]+) ms\s+"
+                    r"Billed Duration: ([0-9]+) ms\s+Memory Size: ([0-9]+) MB\s+"
+                    r"Max Memory Used: ([0-9]+) MB"
+                    r"(?:\s+Init Duration: ([^ ]+) ms)?"
+                    r"(?:\s+Status: (?:success|error|timeout))?"
+                    r"(?:\s+Error Type: [A-Za-z0-9_.-]{1,128})?",
+                    line,
+                )
+                require(match is not None, "REPORT_INVALID")
+                identities.append(match[1])
+                reports.append(
+                    {
+                        "request_id": match[1],
+                        "duration_ms": str(report_number(match[2])),
+                        "billed_duration_ms": report_integer(match[3]),
+                        "memory_size_mib": report_integer(match[4]),
+                        "max_memory_used_mib": report_integer(match[5]),
+                        "init_duration_ms": str(report_number(match[6]))
+                        if match[6] is not None
+                        else None,
+                    }
+                )
+        require(
+            len(reports) == 1
+            and start_count <= 1
+            and end_count <= 1
+            and all(value == reports[0]["request_id"] for value in identities)
+            and all(
+                type(value) is str and value == executed_version for value in versions
+            ),
+            "REPORT_INVALID",
+        )
+    except (ValueError, TypeError, UnicodeError, RecursionError, OverflowError):
+        raise AdapterError("REPORT_INVALID") from None
+    return {
+        "schema": REPORT_CONTRACT,
+        "status": "JOINED_SAME_INVOKE_RESPONSE",
+        "execution_request_id": reports[0]["request_id"],
+        "report": reports[0],
+        "executed_version": executed_version,
+        "requested_qualifier": qualifier,
+        "immutable_code_identity_established": False,
+        "initialization_measurement": "UNAVAILABLE"
+        if reports[0]["init_duration_ms"] is None
+        else "REPORTED",
+        "complete_execution_log": False,
+        "warm_execution": "UNESTABLISHED",
+        "memory_attributable_only_to_this_invocation": False,
+        "provenance": "PLATFORM_FORMAT_FROM_SAME_INJECTED_SDK_RESPONSE_TAIL",
+        "trust_premise": "REVIEWED_ARTIFACT_AND_SERVICE_RESPONSE_NOT_LINE_ATTESTATION",
+        "authenticated_observation": False,
+    }
+
+
 @dataclass(repr=False)
 class Attempt:
     """Private bytes are never included in repr or sanitized summary."""
@@ -110,6 +362,27 @@ class Attempt:
     client_closed: bool = False
     metadata: dict = field(default_factory=dict)
     metadata_state: str = "NOT_RECEIVED"
+    log_state: str = "NOT_REQUESTED"
+    log_encoded: bytes = b""
+    log_decoded: bytes = b""
+    log_encoded_complete: bool = False
+    log_decoded_complete: bool = False
+    log_representation: str = "NONE"
+
+    def log_summary(self):
+        return {
+            "schema": "jev-rag-smoke-invoke-tail-evidence-v1",
+            "state": self.log_state,
+            "encoded_representation": self.log_representation,
+            "encoded_size_bytes": len(self.log_encoded),
+            "encoded_sha256": hashlib.sha256(self.log_encoded).hexdigest(),
+            "encoded_full_value": self.log_encoded_complete,
+            "decoded_size_bytes": len(self.log_decoded),
+            "decoded_sha256": hashlib.sha256(self.log_decoded).hexdigest(),
+            "decoded_full_tail": self.log_decoded_complete,
+            "complete_execution_log": False,
+            "authenticated_observation": False,
+        }
 
     def fail(self, code):
         self.failures.append(code)
@@ -117,7 +390,7 @@ class Attempt:
             self.code = code
 
     def summary(self):
-        return {
+        result = {
             "schema": "jev-rag-smoke-parent-transport-result-v1",
             "code": self.code,
             "failures": list(self.failures),
@@ -148,6 +421,10 @@ class Attempt:
             "authenticated_observation": False,
             "reservation_release": "NONE",
         }
+        if self.log_state != "NOT_REQUESTED":
+            result["schema"] = "jev-rag-smoke-parent-transport-result-v2"
+            result["log_evidence"] = self.log_summary()
+        return result
 
     def __repr__(self):
         return f"Attempt(code={self.code!r}, body_bytes={len(self.body)})"
@@ -158,10 +435,32 @@ class ParentTransport:
 
     target/settings use the accepted operator/P0 field sets. The qualified full
     ARN additionally binds the account; the simulation operator uses a bare name.
-    No claim, price, semantic validation, durable publication or REPORT capture.
+    No claim, price, semantic validation or durable publication.
     """
 
-    def __init__(self, client, target, settings, payload, *, errors=None):
+    def __init__(
+        self,
+        client,
+        target,
+        settings,
+        payload,
+        *,
+        errors=None,
+        log_type="None",
+        parser_contract=None,
+    ):
+        require(
+            type(log_type) is str
+            and (
+                (log_type == "None" and parser_contract is None)
+                or (
+                    log_type == "Tail"
+                    and type(parser_contract) is str
+                    and parser_contract == REPORT_CONTRACT
+                )
+            ),
+            "INPUT_INVALID",
+        )
         require(
             type(target) is dict
             and set(target) == {"account", "region", "function_name", "qualifier"},
@@ -216,7 +515,7 @@ class ParentTransport:
             "FunctionName": f"arn:aws:lambda:{REGION}:{target['account']}:function:{target['function_name']}",
             "Qualifier": target["qualifier"],
             "InvocationType": "RequestResponse",
-            "LogType": "None",
+            "LogType": log_type,
             "Payload": payload,
         }
         self.url = (
@@ -227,6 +526,8 @@ class ParentTransport:
             + quote(target["qualifier"], safe="")
         )
         self.result = Attempt()
+        if log_type == "Tail":
+            self.result.log_state = "NOT_RECEIVED"
         self.lock = Lock()
         self.used = False
         self.failed = False
@@ -265,7 +566,11 @@ class ParentTransport:
                 or not callable(getattr(headers, "get", None))
                 or headers.get("X-Amz-Invocation-Type")
                 not in ("RequestResponse", b"RequestResponse")
-                or headers.get("X-Amz-Log-Type") not in ("None", b"None")
+                or headers.get("X-Amz-Log-Type")
+                not in (
+                    self.request["LogType"],
+                    self.request["LogType"].encode("ascii"),
+                )
             ):
                 self.result.blocked_send_callbacks += 1
                 self.failed = True
@@ -322,7 +627,7 @@ class ParentTransport:
                 or status != 200
                 or fields.get("HTTPStatusCode") != 200
                 or "ExecutedVersion" not in self.result.metadata
-                or "LogResult" in response
+                or (self.request["LogType"] == "None" and "LogResult" in response)
             ):
                 invalid = True
             if (
@@ -333,6 +638,49 @@ class ParentTransport:
                 self.result.fail("PARENT_VERSION_MISMATCH")
         if invalid:
             self.result.fail("PARENT_RESPONSE_INVALID")
+
+    def _logs(self, response):
+        """Bounded private projection before payload reading; never format raw values."""
+        result = self.result
+        if "LogResult" not in response:
+            result.log_state = "MISSING"
+            result.fail("PARENT_LOG_MISSING")
+            return
+        value = response["LogResult"]
+        if value is None:
+            result.log_state = "NULL"
+        elif type(value) is not str:
+            result.log_state = "INVALID_TYPE"
+        else:
+            # SDK allocations already occurred. Only slice/encode a bounded prefix.
+            prefix = value[:TAIL_ENCODED_LIMIT]
+            result.log_encoded = prefix.encode("utf-8", errors="backslashreplace")[
+                :TAIL_ENCODED_LIMIT
+            ]
+            result.log_representation = "UTF8_BACKSLASHREPLACE_PREFIX"
+            if not value.isascii():
+                result.log_state = "INVALID_ASCII"
+            elif len(value) > TAIL_ENCODED_LIMIT:
+                result.log_state = "OVERSIZED_ENCODED"
+                result.log_representation = "ASCII_PREFIX"
+            else:
+                result.log_representation = "ASCII"
+                result.log_encoded_complete = True
+                try:
+                    decoded = base64.b64decode(result.log_encoded, validate=True)
+                except (binascii.Error, ValueError):
+                    result.log_state = "INVALID_BASE64"
+                else:
+                    result.log_decoded = decoded[:TAIL_LIMIT]
+                    if len(decoded) > TAIL_LIMIT:
+                        result.log_state = "OVERSIZED_DECODED"
+                    elif base64.b64encode(decoded) != result.log_encoded:
+                        result.log_state = "INVALID_BASE64"
+                    else:
+                        result.log_state = "DECODED"
+                        result.log_decoded_complete = True
+                        return
+        result.fail("PARENT_LOG_INVALID")
 
     def _propagated_defect(self):
         if "PARENT_DEFECT_PROPAGATED" not in self.result.failures:
@@ -408,6 +756,8 @@ class ParentTransport:
                 self.result.fail("PARENT_RESPONSE_INVALID")
             else:
                 self._metadata(response)
+                if self.request["LogType"] == "Tail":
+                    self._logs(response)
                 self._read(response)
             normal_exit = True
         except AdapterError as error:

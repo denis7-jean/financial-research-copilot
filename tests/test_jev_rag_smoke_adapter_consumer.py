@@ -1,6 +1,7 @@
 """Fresh invented clients; accepted adapter, P0 and handler seams under guard."""
 
 import ast
+import base64
 import io
 from pathlib import Path
 
@@ -828,3 +829,298 @@ def test_ac1_handled_error_bookkeeping_defect_counts_as_escaping(
     assert "OPERATOR_DEFECT_PROPAGATED" in [f["code"] for f in record["failures"]]
     assert bundle["client"].calls == 0
     assert "invented bookkeeping diagnostic" not in repr(record)
+
+
+@pytest.fixture
+def tail_bundle(bundle):
+    plan = op.strict_json(bundle["args"][0])
+    plan.update(
+        schema=op.TAIL_PLAN_SCHEMA,
+        mode=op.TAIL_MODE,
+        log_type="Tail",
+        parser_contract=adapter.REPORT_CONTRACT,
+    )
+    old.rehash(bundle, 0, "operator", plan)
+    bundle["client"].log_type = "Tail"
+    bundle["client"].response["LogResult"] = base64.b64encode(fake.TEXT_REPORT).decode()
+    return bundle
+
+
+@pytest.mark.parametrize("raw", [fake.TEXT_REPORT, fake.json_report()])
+@pytest.mark.parametrize("inside", [False, True])
+def test_tail_real_handler_join_is_not_overall_completion(
+    tail_bundle, raw, inside, monkeypatch, capsys
+):
+    b = tail_bundle
+    b["client"].response["LogResult"] = base64.b64encode(raw).decode()
+    original = adapter.parse_report
+    observed = []
+
+    def parse(*args):
+        for name in (
+            "log-encoded.bin",
+            "log-decoded.bin",
+            "log-evidence.json",
+            "response.bin",
+            "response-metadata.json",
+            "transport-result.json",
+        ):
+            assert (directory(b) / name).is_file()
+        observed.append(args[0])
+        return original(*args)
+
+    monkeypatch.setattr(adapter, "parse_report", parse)
+    result = caller_context(lambda: invoke(b), inside)
+    record = assert_retained(b, result)
+    assert result["status"] == "COMPLETE" and op.confirm(result, directory(b)) == record
+    assert result["schema"] == op.TAIL_INDEX_SCHEMA and result["mode"] == op.TAIL_MODE
+    join = op.strict_json((directory(b) / "report-association.json").read_bytes())
+    assert join["execution_request_id"] == fake.EXECUTION_ID
+    assert join["sdk_request_id"] == "invented-sdk-id"
+    assert (
+        join["executed_version"] == "$LATEST"
+        and not join["immutable_code_identity_established"]
+    )
+    assert join["parent_transport_complete"] and observed == [raw]
+    for field, file in (
+        ("request_sha256", "request.json"),
+        ("response_sha256", "response.bin"),
+        ("response_metadata_sha256", "response-metadata.json"),
+        ("log_encoded_sha256", "log-encoded.bin"),
+        ("log_decoded_sha256", "log-decoded.bin"),
+    ):
+        assert join[field] == op.digest((directory(b) / file).read_bytes())
+    assert record["assessment"]["report_evidence"] == "JOINED_SAME_INVOKE_RESPONSE"
+    for flag in (
+        "authenticated_observation",
+        "task_cost_established",
+        "evidence_complete",
+        "experiment_success",
+    ):
+        assert record["assessment"][flag] is False
+    assert (
+        not record["owner_authorized"]
+        and not record["invocation_authorized"]
+        and not record["release_authorized"]
+    )
+    assert b["client"].calls == b["client"].delivered == b["factories"] == 1
+    assert fake.SECRET not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("log_type", "None"),
+        ("parser_contract", "unreviewed"),
+        ("schema", op.ADAPTER_PLAN_SCHEMA),
+        ("mode", op.ADAPTER_MODE),
+    ],
+)
+def test_tail_plan_hash_and_contract_before_claim(tail_bundle, field, value):
+    b = tail_bundle
+    plan = op.strict_json(b["args"][0])
+    plan[field] = value
+    old.rehash(b, 0, "operator", plan)
+    with pytest.raises(op.OperatorError, match="^PLAN_INVALID$"):
+        invoke(b)
+    assert not list(b["root"].iterdir()) and b["factories"] == b["client"].calls == 0
+
+
+def test_tail_unhashed_mutation_rejects_before_claim(tail_bundle):
+    b = tail_bundle
+    plan = op.strict_json(b["args"][0])
+    plan["parser_contract"] = "changed"
+    b["args"][0] = op.canonical(plan)
+    with pytest.raises(op.OperatorError, match="^INPUT_HASH_MISMATCH$"):
+        invoke(b)
+    assert b["factories"] == 0 and not list(b["root"].iterdir())
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "log-encoded.bin",
+        "log-decoded.bin",
+        "log-evidence.json",
+        "report-association.json",
+        "index.json",
+    ],
+)
+@pytest.mark.parametrize("fault", ["disk", "partial", "collision"])
+def test_tail_publication_failure_never_confirms_or_resends(
+    tail_bundle, monkeypatch, name, fault
+):
+    b = tail_bundle
+    write = op._write
+
+    def failing(path, raw):
+        if path.name == name:
+            if fault == "partial":
+                with path.open("xb") as f:
+                    f.write(raw[:3])
+                raise OSError(fake.SECRET)
+            if fault == "collision":
+                with path.open("xb") as f:
+                    f.write(b"prior")
+                return write(path, raw)
+            raise PermissionError(fake.SECRET)
+        return write(path, raw)
+
+    monkeypatch.setattr(op, "_write", failing)
+    result = invoke(b)
+    assert result["status"].startswith("INTERRUPTED")
+    with pytest.raises(op.OperatorError, match="^PUBLICATION_UNCONFIRMED$"):
+        op.confirm(result, directory(b))
+    if name != "index.json":
+        record = assert_retained(b, result, code="PUBLICATION_FAILED")
+        assert name not in record["files"]
+        failures = [item for item in result["failures"] if item["filename"] == name]
+        assert failures and failures[0]["may_be_incomplete"]
+        assert record["assessment"]["report_evidence"] == "INCOMPLETE_NOT_CAPTURED"
+    else:
+        assert result["status"] == "INTERRUPTED_UNINDEXED"
+        before = {p.name: p.read_bytes() for p in directory(b).iterdir()}
+        with pytest.raises(op.OperatorError, match="^EXECUTION_ALREADY_CLAIMED$"):
+            invoke(b)
+        assert before == {p.name: p.read_bytes() for p in directory(b).iterdir()}
+    assert b["client"].calls == b["factories"] == 1
+    assert fake.SECRET not in repr(result)
+
+
+@pytest.mark.parametrize(
+    "kind", ["missing", "null", "bad", "oversized", "conflict", "no-report"]
+)
+def test_tail_invalid_logs_retained_without_complete_join(tail_bundle, kind):
+    b = tail_bundle
+    if kind == "missing":
+        del b["client"].response["LogResult"]
+    elif kind == "null":
+        b["client"].response["LogResult"] = None
+    elif kind == "bad":
+        b["client"].response["LogResult"] = "!" + fake.SECRET
+    elif kind == "oversized":
+        b["client"].response["LogResult"] = "x" * 6000
+    else:
+        b["client"].response["LogResult"] = base64.b64encode(
+            fake.TEXT_REPORT * 2 if kind == "conflict" else b"unknown log\n"
+        ).decode()
+    result = invoke(b)
+    record = assert_retained(b, result)
+    assert result["status"] == "INTERRUPTED"
+    assert record["assessment"]["report_evidence"] == "INCOMPLETE_NOT_CAPTURED"
+    assert not (directory(b) / "report-association.json").exists()
+    assert len((directory(b) / "log-encoded.bin").read_bytes()) <= 5464
+
+
+@pytest.mark.parametrize("kind", ["read", "close", "function-error", "metadata-null"])
+def test_tail_failure_association_preserves_outcome_boundary(tail_bundle, kind):
+    b = tail_bundle
+    c = b["client"]
+    c.auto_body = False
+    c.response["Payload"] = c.stream = fake.Stream([b"partial-body"])
+    if kind == "read":
+        c.stream.error = sdk.ReadTimeoutError(endpoint_url=fake.SECRET)
+    if kind == "close":
+        c.stream.close_error = OSError(fake.SECRET)
+    if kind == "function-error":
+        c.response["FunctionError"] = "Unhandled"
+    if kind == "metadata-null":
+        c.response["ResponseMetadata"] = None
+    result = invoke(b)
+    record = assert_retained(b, result)
+    join = op.strict_json((directory(b) / "report-association.json").read_bytes())
+    assert join["parent_transport_complete"] == (kind == "function-error")
+    assert record["assessment"]["report_evidence"] == "JOINED_SAME_INVOKE_RESPONSE"
+    if kind == "function-error":
+        assert (
+            result["status"] == "COMPLETE"
+            and record["assessment"]["handler_structure"] == "FUNCTION_ERROR"
+        )
+    else:
+        assert result["status"] == "INTERRUPTED"
+    assert not record["assessment"]["experiment_success"]
+
+
+@pytest.mark.parametrize("inside", [False, True])
+def test_tail_programming_defect_preserves_raw_evidence_and_primary(
+    tail_bundle, monkeypatch, inside
+):
+    b = tail_bundle
+    c = b["client"]
+    primary = RuntimeError(fake.SECRET)
+    c.auto_body = False
+    c.response["Payload"] = c.stream = fake.Stream(
+        [b"exact-prefix"], error=primary, close_error=OSError(fake.SECRET)
+    )
+    c.close_error = RuntimeError("secondary")
+    with pytest.raises(RuntimeError) as caught:
+        caller_context(lambda: invoke(b), inside)
+    assert caught.value is primary
+    assert (directory(b) / "response.bin").read_bytes() == b"exact-prefix"
+    assert (directory(b) / "log-decoded.bin").read_bytes() == fake.TEXT_REPORT
+    record = op.strict_json((directory(b) / "index.json").read_bytes())
+    assert (
+        record["status"] == "INTERRUPTED"
+        and record["reservation_release"] == "NONE_PARENT_HOLDS_RETAINED"
+    )
+    assert not record["assessment"]["evidence_complete"]
+    with pytest.raises(op.OperatorError, match="^PUBLICATION_UNCONFIRMED$"):
+        op.confirm(dict(status="INTERRUPTED"), directory(b))
+    with pytest.raises(op.OperatorError, match="^EXECUTION_ALREADY_CLAIMED$"):
+        invoke(b)
+    assert c.calls == b["factories"] == c.closes == c.stream.closes == 1
+    assert fake.SECRET not in repr(record)
+
+
+def test_tail_blocked_second_send_retains_full_parent_hold(tail_bundle):
+    b = tail_bundle
+    b["client"].sends = 2
+    result = invoke(b)
+    record = assert_retained(b, result)
+    assert result["status"] == "INTERRUPTED" and b["client"].delivered == 1
+    assert record["initial_reservations_usd"]["whole_run"] == "9.1"
+    assert record["assessment"]["report_evidence"] == "INCOMPLETE_NOT_CAPTURED"
+
+
+def test_tail_transport_metadata_retry_never_settles_parent(tail_bundle):
+    b = tail_bundle
+    b["client"].response["ResponseMetadata"]["RetryAttempts"] = 2
+    result = invoke(b)
+    record = assert_retained(b, result, code="PARENT_RETRY_INVALID")
+    assert result["status"] == "INTERRUPTED" and b["client"].delivered == 1
+    join = op.strict_json((directory(b) / "report-association.json").read_bytes())
+    assert not join["parent_transport_complete"]
+    assert record["reservation_release"] == "NONE_PARENT_HOLDS_RETAINED"
+
+
+def test_tail_unknown_invoke_cannot_infer_report_id(tail_bundle):
+    b = tail_bundle
+    b["client"].error = sdk.ReadTimeoutError(endpoint_url=fake.SECRET)
+    result = invoke(b)
+    record = assert_retained(b, result)
+    assert (
+        result["status"] == "INTERRUPTED"
+        and record["assessment"]["report_evidence"] == "INCOMPLETE_NOT_CAPTURED"
+    )
+    assert not (directory(b) / "report-association.json").exists()
+    assert (directory(b) / "log-decoded.bin").read_bytes() == b""
+
+
+def test_tail_report_publication_serializer_failure_keeps_raw(tail_bundle, monkeypatch):
+    b = tail_bundle
+    encode = op.encode
+
+    def broken(value):
+        if type(value) is dict and value.get("schema") == adapter.REPORT_CONTRACT:
+            raise op.OperatorError("SERIALIZATION_FAILED")
+        return encode(value)
+
+    monkeypatch.setattr(op, "encode", broken)
+    result = invoke(b)
+    record = assert_retained(b, result, code="SERIALIZATION_FAILED")
+    assert (
+        result["status"] == "INTERRUPTED"
+        and "report-association.json" not in record["files"]
+    )
+    assert (directory(b) / "log-decoded.bin").read_bytes() == fake.TEXT_REPORT
+    assert record["assessment"]["report_evidence"] == "INCOMPLETE_NOT_CAPTURED"

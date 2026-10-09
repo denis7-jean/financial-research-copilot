@@ -1,6 +1,7 @@
 """Invented injected clients only, including real installed SDK exception types."""
 
 import ast
+import base64
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -113,7 +114,9 @@ class Client:
                             body=params["Payload"],
                             headers={
                                 "X-Amz-Invocation-Type": b"RequestResponse",
-                                "X-Amz-Log-Type": b"None",
+                                "X-Amz-Log-Type": getattr(
+                                    self, "log_type", "None"
+                                ).encode("ascii"),
                             },
                         )
                     ),
@@ -162,7 +165,17 @@ def test_pure_import_source_and_fresh_execution(monkeypatch):
     imports = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
     assert all(
         (n.module if isinstance(n, ast.ImportFrom) else n.names[0].name).split(".")[0]
-        in {"dataclasses", "hashlib", "json", "re", "threading", "urllib"}
+        in {
+            "dataclasses",
+            "base64",
+            "binascii",
+            "decimal",
+            "hashlib",
+            "json",
+            "re",
+            "threading",
+            "urllib",
+        }
         for n in imports
     )
 
@@ -840,3 +853,371 @@ def test_ad1_invalid_metadata_and_read_defect_preserve_primary_fixed_failure():
     assert t.result.body == b"prefix" and c.stream.closes == c.closes == 1
     assert "FunctionError" not in t.result.metadata
     assert SECRET not in json.dumps(t.result.summary()) + json.dumps(t.result.metadata)
+
+
+# Tail-specific cases. The inherited None assertions above are unchanged.
+EXECUTION_ID = "invented-execution-id"
+TEXT_REPORT = (
+    "REPORT RequestId: invented-execution-id\tDuration: 1.25 ms\t"
+    "Billed Duration: 2 ms\tMemory Size: 512 MB\tMax Memory Used: 160 MB\n"
+).encode()
+
+
+def tail_bound(client=None, raw=TEXT_REPORT, target=TARGET):
+    client = client or Client()
+    client.log_type = "Tail"
+    client.response["LogResult"] = base64.b64encode(raw).decode()
+    return client, adapter.ParentTransport(
+        client,
+        target,
+        SETTINGS,
+        PAYLOAD,
+        log_type="Tail",
+        parser_contract=adapter.REPORT_CONTRACT,
+    )
+
+
+def json_report(**changes):
+    metrics = dict(
+        durationMs=1.25, billedDurationMs=2, memorySizeMB=512, maxMemoryUsedMB=160
+    )
+    metrics.update(changes)
+    return (
+        json.dumps(
+            dict(
+                type="platform.report",
+                record=dict(requestId=EXECUTION_ID, metrics=metrics),
+            )
+        )
+        + "\n"
+    ).encode()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        TEXT_REPORT,
+        json_report(),
+        b"START RequestId: invented-execution-id Version: 7\n"
+        + TEXT_REPORT
+        + b"END RequestId: invented-execution-id\n",
+    ],
+)
+def test_tail_text_json_and_separate_identity(raw):
+    c, t = tail_bound(raw=raw)
+    r = t.invoke_once()
+    assert r.code == "RETURNED" and r.log_state == "DECODED"
+    assert r.log_decoded == raw and r.log_encoded == c.response["LogResult"].encode()
+    assert r.log_encoded_complete and r.log_decoded_complete
+    joined = adapter.parse_report(raw, "7", "7")
+    assert joined["execution_request_id"] == EXECUTION_ID
+    assert joined["execution_request_id"] != r.metadata["ResponseMetadata"]["RequestId"]
+    assert joined["report"]["duration_ms"] == "1.25"
+    assert joined["initialization_measurement"] == "UNAVAILABLE"
+    assert joined["report"]["init_duration_ms"] is None
+    assert (
+        not joined["authenticated_observation"] and not joined["complete_execution_log"]
+    )
+    assert joined["warm_execution"] == "UNESTABLISHED"
+    assert r.summary()["sdk_request_id_is_execution_id"] is False
+    assert c.calls == c.delivered == c.closes == c.stream.closes == 1
+
+
+@pytest.mark.parametrize("version", ["$LATEST", "7"])
+def test_tail_latest_not_immutable(version):
+    c, t = tail_bound(target=dict(TARGET, qualifier="$LATEST"))
+    c.response["ExecutedVersion"] = version
+    assert t.invoke_once().code == "RETURNED"
+    assert (
+        adapter.parse_report(TEXT_REPORT, version, "$LATEST")[
+            "immutable_code_identity_established"
+        ]
+        is False
+    )
+
+
+@pytest.mark.parametrize(
+    "value,state",
+    [
+        (None, "NULL"),
+        (1, "INVALID_TYPE"),
+        ({"private": SECRET}, "INVALID_TYPE"),
+        ("\u00e9" + SECRET, "INVALID_ASCII"),
+        ("!" + SECRET, "INVALID_BASE64"),
+        ("Zh==", "INVALID_BASE64"),
+        ("A" * 5465, "OVERSIZED_ENCODED"),
+        (base64.b64encode(b"a" * 4097).decode(), "OVERSIZED_DECODED"),
+    ],
+)
+def test_tail_invalid_projection_is_bounded_and_labelled(value, state):
+    c, t = tail_bound()
+    c.response["LogResult"] = value
+    r = t.invoke_once()
+    assert r.log_state == state and "PARENT_LOG_INVALID" in r.failures
+    assert len(r.log_encoded) <= 5464 and len(r.log_decoded) <= 4096
+    if state in {"OVERSIZED_ENCODED", "INVALID_ASCII", "INVALID_TYPE"}:
+        assert not r.log_encoded_complete
+    assert not r.log_decoded_complete
+    assert SECRET not in json.dumps(r.summary()) and SECRET not in repr(r)
+    assert r.body_eof and c.calls == c.closes == c.stream.closes == 1
+
+
+def test_tail_missing_and_null_are_distinct():
+    c, t = tail_bound()
+    del c.response["LogResult"]
+    assert t.invoke_once().log_state == "MISSING"
+    assert t.result.failures == ["PARENT_LOG_MISSING"]
+    assert t.result.body and t.result.client_closed
+
+
+@pytest.mark.parametrize("size", [4095, 4096])
+def test_tail_byte_boundaries(size):
+    raw = b"x" * (size - len(TEXT_REPORT) - 1) + b"\n" + TEXT_REPORT
+    c, t = tail_bound(raw=raw)
+    r = t.invoke_once()
+    assert (
+        r.log_encoded_complete and r.log_decoded_complete and len(r.log_decoded) == size
+    )
+    assert len(r.log_encoded) <= 5464
+    assert (
+        adapter.parse_report(r.log_decoded, "7", "7")["execution_request_id"]
+        == EXECUTION_ID
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"",
+        TEXT_REPORT[:-20],
+        TEXT_REPORT + TEXT_REPORT,
+        TEXT_REPORT + TEXT_REPORT.replace(EXECUTION_ID.encode(), b"other-id"),
+        b"START RequestId: other-id Version: 7\n" + TEXT_REPORT,
+        b"START RequestId: invented-execution-id Version: 8\n" + TEXT_REPORT,
+        TEXT_REPORT + b"END RequestId: other-id\n",
+        TEXT_REPORT.replace(b"1.25", b"NaN"),
+        TEXT_REPORT.replace(b"2 ms", b"2.0 ms"),
+        json_report(billedDurationMs=True),
+        json_report(memorySizeMB=512.0),
+        json_report(durationMs=float("nan")),
+        json_report(durationMs=-1.25),
+        json_report(durationMs=None),
+        json_report(initDurationMs=None),
+        json_report().replace(b"1.25", b"1E-999999999999"),
+        json_report().replace(b"1.25", b"1E999999999"),
+        json_report().replace(b"1.25", b"0E-999999999"),
+        json_report().replace(b"1.25", b"1" * 129),
+        json_report().replace(
+            b'"durationMs": 1.25', b'"durationMs": 1.25, "durationMs": 1.25'
+        ),
+        b'{"type":"platform.report","record":\n' + TEXT_REPORT,
+        (b'{"unknown":' + b"[" * 34 + b"0" + b"]" * 34 + b"}\n") + TEXT_REPORT,
+    ],
+)
+def test_tail_parser_rejects_ambiguous_truncated_and_numeric_forms(raw):
+    with pytest.raises(adapter.AdapterError, match="^REPORT_INVALID$"):
+        adapter.parse_report(raw, "7", "7")
+
+
+@pytest.mark.parametrize("token", [b"1E-64", b"1E64", b"0E-64", b"1E-12"])
+def test_tail_numeric_boundaries_are_exact(token):
+    raw = json_report().replace(b"1.25", token)
+    joined = adapter.parse_report(raw, "7", "7")
+    assert joined["report"]["duration_ms"] == str(adapter.Decimal(token.decode()))
+
+
+@pytest.mark.parametrize("token", [b"1E-65", b"1E65", b"0E-65"])
+def test_tail_numeric_just_outside_bounds(token):
+    with pytest.raises(adapter.AdapterError, match="^REPORT_INVALID$"):
+        adapter.parse_report(json_report().replace(b"1.25", token), "7", "7")
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        b"cut leading application fragment\n",
+        b'"message": "cut"}\n',
+        b'"application": "cut\n',
+        b"\x80 cut utf8\n",
+        b'{"application": -1.25}\n',
+    ],
+)
+def test_tail_unknown_content_and_leading_fragments(prefix):
+    joined = adapter.parse_report(prefix + TEXT_REPORT, "7", "7")
+    assert joined["execution_request_id"] == EXECUTION_ID
+    assert not joined["complete_execution_log"]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        TEXT_REPORT.replace(b"160 MB", b"160 MB\tInit Duration: 23.45 ms"),
+        json_report(initDurationMs=23.45),
+    ],
+)
+def test_tail_optional_init_preserved(raw):
+    joined = adapter.parse_report(raw, "7", "7")
+    assert joined["report"]["init_duration_ms"] == "23.45"
+    assert joined["initialization_measurement"] == "REPORTED"
+    assert joined["warm_execution"] == "UNESTABLISHED"
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "sdk-read",
+        "read-defect",
+        "body-close",
+        "client-close",
+        "close-defect",
+        "function-error",
+    ],
+)
+def test_tail_survives_payload_and_cleanup_paths(stage):
+    c, t = tail_bound()
+    c.stream = c.response["Payload"] = Stream([b"prefix"])
+    primary = RuntimeError(SECRET)
+    if stage == "sdk-read":
+        c.stream.error = e.ReadTimeoutError(endpoint_url=SECRET)
+    if stage == "read-defect":
+        c.stream.error = primary
+    if stage == "body-close":
+        c.stream.close_error = OSError(SECRET)
+    if stage == "client-close":
+        c.close_error = OSError(SECRET)
+    if stage == "close-defect":
+        c.stream.close_error = primary
+    if stage == "function-error":
+        c.response["FunctionError"] = "Unhandled"
+    if stage in {"read-defect", "close-defect"}:
+        with pytest.raises(RuntimeError) as caught:
+            t.invoke_once()
+        assert caught.value is primary
+    else:
+        t.invoke_once()
+    r = t.result
+    assert r.log_decoded == TEXT_REPORT and r.log_state == "DECODED"
+    assert r.metadata["ResponseMetadata"]["RequestId"] == "invented-sdk-id"
+    assert r.body == b"prefix" and c.calls == c.closes == c.stream.closes == 1
+    if stage != "function-error":
+        assert r.failures
+    with pytest.raises(adapter.AdapterError, match="^PARENT_ALREADY_ATTEMPTED$"):
+        t.invoke_once()
+    assert c.calls == 1
+
+
+@pytest.mark.parametrize("stage", ["parameters", "wire", "second"])
+def test_tail_hooks_exact_and_second_send_blocked(stage):
+    c, t = tail_bound()
+    if stage == "parameters":
+        c.mutate_params = lambda p: dict(p, LogType="None")
+    if stage == "wire":
+        c.mutate_send = lambda r: SimpleNamespace(
+            **{**r.__dict__, "headers": {**r.headers, "X-Amz-Log-Type": b"None"}}
+        )
+    if stage == "second":
+        c.sends = 2
+    r = t.invoke_once()
+    assert r.failures and c.calls == 1
+    assert c.delivered == (1 if stage == "second" else 0)
+    assert r.summary()["reservation_release"] == "NONE"
+
+
+@pytest.mark.parametrize(
+    "log_type,contract",
+    [
+        ("Tail", None),
+        ("Tail", "other"),
+        ("None", adapter.REPORT_CONTRACT),
+        (True, None),
+    ],
+)
+def test_tail_contract_is_explicit_before_hooks(log_type, contract):
+    c = Client()
+    with pytest.raises(adapter.AdapterError, match="^INPUT_INVALID$"):
+        adapter.ParentTransport(
+            c, TARGET, SETTINGS, PAYLOAD, log_type=log_type, parser_contract=contract
+        )
+    assert not c.meta.events.handlers and c.calls == 0
+
+
+def test_tail_installed_sdk_serializer_exact_headers_without_client():
+    from botocore.loaders import Loader
+    from botocore.model import ServiceModel
+    from botocore.serialize import create_serializer
+
+    loader = Loader(
+        extra_search_paths=[Loader.BUILTIN_DATA_PATH],
+        include_default_search_paths=False,
+    )
+    model = ServiceModel(loader.load_service_model("lambda", "service-2"))
+    serializer = create_serializer(model.resolved_protocol)
+    operation = model.operation_model("Invoke")
+    c, t = tail_bound()
+
+    def invoke(**params):
+        c.calls += 1
+        c.meta.events.emit("before-parameter-build.*.*", model=operation, params=params)
+        request = serializer.serialize_to_request(params, operation)
+        sent = SimpleNamespace(
+            method=request["method"],
+            url=adapter.ENDPOINT + request["url_path"] + "?Qualifier=7",
+            headers=request["headers"],
+            body=request["body"],
+        )
+        c.meta.events.emit("before-send.*.*", request=sent)
+        c.delivered += 1
+        return c.response
+
+    c.invoke = invoke
+    assert t.invoke_once().code == "RETURNED"
+    assert c.calls == c.delivered == t.result.approved_send_callbacks == 1
+    assert t.result.log_decoded == TEXT_REPORT
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [dict(unknownMetric=1), dict(restoreDurationMs=True), dict(restoreDurationMs=-1)],
+)
+def test_tail_unknown_or_invalid_optional_metrics_reject(changes):
+    with pytest.raises(adapter.AdapterError, match="^REPORT_INVALID$"):
+        adapter.parse_report(json_report(**changes), "7", "7")
+
+
+def test_tail_json_start_runtime_done_joins():
+    prefix = b'{"type":"platform.start","record":{"requestId":"invented-execution-id","version":"7"}}\n'
+    suffix = b'{"type":"platform.runtimeDone","record":{"requestId":"invented-execution-id","status":"success"}}\n'
+    assert (
+        adapter.parse_report(prefix + json_report() + suffix, "7", "7")[
+            "execution_request_id"
+        ]
+        == EXECUTION_ID
+    )
+    for raw in (
+        prefix.replace(b'"7"', b'"8"') + json_report(),
+        json_report() + suffix.replace(EXECUTION_ID.encode(), b"other-id"),
+    ):
+        with pytest.raises(adapter.AdapterError, match="^REPORT_INVALID$"):
+            adapter.parse_report(raw, "7", "7")
+
+
+def test_tail_unknown_invoke_has_no_execution_id():
+    c, t = tail_bound()
+    c.error = e.ReadTimeoutError(endpoint_url=SECRET)
+    r = t.invoke_once()
+    assert r.code == "PARENT_OUTCOME_UNKNOWN" and r.log_state == "NOT_RECEIVED"
+    assert r.log_encoded == r.log_decoded == b"" and not r.metadata
+    assert r.summary()["report_evidence"] == "INCOMPLETE_NOT_CAPTURED"
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        b"\x80 REPORT RequestId: other-id\n",
+        b'{"type":"platform\\u002ereport","record":\n',
+        b'{"application": "cut\n',
+    ],
+)
+def test_tail_malformed_candidates_never_selected_away(prefix):
+    with pytest.raises(adapter.AdapterError, match="^REPORT_INVALID$"):
+        adapter.parse_report(prefix + TEXT_REPORT, "7", "7")

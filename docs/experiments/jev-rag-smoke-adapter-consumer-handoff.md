@@ -329,3 +329,169 @@ credential/endpoint gates, owner inputs/bounds/budget, exact artifact/configurat
 operational authorization and qualification remain separate. This is Codex
 implementation/self-review only. Stop for independent acceptance; no live action,
 integration, main merge or push occurred.
+
+
+## 2026-10-09 — opt-in Invoke Tail increment (Codex self-review, pending Claude)
+
+Exact base: `7f2beaf0b5abe368dd743c4a04d14782ed6bce17`; isolated branch
+`phase0/jev-rag-smoke-report-tail`. Factory acceptance raw SHA-256
+`b18055836cbb7989ea34c45362600c3e091ddae2ab87c23a6b2d7d8e18c368f1`
+and factory-worktree assessment raw SHA-256
+`c88fed27b7429931efe34e422e89c176535dcc794b5bcf218caaa3f0bad92212`
+were verified and preserved. No application/artifact/factory/P0 changes.
+This is implementation and Codex self-review only, not independent acceptance.
+
+### New opt-in contract and private bytes
+
+The new plan is `jev-rag-smoke-adapter-operator-plan-v2`, mode
+`ADAPTER_BACKED_TAIL`. Exact fields: schema, mode, p0_plan_sha256,
+invocation_sha256, target, log_type (`Tail`) and parser_contract
+(`jev-rag-smoke-platform-report-v1`). Existing target field constraints are
+unchanged. Existing canonical JSON/hash checks and P0/event/price/policy joins
+run before claim/factory/dispatch. V1 plans still request None and reject
+LogResult; simulate remains SIMULATED_OFFLINE and cannot enter this path.
+
+Tail indexes use `jev-rag-smoke-adapter-operator-index-v2`; Tail request and
+attempt records and transport summaries use their corresponding v2 schemas.
+The factory remains unchanged and lazy; both closed claim and attempt marker
+precede its call. Parameter and wire hooks enforce the selected LogType,
+full ARN/qualifier, synchronous operation, canonical payload and one send.
+
+LogResult is projected before payload reading. Encoded ASCII limit is 5,464 B;
+decoded limit is 4,096 B. The SDK/transport may already have allocated its input;
+this does not bound SDK/transport allocations. Decoding can temporarily produce
+at most 4,098 B from the admitted encoded size; retained decoded bytes are
+capped at 4,096 B, and oversized data is never parsed as a complete tail.
+Strict alphabet/padding validation and canonical base64 re-encoding are required.
+States are NOT_REQUESTED, NOT_RECEIVED, MISSING, NULL, INVALID_TYPE,
+INVALID_ASCII, OVERSIZED_ENCODED, INVALID_BASE64, OVERSIZED_DECODED and DECODED.
+Missing and null are distinct. Invalid non-string values are not serialized.
+For invalid/non-ASCII input, only a bounded UTF8_BACKSLASHREPLACE_PREFIX is kept;
+for oversized ASCII, an ASCII_PREFIX is kept. These hashes bind the labelled
+representation/prefix, not the unretained original. encoded_full_value and
+decoded_full_tail disclose the difference. Empty retained buffers also have
+size/hash bindings, without implying the source was present or empty.
+
+After the existing response.bin, response-metadata.json and transport-result.json,
+all available Tail buffers are published as log-encoded.bin, log-decoded.bin and
+log-evidence.json (jev-rag-smoke-invoke-tail-evidence-v1). Publication is exclusive;
+failed files are omitted from successful bindings and disclosed as potentially
+incomplete. REPORT parsing runs only after all six evidence files publish
+successfully. report-association.json binds the request, retained body, selected
+metadata, encoded and decoded hashes to the same injected SDK response.
+A partial body's hash is a retained-prefix binding, with transport EOF/failure
+state retained; it is not a full-body assertion.
+
+### Parser domain and limited association
+
+TEXT accepts the complete ordered REPORT metric fields, optional Init Duration,
+Status and Error Type; START/END identities and START versions are cross-checked.
+Unknown/tracing suffix formats are unsupported and fail closed rather than being
+repaired. JSON accepts documented platform.report, platform.start and
+platform.runtimeDone identity fields. Required metrics are durationMs,
+billedDurationMs, memorySizeMB and maxMemoryUsedMB; optional initDurationMs and
+restoreDurationMs are validated. Duplicate JSON keys, duplicate REPORTs,
+conflicting IDs/versions and incomplete/malformed platform candidates reject.
+Unknown complete application JSON/plain-text records are not evidence of success.
+Unrecognizable leading cut fragments may be ignored; malformed JSON objects or
+recognizable platform candidates are never selected away in favor of a later
+REPORT. An initial split UTF-8 fragment is tolerated only without recognizable
+platform markers. No fragment is repaired.
+
+Numeric representations are bounded before arithmetic: at most 128 characters,
+64 coefficient digits, Decimal tuple exponent and adjusted magnitude in [-64,64].
+Exponent notation has at most two exponent digits; nonnegative metrics only.
+JSON billed-duration/memory metrics require literal integers (not bool, float or
+scientific notation); integers have at most 64 digits. JSON nesting is capped at
+32. No precision widening, rounding or clamping occurs. These are parser-domain
+restrictions, not an assessment of plausible physical measurements or cost.
+
+Caller run_id/P0 execution_id, SDK RequestId and REPORT execution_request_id stay
+separate. A numeric qualifier must match ExecutedVersion; $LATEST retains the
+observed value and establishes no immutable code identity. A surviving START
+version must match. The report status is JOINED_SAME_INVOKE_RESPONSE only for
+one unambiguous complete REPORT. The direct parser is a pure, unauthenticated
+projection; its caller must publish raw evidence first.
+
+Absent INIT is null/UNAVAILABLE, never a warm-execution inference. Max memory
+may span execution-environment reuse. A tail is not a full log and cannot prove
+absence of errors or additional sends. Platform recognition and local hashes are
+not individual-line attestation: the trust premise is reviewed artifact and
+service-response provenance, not cryptographic authentication. Invented fixtures
+establish no live observation.
+
+FunctionError can retain a joined failure REPORT. Failed body reads may retain
+an association with parent_transport_complete=false; a propagated programming
+error retains raw tail/body evidence without creating a returned confirmation.
+Unknown Invoke outcomes get no execution ID from clocks or SDK RequestId.
+All parent holds remain retained; no resend, polling, log-read call or CloudWatch
+fallback exists. overall evidence_complete, authenticated_observation,
+task_cost_established, experiment_success and authority flags remain false.
+COMPLETE remains local publication only and confirmation still requires the
+actual returned status/index hash and all successful file bindings. Exit 3 or
+an internal COMPLETE string is not confirmation.
+
+### Validation and review handoff
+
+Private receipts:
+`C:\Projects\AWS Project\dependency-acquisition\rag-report-tail-20261009-5be12077`.
+The inspected accepted run_offline.py and 16-entrypoint constructor/provider guard
+are copied there. Guard installation precedes all application/test imports and
+is checked throughout collection/execution. Invented NumPy/FAISS substitutes are
+explicitly disclosed; no native compatibility is tested.
+
+Final eight-suite results: **835 passed** in each environment, **721 prior cases
+plus 114 additions**. Per-file totals (baseline -> final): adapter 105 -> 179;
+adapter-consumer 92 -> 132; factory 69 -> 69; operator 202 -> 202; P0 83 -> 83;
+accounting 31 -> 31; handler 53 -> 53; smoke 86 -> 86. No skips/deselections.
+Both runs report one inherited unknown asyncio_mode warning because plugin
+autoload is disabled. Guard results: zero real SDK constructions, zero refusals,
+zero outbound attempts; two inert import clients and two explicitly disclosed
+inherited serializer-client replacements. The added Lambda serializer probe uses
+installed model/serializer definitions only, with no client or session.
+
+Exact commands (run from this worktree):
+
+```powershell
+& 'C:\Projects\AWS Project\main\.venv\Scripts\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-report-tail-20261009-5be12077\validate.py' test-integrated-v6
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-report-tail-20261009-5be12077\validate.py' test-integrated-v7
+```
+
+Each expands to run_offline.py and all eight tests/test_jev_rag_smoke*.py files
+(factory, adapter-consumer, adapter, operator, preinvoke, accounting, handler,
+smoke), -q -p no:cacheprovider --tb=short and exclusive task basetemp/JUnit outputs.
+Exact expanded commands and log hashes are in the respective *-receipt.json.
+Python 3.13.12/boto3+botocore 1.42.96 is the pinned-definition environment;
+Python 3.11.15/SDK 1.43.14 remains compatibility-only. Actual versions are retained
+in environment/validation receipts. Ruff check/format --check is guarded and
+scoped to the four source/test paths; whitespace checks passed.
+
+Earlier failed attempts are retained: restricted Windows resolution denied the
+unchanged claim-root check (no permissions or validator changes); one parser
+fragment case was tightened; an unintended inherited Euro-fixture encoding
+change was detected and restored to exact original bytes. The receipt wrapper's
+console encoding failure is disclosed separately from its child pytest status.
+Final passing runs use the permitted local execution boundary with all guards
+unchanged. Inherited test-function ASTs are identical except the pure-import
+assertion adds only base64/binascii/decimal standard-library modules; the fake
+wire fixture defaults to the same None header and supports explicit Tail tests.
+
+Independent review should check version/hash binding, log-prefix labels and
+bounds, strict parser ambiguity/numeric domains, evidence-before-interpretation,
+partial-body and FunctionError joins, publication/exception precedence, and
+unchanged claims/holds/confirmation and None-mode behavior. Test passes are Codex
+self-review, not Claude acceptance or live authorization.
+
+Remaining O1-O4/operator gates remain: owner log disclosure/private retention,
+exact artifact/configuration and qualified target, budgets/prices/token bounds
+and infrastructure allowance, credential/endpoint operational controls,
+authenticated request/log observations, complete per-delivered-request accounting,
+confirmed evidence, semantic assessment and qualification. No operational runner
+or owner decisions are added. The Lambda ZIP and handler stay unchanged.
+
+Raw tested source bindings:
+
+- `scripts/jev_rag_smoke_live_adapter.py`: `2be006ea043a8de61c0c91639e1d957301ff4db6d9e2e94ddf9eedd3153dceee` (raw tested working copy; committed-byte hash is separate).
+- `scripts/jev_rag_smoke_operator.py`: `39bef5a63f868e8b1b57501ae5dea0f9db0aadbda62bc37b7658d152bcfe561b` (raw tested working copy; committed-byte hash is separate).
+- `tests/test_jev_rag_smoke_adapter_consumer.py`: `1e62983e74980c8bbb786debce8f099a09f571fedbbfb4e9fec2d3d8ca731b4f` (raw tested working copy; committed-byte hash is separate).
+- `tests/test_jev_rag_smoke_live_adapter.py`: `5cdf5579679eff8edfde69bb059c190f66d56f3783f1d6e8d26b21ceca143e28` (raw tested working copy; committed-byte hash is separate).

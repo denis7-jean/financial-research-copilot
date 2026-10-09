@@ -23,6 +23,10 @@ INDEX_SCHEMA = "jev-rag-smoke-operator-index-v1"
 ADAPTER_PLAN_SCHEMA = "jev-rag-smoke-adapter-operator-plan-v1"
 ADAPTER_INDEX_SCHEMA = "jev-rag-smoke-adapter-operator-index-v1"
 ADAPTER_MODE = "ADAPTER_BACKED"
+TAIL_PLAN_SCHEMA = "jev-rag-smoke-adapter-operator-plan-v2"
+TAIL_INDEX_SCHEMA = "jev-rag-smoke-adapter-operator-index-v2"
+TAIL_MODE = "ADAPTER_BACKED_TAIL"
+TAIL_PARSER_CONTRACT = "jev-rag-smoke-platform-report-v1"
 MAX_LOG_BYTES = 65_536
 RESPONSE_LIMIT = handler.MAX_RESULT_BYTES
 SERIAL_ERRORS = (ValueError, TypeError, UnicodeError, RecursionError, OverflowError)
@@ -50,7 +54,8 @@ ERROR_CODES = frozenset(
     "CLAIM_SERIALIZATION_FAILED EXECUTION_ALREADY_CLAIMED CLAIM_CREATE_FAILED "
     "CLAIM_PUBLICATION_FAILED_RETAINED CLAIM_INTERRUPTED_RETAINED CLAIM_READ_FAILED_RETAINED "
     "PARENT_SERVICE_ERROR PARENT_DEFECT_PROPAGATED OPERATOR_DEFECT_PROPAGATED "
-    "PARENT_ALREADY_ATTEMPTED CLIENT_FACTORY_REQUIRED".split()
+    "PARENT_ALREADY_ATTEMPTED CLIENT_FACTORY_REQUIRED PARENT_LOG_MISSING "
+    "PARENT_LOG_INVALID REPORT_INVALID".split()
 )
 
 
@@ -130,13 +135,20 @@ def _validate(
     require(encode(plan) == plan_raw, "PLAN_NOT_CANONICAL")
     exact(
         plan,
-        {"schema", "mode", "p0_plan_sha256", "invocation_sha256", "target"},
+        {"schema", "mode", "p0_plan_sha256", "invocation_sha256", "target"}
+        | ({"log_type", "parser_contract"} if schema == TAIL_PLAN_SCHEMA else set()),
         "PLAN_INVALID",
     )
     require(
         plan["schema"] == schema and plan["mode"] == mode,
         "PLAN_INVALID",
     )
+    if schema == TAIL_PLAN_SCHEMA:
+        require(
+            plan["log_type"] == "Tail"
+            and plan["parser_contract"] == TAIL_PARSER_CONTRACT,
+            "PLAN_INVALID",
+        )
     require(
         plan["p0_plan_sha256"] == hashes["plan"]
         and plan["invocation_sha256"] == hashes["invocation"],
@@ -203,6 +215,8 @@ def validate_adapter(
     plan_raw, p0_raw, invocation_raw, policy_raw, *, evidence, hashes, root
 ):
     """Adapter plan validation only; a hash match confers no invocation authority."""
+    candidate = parse(plan_raw, handler.MAX_EVENT_BYTES, "PLAN_INVALID")
+    tail = type(candidate) is dict and candidate.get("schema") == TAIL_PLAN_SCHEMA
     return _validate(
         plan_raw,
         p0_raw,
@@ -211,8 +225,8 @@ def validate_adapter(
         evidence=evidence,
         hashes=hashes,
         root=root,
-        schema=ADAPTER_PLAN_SCHEMA,
-        mode=ADAPTER_MODE,
+        schema=TAIL_PLAN_SCHEMA if tail else ADAPTER_PLAN_SCHEMA,
+        mode=TAIL_MODE if tail else ADAPTER_MODE,
     )
 
 
@@ -1081,6 +1095,14 @@ def _publish_adapter(pub, transport):
         pub.record("response-metadata.json", result.metadata),
         pub.record("transport-result.json", summary),
     ]
+    if transport.request["LogType"] == "Tail":
+        published.extend(
+            [
+                pub.raw("log-encoded.bin", result.log_encoded),
+                pub.raw("log-decoded.bin", result.log_decoded),
+                pub.record("log-evidence.json", result.log_summary()),
+            ]
+        )
     for code in result.failures:
         pub.failure(code, "adapter")
     clean = (
@@ -1130,6 +1152,9 @@ def consume_adapter(
         hashes=hashes,
         root=root,
     )
+    tail_mode = plan["schema"] == TAIL_PLAN_SCHEMA
+    mode = TAIL_MODE if tail_mode else ADAPTER_MODE
+    index_schema = TAIL_INDEX_SCHEMA if tail_mode else ADAPTER_INDEX_SCHEMA
     require(callable(client_factory), "CLIENT_FACTORY_REQUIRED")
     try:
         claim = p0.publish_claim(
@@ -1160,12 +1185,12 @@ def consume_adapter(
         ),
         "Qualifier": plan["target"]["qualifier"],
         "InvocationType": "RequestResponse",
-        "LogType": "None",
+        "LogType": "Tail" if tail_mode else "None",
         "Payload": invocation_raw,
     }
     request_record = {
         "schema": "jev-rag-smoke-parent-request-v1",
-        "mode": ADAPTER_MODE,
+        "mode": mode,
         "request": {k: v for k, v in request.items() if k != "Payload"},
         "payload_sha256": hashes["invocation"],
         "payload_size_bytes": len(invocation_raw),
@@ -1174,6 +1199,9 @@ def consume_adapter(
         "owner_authorized": False,
         "invocation_authorized": False,
     }
+    if tail_mode:
+        request_record["schema"] = "jev-rag-smoke-parent-request-v2"
+        request_record["parser_contract"] = plan["parser_contract"]
     assessment = {
         "parent_transport": "NOT_DISPATCHED",
         "handler_structure": "UNESTABLISHED",
@@ -1210,8 +1238,10 @@ def consume_adapter(
         start = clock_sample(utc, monotonic)
         timings["started_utc"] = start["utc"]
         marker = {
-            "schema": "jev-rag-smoke-parent-attempt-v1",
-            "mode": ADAPTER_MODE,
+            "schema": "jev-rag-smoke-parent-attempt-v2"
+            if tail_mode
+            else "jev-rag-smoke-parent-attempt-v1",
+            "mode": mode,
             "state": "FULL_P0_RESERVATIONS_RETAINED_OUTCOME_UNKNOWN",
             "request_sha256": digest(encode(request_record)),
             "started_utc": start["utc"],
@@ -1220,8 +1250,17 @@ def consume_adapter(
         require(pub.record("invocation-attempt.json", marker), "PUBLICATION_FAILED")
         # Both durable files are closed before either injected factory or adapter.
         client = client_factory()
+        options = (
+            {"log_type": "Tail", "parser_contract": plan["parser_contract"]}
+            if tail_mode
+            else {}
+        )
         transport = adapter.ParentTransport(
-            client, plan["target"], original["parent_invocation"], invocation_raw
+            client,
+            plan["target"],
+            original["parent_invocation"],
+            invocation_raw,
+            **options,
         )
         require(transport.request == request, "PARENT_REQUEST_INVALID")
         assessment["parent_transport"] = "UNKNOWN"
@@ -1238,6 +1277,52 @@ def consume_adapter(
                 if normal_return:
                     raise
                 pub.failure("OPERATOR_DEFECT_PROPAGATED", "secondary-evidence")
+        if tail_mode and transport.result.log_state == "DECODED":
+            # Raw bytes and labels must be successfully published before parsing.
+            if all(
+                name in pub.files
+                for name in (
+                    "log-encoded.bin",
+                    "log-decoded.bin",
+                    "log-evidence.json",
+                    "response-metadata.json",
+                    "response.bin",
+                    "transport-result.json",
+                )
+            ):
+                try:
+                    joined = adapter.parse_report(
+                        transport.result.log_decoded,
+                        transport.result.metadata.get("ExecutedVersion"),
+                        plan["target"]["qualifier"],
+                    )
+                    joined.update(
+                        request_sha256=digest(encode(request_record)),
+                        response_sha256=digest(transport.result.body),
+                        response_metadata_sha256=digest(
+                            encode(transport.result.metadata)
+                        ),
+                        log_encoded_sha256=digest(transport.result.log_encoded),
+                        log_decoded_sha256=digest(transport.result.log_decoded),
+                        sdk_request_id=(
+                            transport.result.metadata["ResponseMetadata"].get(
+                                "RequestId"
+                            )
+                            if type(transport.result.metadata.get("ResponseMetadata"))
+                            is dict
+                            else None
+                        ),
+                        parent_transport_complete=clean,
+                    )
+                    if pub.record("report-association.json", joined):
+                        assessment["report_evidence"] = joined["status"]
+                    else:
+                        clean = False
+                except adapter.AdapterError as error:
+                    pub.failure(str(error), "report-parser")
+                    clean = False
+            else:
+                clean = False
         end = clock_sample(utc, monotonic)
         timings["received_utc"] = end["utc"]
         timings["client_elapsed_seconds"] = elapsed(start, end)
@@ -1288,8 +1373,8 @@ def consume_adapter(
         result = transport.result if transport is not None else None
         status = "INTERRUPTED" if pub.failures else "COMPLETE"
         index = {
-            "schema": ADAPTER_INDEX_SCHEMA,
-            "mode": ADAPTER_MODE,
+            "schema": index_schema,
+            "mode": mode,
             "status": status,
             "execution_id": preflight["execution_id"],
             "files": pub.files.copy(),
@@ -1315,8 +1400,8 @@ def consume_adapter(
                 raise
             # No returned confirmation is possible on a propagating defect.
     return {
-        "schema": ADAPTER_INDEX_SCHEMA,
-        "mode": ADAPTER_MODE,
+        "schema": index_schema,
+        "mode": mode,
         "status": status,
         "code": pub.failures[0]["code"] if pub.failures else None,
         "index_failure_code": index_failure,
