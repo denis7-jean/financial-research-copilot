@@ -624,3 +624,207 @@ def test_full_state_required_even_if_foreign_layer_presents_clean_primary(
     result = invoke(bundle)
     assert result["status"] == "INTERRUPTED"
     assert_retained(bundle, result)
+
+
+def caller_context(call, inside):
+    """An unrelated handled caller exception must not affect this invocation."""
+    if inside:
+        try:
+            raise KeyError("invented caller context")
+        except KeyError:
+            return call()
+    return call()
+
+
+@pytest.mark.parametrize("inside", [False, True], ids=["outside", "inside-except"])
+def test_ac1_clean_return_is_context_independent(bundle, inside):
+    result = caller_context(lambda: invoke(bundle), inside)
+    assert result["status"] == "COMPLETE" and not result["failures"]
+    record = assert_retained(bundle, result)
+    assert op.confirm(result, directory(bundle)) == record
+    assert record["assessment"]["handler_structure"] == "STRUCTURAL_SUCCESS"
+
+
+@pytest.mark.parametrize("inside", [False, True], ids=["outside", "inside-except"])
+@pytest.mark.parametrize("case", ["configuration", "sdk", "body", "local", "clock"])
+def test_ac1_handled_failures_have_no_ambient_defect(bundle, monkeypatch, inside, case):
+    client = bundle["client"]
+    code = "CLIENT_CONFIG_INVALID"
+    kwargs = {}
+    if case == "configuration":
+        client.meta.endpoint_url = "https://invented.invalid"
+    if case == "sdk":
+        client.error = sdk.ConnectTimeoutError(endpoint_url=fake.SECRET)
+        code = "PARENT_OUTCOME_UNKNOWN"
+    if case == "body":
+        client.auto_body = False
+        client.stream.error = sdk.ReadTimeoutError(endpoint_url=fake.SECRET)
+        code = "PARENT_OUTCOME_UNKNOWN"
+    if case == "local":
+
+        def factory():
+            bundle["factories"] += 1
+            raise OSError(fake.SECRET)
+
+        bundle["kwargs"]["client_factory"] = factory
+        code = "LOCAL_OPERATION_FAILED"
+    if case == "clock":
+        kwargs = {"utc": lambda: "invalid", "monotonic": lambda: 0.0}
+        code = "CLOCK_INVALID"
+    result = caller_context(lambda: invoke(bundle, **kwargs), inside)
+    assert result["status"] == "INTERRUPTED" and result["code"] == code
+    assert "OPERATOR_DEFECT_PROPAGATED" not in [f["code"] for f in result["failures"]]
+    record = index(bundle, result)
+    assert record["reservation_release"] == "NONE_PARENT_HOLDS_RETAINED"
+    assert not record["assessment"]["evidence_complete"]
+    assert fake.SECRET not in repr(result) + repr(record)
+
+
+@pytest.mark.parametrize("inside", [False, True], ids=["outside", "inside-except"])
+@pytest.mark.parametrize("where", ["index", "client-close"])
+def test_ac1_lone_finalization_defect_propagates_exactly(
+    bundle, monkeypatch, inside, where
+):
+    error = RuntimeError(fake.SECRET)
+    if where == "index":
+        original = op.Publication.record
+
+        def fail_index(pub, filename, value):
+            if filename == "index.json":
+                raise error
+            return original(pub, filename, value)
+
+        monkeypatch.setattr(op.Publication, "record", fail_index)
+        frame = "fail_index"
+    else:
+        bundle["client"].meta.endpoint_url = "https://invented.invalid"
+        bundle["client"].close_error = error
+        frame = "close"
+    with pytest.raises(RuntimeError) as caught:
+        caller_context(lambda: invoke(bundle), inside)
+    assert caught.value is error and any(f.name == frame for f in caught.traceback)
+    assert (directory(bundle) / "claim.json").is_file()
+    assert (directory(bundle) / "invocation-attempt.json").is_file()
+    claim = op.strict_json((directory(bundle) / "claim.json").read_bytes())
+    assert claim["preflight"]["initial_reservations_usd"]["whole_run"] == "9.1"
+    before = {p.name: p.read_bytes() for p in directory(bundle).iterdir()}
+    for filename, raw in before.items():
+        if filename.endswith(".json"):
+            assert fake.SECRET not in raw.decode()
+            assert (
+                "Traceback" not in raw.decode()
+                and str(directory(bundle)) not in raw.decode()
+            )
+    with pytest.raises(op.OperatorError, match="^EXECUTION_ALREADY_CLAIMED$"):
+        caller_context(lambda: invoke(bundle), inside)
+    assert before == {p.name: p.read_bytes() for p in directory(bundle).iterdir()}
+    assert bundle["factories"] == 1
+    assert bundle["client"].calls == (1 if where == "index" else 0)
+
+
+@pytest.mark.parametrize("inside", [False, True], ids=["outside", "inside-except"])
+@pytest.mark.parametrize("primary", ["invoke", "read"])
+@pytest.mark.parametrize("secondary", ["cleanup", "index", "both"])
+def test_ac1_genuine_primary_survives_secondary_finalization(
+    bundle,
+    monkeypatch,
+    inside,
+    primary,
+    secondary,
+):
+    client = bundle["client"]
+    client.auto_body = False
+    error = RuntimeError("invented primary private diagnostic")
+    if primary == "invoke":
+        client.error = error
+    else:
+        client.stream.parts = [b"exact retained partial response"]
+        client.stream.error = error
+    if secondary in ("cleanup", "both"):
+        client.close_error = RuntimeError("invented secondary close diagnostic")
+        if primary == "read":
+            client.stream.close_error = RuntimeError(
+                "invented secondary body diagnostic"
+            )
+    if secondary in ("index", "both"):
+        original = op.Publication.record
+
+        def fail_index(pub, filename, value):
+            if filename == "index.json":
+                raise RuntimeError("invented index diagnostic")
+            return original(pub, filename, value)
+
+        monkeypatch.setattr(op.Publication, "record", fail_index)
+    with pytest.raises(RuntimeError) as caught:
+        caller_context(lambda: invoke(bundle), inside)
+    assert caught.value is error and any(f.name == primary for f in caught.traceback)
+    summary = transport_result(bundle)
+    assert (
+        summary["code"] != "RETURNED"
+        and "PARENT_DEFECT_PROPAGATED" in summary["failures"]
+    )
+    if primary == "read":
+        assert (
+            directory(bundle) / "response.bin"
+        ).read_bytes() == b"exact retained partial response"
+        assert summary["metadata_state"] == "OBJECT_PROJECTION"
+    if secondary == "cleanup":
+        record = op.strict_json((directory(bundle) / "index.json").read_bytes())
+        assert record["status"] == "INTERRUPTED"
+        assert record["reservation_release"] == "NONE_PARENT_HOLDS_RETAINED"
+        assert "OPERATOR_DEFECT_PROPAGATED" in [f["code"] for f in record["failures"]]
+    before = {p.name: p.read_bytes() for p in directory(bundle).iterdir()}
+    claim = op.strict_json(before["claim.json"])
+    assert claim["preflight"]["initial_reservations_usd"]["whole_run"] == "9.1"
+    assert before["invocation-attempt.json"]
+    for filename, raw in before.items():
+        if filename.endswith(".json"):
+            assert "invented primary private diagnostic" not in raw.decode()
+            assert "invented secondary" not in raw.decode()
+            assert "invented index diagnostic" not in raw.decode()
+            assert "Traceback" not in raw.decode()
+            assert str(directory(bundle)) not in raw.decode()
+    with pytest.raises(op.OperatorError, match="^EXECUTION_ALREADY_CLAIMED$"):
+        caller_context(lambda: invoke(bundle), inside)
+    assert before == {p.name: p.read_bytes() for p in directory(bundle).iterdir()}
+    assert client.calls == bundle["factories"] == 1
+
+
+@pytest.mark.parametrize("inside", [False, True], ids=["outside", "inside-except"])
+@pytest.mark.parametrize("handled", ["adapter", "os"])
+def test_ac1_handled_error_bookkeeping_defect_counts_as_escaping(
+    bundle, monkeypatch, inside, handled
+):
+    error = RuntimeError("invented bookkeeping diagnostic")
+    if handled == "adapter":
+        bundle["client"].meta.endpoint_url = "https://invented.invalid"
+        # A secondary close failure must not replace the bookkeeping defect.
+        bundle["client"].close_error = RuntimeError("invented secondary close")
+    else:
+
+        def factory():
+            bundle["factories"] += 1
+            raise OSError(fake.SECRET)
+
+        bundle["kwargs"]["client_factory"] = factory
+    original = op.Publication.failure
+    failures = []
+
+    def bookkeeping(pub, code, *args, **kwargs):
+        failures.append(code)
+        if len(failures) == 1:
+            raise error
+        return original(pub, code, *args, **kwargs)
+
+    monkeypatch.setattr(op.Publication, "failure", bookkeeping)
+    with pytest.raises(RuntimeError) as caught:
+        caller_context(lambda: invoke(bundle), inside)
+    assert caught.value is error and any(
+        f.name == "bookkeeping" for f in caught.traceback
+    )
+    record = op.strict_json((directory(bundle) / "index.json").read_bytes())
+    assert record["status"] == "INTERRUPTED" and record["dispatches"] == 0
+    assert record["reservation_release"] == "NONE_PARENT_HOLDS_RETAINED"
+    assert "OPERATOR_DEFECT_PROPAGATED" in [f["code"] for f in record["failures"]]
+    assert bundle["client"].calls == 0
+    assert "invented bookkeeping diagnostic" not in repr(record)

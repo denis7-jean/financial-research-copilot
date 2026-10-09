@@ -225,3 +225,107 @@ artifact/native/configuration bindings and explicit run authority. Parent claims
 and local hashes are not cryptographic approval or authenticated execution.
 Semantic assessment and qualification remain later and separate. Stop here for
 Claude's independent review; no main merge, push or live action occurred.
+
+## AC-1 correction — invocation-local abnormal-exit state
+
+Correction direct base: `603f8e19c7e3677611d92be7d31af331a14fe20c`, on the same
+isolated branch/worktree. Claude's uncommitted REQUEST CHANGES report remains
+unchanged at raw SHA-256
+`58d40cace7dc44b43af025f82d47dc80451d0f85bb70c7c89397e920fed94117`.
+The four original committed-blob bindings above were verified before editing.
+Only operator source, consumer tests and this appended handoff section change;
+the existing operator tests and all other accepted inputs remain unchanged.
+
+The outer finalizer in `consume_adapter` no longer reads ambient `sys.exc_info`.
+It initializes an invocation-local `completed = False`, then sets it true only
+after all normal work or each handled-error branch's bookkeeping has completed.
+Finalization uses `propagating = not completed`. A defect raised during handled-
+error bookkeeping therefore remains an escaping defect, not a handled failure.
+This is the entire production behavior delta: four added lines, one replacement,
+all inside `consume_adapter`. `sys` remains necessary for existing console output.
+
+A caller's unrelated active `except` block now has no effect: clean runs return
+COMPLETE and confirm; handled failures retain their proper fixed codes without
+an invented OPERATOR_DEFECT_PROPAGATED. A lone unexpected client-close or index-
+publication RuntimeError propagates with its original object and traceback.
+Existing secondary-defect suppression applies only while a primary defect from
+this invocation is escaping. Genuine invoke/read defects remain primary even
+with secondary body/client-close and index-publication defects. Available partial
+bytes/metadata remain preserved, claims and attempt markers remain retained,
+duplicate attempts cannot resend, and parent reservations are not released.
+No broad exception conversion, recovery, authorization or schema change was added.
+
+### Raw-base reproduction and corrected validation
+
+Raw `git show` bytes of the correction base's operator were saved exclusively as
+`base_operator.py`, verified at
+`c5328d64f9679f205445c88d6cdd8add8af2ca384c7e39913d8bfe55b9c2bc28`.
+Fresh invented clients exercise real P0, accepted adapter, handler and inspector
+seams. On each interpreter, **six defect-presence/control probes passed**:
+
+- Clean invocation inside caller `except KeyError`: falsely INTERRUPTED with
+  OPERATOR_DEFECT_PROPAGATED; outside control COMPLETE and confirmed.
+- Lone index-publication RuntimeError: swallowed inside that context; outside
+  control propagated the original object.
+- CLIENT_CONFIG_INVALID followed by client-close RuntimeError: swallowed inside
+  that context; outside control propagated the original object.
+
+These six passing probes establish baseline bug presence, not correction success.
+Corrected tests add 32 cases: inside/outside equivalents; clean confirmation;
+handled config/SDK/read/local/clock failures; both lone finalization defects;
+genuine invoke/read defects with cleanup/index/both secondary failures; and
+defects in both handled-error bookkeeping branches. Assertions cover originating
+traceback frames, no leaked exception messages/tracebacks/private paths in JSON
+diagnostics, exact partial bytes, selected metadata, reservations, persistent
+claims/markers and unchanged evidence on refused duplicate attempts.
+
+| Actual environment | Seven corrected suites | Result |
+|---|---|---|
+| Python 3.11.15 / boto3 and botocore 1.43.14 compatibility | consumer 92, adapter 105, operator 202, P0 83, accounting 31, handler 53, smoke 86 | **652 passed**, no skips |
+| Python 3.13.12 / boto3 and botocore 1.42.96 pinned definitions | same | **652 passed**, no skips |
+
+The existing offline guard stayed active; every run had **zero outbound attempts**.
+Only invented clients/native substitutes and installed SDK definitions were used;
+no real client/session, credential provider, native code or .env file was used.
+The inherited asyncio_mode warning remains, as does the Python 3.13 launcher
+location warning; the actual interpreter was independently recorded. Strict
+claim-root checks were preserved, using normal Windows resolution for synthetic
+scratch roots, with no permission changes. Scoped guarded Ruff lint/format passed
+with 0.15.14 and 0.15.16; unstaged/staged whitespace checks passed.
+
+Private correction receipts:
+`C:\Projects\AWS Project\dependency-acquisition\rag-adapter-consumer-ac1-20261009-4fe726c8`.
+Exact expanded commands, interpreter versions, log hashes and JUnit per-file
+counts are retained there. The equivalent entry commands are:
+
+```powershell
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-adapter-consumer-ac1-20261009-4fe726c8\validate.py' base-311
+& 'C:\Projects\AWS Project\main\.venv\Scripts\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-adapter-consumer-ac1-20261009-4fe726c8\validate.py' base-313
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-adapter-consumer-ac1-20261009-4fe726c8\validate.py' test-integrated-311-final
+& 'C:\Projects\AWS Project\main\.venv\Scripts\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-adapter-consumer-ac1-20261009-4fe726c8\validate.py' test-integrated-313-final
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-adapter-consumer-ac1-20261009-4fe726c8\validate.py' lint
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-adapter-consumer-ac1-20261009-4fe726c8\validate.py' format-check
+& 'C:\Projects\AWS Project\main\.venv\Scripts\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-adapter-consumer-ac1-20261009-4fe726c8\validate.py' lint-v2
+& 'C:\Projects\AWS Project\main\.venv\Scripts\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-adapter-consumer-ac1-20261009-4fe726c8\validate.py' format-check-v2
+git diff --check
+git diff --cached --check
+```
+
+Codex self-review verifies all production AST outside consume_adapter, schemas,
+imports and every inherited consumer-test definition unchanged. Separate Git
+blob versus raw working-copy hashes and exact direct ancestry are in the commit
+receipt; CRLF checkout differences remain distinct, not normalized in protected
+files. This section is appended, preserving the earlier handoff as historical.
+Before/after snapshots verify other worktrees, this review, prior 75-file receipt
+index, readable protected artifacts and sealed evidence unchanged. The 1,084
+inaccessible sealed paths remain disclosed and uncertified; no ACLs changed.
+Cached inputs and both ZIPs were not operated on, and Reviewer v2 was untouched.
+
+Claude's focused AC-1 delta review should check local completion timing, caller-
+context independence, handled-bookkeeping defects, lone-finalization propagation
+and primary-error preservation. A1–A3 and O1–O4 remain nonblocking limitations;
+REPORT/authenticated observation, actual-return discipline, live factory and
+credential/endpoint gates, owner inputs/bounds/budget, exact artifact/configuration,
+operational authorization and qualification remain separate. This is Codex
+implementation/self-review only. Stop for independent acceptance; no live action,
+integration, main merge or push occurred.

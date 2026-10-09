@@ -1195,6 +1195,7 @@ def consume_adapter(
     client = transport = None
     index_hash = index_failure = None
     status = "INTERRUPTED_UNINDEXED"
+    completed = False  # This invocation, never the caller's ambient except state.
     try:
         for name, raw in (
             ("operator-plan.json", plan_raw),
@@ -1251,10 +1252,12 @@ def consume_adapter(
             assessment["handler_structure"] = inspected["status"]
             assessment["model_accounting"] = inspected["model_accounting"]
             assessment["contract_exposure"] = inspected["contract_exposure"]
+        completed = True
     except (OperatorError, adapter.AdapterError) as error:
         code = str(error)
         if not pub.failures or pub.failures[-1]["code"] != code:
             pub.failure(code, "adapter-consumer")
+        completed = True
     except (OSError, KeyboardInterrupt):
         pub.failure(
             "PARENT_OUTCOME_UNKNOWN"
@@ -1262,8 +1265,9 @@ def consume_adapter(
             else "LOCAL_OPERATION_FAILED",
             "adapter-consumer",
         )
+        completed = True
     finally:
-        propagating = sys.exc_info()[0] is not None
+        propagating = not completed
         if propagating:
             pub.failure("OPERATOR_DEFECT_PROPAGATED", "adapter-consumer")
         # A constructed adapter owns closure; if construction rejected, the
