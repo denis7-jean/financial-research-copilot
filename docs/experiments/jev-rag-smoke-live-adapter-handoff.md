@@ -224,3 +224,102 @@ Existing public-price/artifact acceptances do not settle these prerequisites.
 Stop for independent review. No integration, main merge, push, account/network
 calls, actual credentials/.env reads, native execution, builds, uploads, resource
 changes, inference, deployment or Reviewer Protocol v2 changes occurred.
+
+## AD-1 focused offline correction — 2026-10-08
+
+Correction base: `86395acf79c9a1937bad69e69a861d1dadb2175b`, on the existing
+adapter branch. Before editing, HEAD/branch/status, all three original raw Git
+blob and working-copy hashes, and Claude's REQUEST CHANGES report were verified.
+The report SHA-256 remains
+`ae76bf27e223d528b6c207521ec714ff355af61b4942a1df313692b6a9f9b45f`;
+it remains untracked, uncommitted and unchanged. This is Codex implementation and
+self-review, **not independent acceptance**. The earlier validation section and
+receipts describe the original increment and are retained as historical evidence.
+
+### Corrected propagated-defect contract
+
+`Attempt` starts at **NOT_RETURNED**, and transitions explicitly to RETURNED only
+after a normal invocation/read/cleanup path and passing hook checks, with no
+failures. The narrow finalization paths mark **PARENT_DEFECT_PROPAGATED** when an
+unrelated error is escaping. They do not catch/convert that invocation/read error:
+the exact original exception object and traceback propagate. Existing primary
+fixed failures remain primary; the propagated-defect marker and cleanup codes are
+retained in the all-failure list. No hook completion or successful execution is
+invented when the final hook check is skipped by propagation.
+
+Received response metadata is projected through the unchanged bounded validator
+**before** body reading. Valid selected fields now survive a subsequent read
+defect. Invalid metadata still rejects, omits unsafe values and can remain the
+primary fixed failure while the read defect propagates. Exact read-returned byte
+prefixes, counters, EOF state, body/client close flags and re-entry refusal remain.
+
+Resource closure is the only new `except BaseException` boundary. A lone unexpected
+close defect is marked and re-raised with its original traceback. If a primary
+defect is already escaping, a secondary close defect is recorded under the fixed
+close code and does not replace that primary exception. Expected SDK/OS/closed-
+stream close errors retain their prior fixed mapping. This is targeted cleanup
+precedence, not a global catch-all or recovery framework. No raw exception messages
+enter summaries. FunctionError can still accompany RETURNED; neither implies
+experiment success, REPORT completeness, delivery proof or reservation release.
+
+### Reproduction and corrected validation
+
+Fresh invented clients and a real SDK StreamingBody over invented byte streams
+reproduced both counterexamples on raw committed-base source bytes, on both
+environments: approved send then invoke RuntimeError; and `prefix-more` then read
+RuntimeError. Each retained the wrong clean RETURNED/empty failures, while the
+read case failed to project already-received metadata. **Two defect-presence probes
+passed per environment**; these are bug reproductions, not passing corrected tests.
+
+Final corrected validation:
+
+| Environment | Adapter / operator / P0 | Result |
+|---|---|---|
+| Python 3.11.15, SDK 1.43.14 compatibility | 105 / 201 / 83 | **389 passed**, no skips |
+| Python 3.13.12, SDK 1.42.96 pinned definitions | 105 / 201 / 83 | **389 passed**, no skips |
+
+All runs used the existing offline guard, zero outbound attempts, installed SDK
+definitions and invented native substitutes only; no client/session or credential
+provider was constructed. One inherited unknown asyncio_mode warning per integrated
+run remains. Scoped Ruff lint/format and staged whitespace checks pass.
+
+New regressions assert original exception identity and originating traceback frames;
+truthful result and summary; metadata/prefix/EOF preservation; RuntimeError and
+ValueError from invoke/before-hooks; secondary expected/unrelated close defects
+in either/both resources; lone close-defect propagation; existing invalid-metadata
+primary-code retention; and refusal of re-entry without changing any retained state.
+Original positive, FunctionError, SDK mapping, limit, hook and counter cases remain.
+The operator and P0 source/tests are unchanged. No assertions or claim-root checks
+were weakened. Final guarded runs used fresh scratch outside the previously proven
+process-sandbox Path.resolve restriction; no filesystem permissions were changed.
+
+Private correction receipts:
+`C:\Projects\AWS Project\dependency-acquisition\rag-live-adapter-ad1-20261008-49abbe7d`.
+
+```powershell
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-live-adapter-ad1-20261008-49abbe7d\task.py' prepare
+# Existing inspected run_offline.py: the two fresh committed-base probes.
+# validate.py base-311 / base-313: two detections per environment, zero outbound.
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-live-adapter-ad1-20261008-49abbe7d\validate.py' test-final-311
+& 'C:\Projects\AWS Project\main\.venv\Scripts\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-live-adapter-ad1-20261008-49abbe7d\validate.py' test-final-313
+# Both run adapter/operator/P0 -q -p no:cacheprovider --tb=short,
+# with distinct --basetemp/--junitxml paths recorded in their receipts.
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-live-adapter-ad1-20261008-49abbe7d\validate.py' lint
+& 'C:\Users\Desktop\miniconda3\envs\legal-agent\python.exe' -B 'C:\Projects\AWS Project\dependency-acquisition\rag-live-adapter-ad1-20261008-49abbe7d\validate.py' format-check
+```
+
+Before/after snapshots verify the sixteen other worktrees, readable protected
+artifacts and both ZIPs, fixed inputs, fifteen pricing-research files, prior adapter
+receipt bindings, this review and 133 readable sealed files unchanged. The 1,084
+inaccessible sealed paths remain disclosed, not newly certified; no ACLs changed.
+Cached wheels/image and historical evidence were not operated on or altered.
+The commit receipt separately records Git blob and raw working-copy hashes and the
+direct correction parent. Only the three authorized paths are staged/committed.
+
+Claude's focused review should examine the normal-return transition, metadata
+ordering, original traceback/exception preservation, fixed primary/all-failure
+precedence and secondary-close handling. The adapter remains standalone; accepted
+simulate is still SIMULATED_OFFLINE and rejects non-simulation clients. Live
+factory/operator integration, credentials/endpoints, owner inputs/budgets,
+REPORT/observation provenance, completion, artifact/configuration and qualification
+gates remain separate and unresolved. Stop for AD-1 independent delta review.

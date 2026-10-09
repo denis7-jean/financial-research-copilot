@@ -22,7 +22,8 @@ CODES = frozenset(
     "PARENT_REQUEST_INVALID PARENT_SEND_BLOCKED PARENT_SERVICE_ERROR "
     "PARENT_OUTCOME_UNKNOWN PARENT_RESPONSE_INVALID PARENT_BODY_INVALID "
     "PARENT_BODY_TOO_LARGE PARENT_CLOSE_FAILED CLIENT_CLOSE_FAILED "
-    "PARENT_HOOKS_INVALID PARENT_RETRY_INVALID PARENT_VERSION_MISMATCH".split()
+    "PARENT_HOOKS_INVALID PARENT_RETRY_INVALID PARENT_VERSION_MISMATCH "
+    "PARENT_DEFECT_PROPAGATED".split()
 )
 
 
@@ -97,7 +98,7 @@ def canonical_payload(raw):
 class Attempt:
     """Private bytes are never included in repr or sanitized summary."""
 
-    code: str = "RETURNED"
+    code: str = "NOT_RETURNED"
     failures: list[str] = field(default_factory=list)
     dispatch_entries: int = 0
     parameter_checks: int = 0
@@ -112,7 +113,7 @@ class Attempt:
 
     def fail(self, code):
         self.failures.append(code)
-        if self.code == "RETURNED":
+        if self.code in ("NOT_RETURNED", "RETURNED"):
             self.code = code
 
     def summary(self):
@@ -333,6 +334,26 @@ class ParentTransport:
         if invalid:
             self.result.fail("PARENT_RESPONSE_INVALID")
 
+    def _propagated_defect(self):
+        if "PARENT_DEFECT_PROPAGATED" not in self.result.failures:
+            self.result.fail("PARENT_DEFECT_PROPAGATED")
+
+    def _close(self, close, flag, code, *, propagating=False):
+        """Preserve a primary defect; re-raise a lone unexpected close defect."""
+        try:
+            close()
+            setattr(self.result, flag, True)
+        except (*self.transport_errors, OSError, ValueError, KeyboardInterrupt):
+            self.result.fail(code)
+        except BaseException:
+            # Only this resource-close boundary intercepts unrelated errors.
+            # A secondary error must not replace an already-propagating defect.
+            if not propagating:
+                self._propagated_defect()
+            self.result.fail(code)
+            if not propagating:
+                raise
+
     def _read(self, response):
         body = response.get("Payload")
         if not callable(getattr(body, "read", None)) or not callable(
@@ -340,13 +361,10 @@ class ParentTransport:
         ):
             self.result.fail("PARENT_RESPONSE_INVALID")
             if callable(getattr(body, "close", None)):
-                try:
-                    body.close()
-                    self.result.body_closed = True
-                except (*self.transport_errors, OSError, ValueError, KeyboardInterrupt):
-                    self.result.fail("PARENT_CLOSE_FAILED")
+                self._close(body.close, "body_closed", "PARENT_CLOSE_FAILED")
             return
         parts, size = [], 0
+        normal_exit = False
         try:
             while True:
                 part = body.read(min(8192, RESPONSE_LIMIT + 1 - size))
@@ -362,48 +380,63 @@ class ParentTransport:
                     self.result.fail("PARENT_BODY_TOO_LARGE")
                     break
                 size += len(part)
+            normal_exit = True
         except (*self.transport_errors, OSError, ValueError, KeyboardInterrupt):
             self.result.fail("PARENT_OUTCOME_UNKNOWN")
+            normal_exit = True
         finally:
+            if not normal_exit:
+                self._propagated_defect()
             # Preserve bytes even if close fails or an unrelated defect propagates.
             self.result.body = b"".join(parts)
-            try:
-                body.close()
-                self.result.body_closed = True
-            except (*self.transport_errors, OSError, ValueError, KeyboardInterrupt):
-                self.result.fail("PARENT_CLOSE_FAILED")
+            self._close(
+                body.close,
+                "body_closed",
+                "PARENT_CLOSE_FAILED",
+                propagating=not normal_exit,
+            )
 
     def invoke_once(self):
         with self.lock:
             require(not self.used, "PARENT_ALREADY_ATTEMPTED")
             self.used = True
             self.result.dispatch_entries = 1
+        normal_exit = False
         try:
             response = self.client.invoke(**self.request)
             if type(response) is not dict:
                 self.result.fail("PARENT_RESPONSE_INVALID")
             else:
-                self._read(response)
                 self._metadata(response)
+                self._read(response)
+            normal_exit = True
         except AdapterError as error:
             self.result.fail(str(error))
+            normal_exit = True
         except self.service_errors as error:
             self.result.fail("PARENT_SERVICE_ERROR")
             response = getattr(error, "response", None)
             if type(response) is dict:
                 self._metadata(response, service_error=True)
+            normal_exit = True
         except (*self.transport_errors, OSError, KeyboardInterrupt):
             self.result.fail("PARENT_OUTCOME_UNKNOWN")
+            normal_exit = True
         finally:
-            try:
-                self.client.close()
-                self.result.client_closed = True
-            except (*self.transport_errors, OSError, ValueError, KeyboardInterrupt):
-                self.result.fail("CLIENT_CLOSE_FAILED")
+            if not normal_exit:
+                self._propagated_defect()
+            self._close(
+                self.client.close,
+                "client_closed",
+                "CLIENT_CLOSE_FAILED",
+                propagating=not normal_exit,
+            )
         if (
             self.result.parameter_checks != 1
             or self.result.approved_send_callbacks != 1
             or self.failed
         ):
             self.result.fail("PARENT_HOOKS_INVALID")
+        if not self.result.failures:
+            self.result.code = "RETURNED"
         return self.result

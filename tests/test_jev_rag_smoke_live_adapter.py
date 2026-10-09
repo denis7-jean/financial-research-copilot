@@ -645,6 +645,7 @@ def test_invoke_value_error_is_not_globally_hidden():
     with pytest.raises(ValueError, match=SECRET):
         t.invoke_once()
     assert c.closes == 1
+    assert_stopped(t.result, "PARENT_DEFECT_PROPAGATED")
 
 
 def test_installed_sdk_config_and_invoke_serialization_without_client():
@@ -691,3 +692,151 @@ def test_metadata_presence_is_not_fabricated(state):
     assert r.metadata_state == state
     assert ("ResponseMetadata" in r.metadata) == (state == "NULL")
     assert SECRET not in json.dumps(r.metadata)
+
+
+@pytest.mark.parametrize(
+    "stage,exception_type",
+    [
+        ("invoke", RuntimeError),
+        ("read", RuntimeError),
+        ("before-hooks", RuntimeError),
+        ("invoke", ValueError),
+        ("before-hooks", ValueError),
+    ],
+)
+def test_ad1_original_defect_truthful_state_and_reentry(stage, exception_type):
+    from botocore.response import StreamingBody
+
+    error = exception_type(SECRET)
+
+    class BeforeHooks(Client):
+        def invoke(self, **params):
+            self.calls += 1
+            raise error
+
+    c = BeforeHooks() if stage == "before-hooks" else Client()
+    if stage == "read":
+        raw_stream = Stream([b"prefix-", b"more"], error=error)
+        c.response["Payload"] = StreamingBody(raw_stream, 4096)
+    else:
+        c.error = error
+    _, t = bound(c)
+    assert t.result.code == "NOT_RETURNED"
+    with pytest.raises(exception_type) as caught:
+        t.invoke_once()
+    assert caught.value is error
+    names = []
+    trace = caught.value.__traceback__
+    while trace:
+        names.append(trace.tb_frame.f_code.co_name)
+        trace = trace.tb_next
+    assert names[-1] == ("read" if stage == "read" else "invoke")
+    assert t.result.failures == ["PARENT_DEFECT_PROPAGATED"]
+    assert_stopped(t.result, "PARENT_DEFECT_PROPAGATED")
+    assert t.result.summary()["code"] == "PARENT_DEFECT_PROPAGATED"
+    assert t.result.dispatch_entries == c.calls == c.closes == 1
+    assert t.result.client_closed and not t.result.body_eof
+    expected_hooks = 0 if stage == "before-hooks" else 1
+    assert (
+        t.result.parameter_checks
+        == t.result.approved_send_callbacks
+        == c.delivered
+        == expected_hooks
+    )
+    assert t.result.blocked_send_callbacks == 0
+    if stage == "read":
+        assert t.result.body == b"prefix-more" and raw_stream.closes == 1
+        assert t.result.body_closed
+        assert t.result.metadata_state == "OBJECT_PROJECTION"
+        assert t.result.metadata == {
+            "ResponseMetadata": {
+                "RequestId": "invented-sdk-id",
+                "RetryAttempts": 0,
+                "HTTPStatusCode": 200,
+            },
+            "StatusCode": 200,
+            "ExecutedVersion": "7",
+        }
+    else:
+        assert t.result.body == b"" and t.result.metadata_state == "NOT_RECEIVED"
+    before = t.result.summary()
+    with pytest.raises(adapter.AdapterError, match="PARENT_ALREADY_ATTEMPTED"):
+        t.invoke_once()
+    assert t.result.summary() == before and c.calls == 1
+
+
+@pytest.mark.parametrize("where", ["body", "client", "both"])
+@pytest.mark.parametrize("secondary", [RuntimeError, OSError])
+def test_ad1_cleanup_cannot_replace_read_defect(where, secondary):
+    primary = RuntimeError(SECRET)
+    c = Client()
+    c.response["Payload"] = c.stream = Stream([b"received"], error=primary)
+    if where in ("body", "both"):
+        c.stream.close_error = secondary("invented secondary body failure")
+    if where in ("client", "both"):
+        c.close_error = secondary("invented secondary client failure")
+    _, t = bound(c)
+    with pytest.raises(RuntimeError) as caught:
+        t.invoke_once()
+    assert caught.value is primary and caught.value.__context__ is None
+    assert t.result.body == b"received" and not t.result.body_eof
+    expected = ["PARENT_DEFECT_PROPAGATED"]
+    if where in ("body", "both"):
+        expected.append("PARENT_CLOSE_FAILED")
+    if where in ("client", "both"):
+        expected.append("CLIENT_CLOSE_FAILED")
+    assert t.result.code == "PARENT_DEFECT_PROPAGATED" and t.result.failures == expected
+    assert t.result.metadata["ResponseMetadata"]["RequestId"] == "invented-sdk-id"
+    assert c.stream.closes == c.closes == 1
+    assert t.result.body_closed == (where == "client")
+    assert t.result.client_closed == (where == "body")
+    assert_stopped(t.result, "PARENT_DEFECT_PROPAGATED")
+
+
+def test_ad1_invoke_defect_survives_unrelated_client_close_defect():
+    primary = RuntimeError(SECRET)
+    c = Client()
+    c.error = primary
+    c.close_error = RuntimeError("invented close defect")
+    _, t = bound(c)
+    with pytest.raises(RuntimeError) as caught:
+        t.invoke_once()
+    assert caught.value is primary and caught.value.__context__ is None
+    assert t.result.failures == ["PARENT_DEFECT_PROPAGATED", "CLIENT_CLOSE_FAILED"]
+    assert t.result.approved_send_callbacks == c.delivered == c.calls == c.closes == 1
+    assert not t.result.client_closed
+
+
+@pytest.mark.parametrize("where", ["body", "client"])
+def test_ad1_lone_unrelated_close_defect_still_propagates(where):
+    error = RuntimeError(SECRET)
+    c = Client()
+    if where == "body":
+        c.stream.close_error = error
+    else:
+        c.close_error = error
+    _, t = bound(c)
+    with pytest.raises(RuntimeError) as caught:
+        t.invoke_once()
+    assert caught.value is error
+    assert t.result.body == b'{"invented":true}' and t.result.body_eof
+    assert t.result.failures == [
+        "PARENT_DEFECT_PROPAGATED",
+        "PARENT_CLOSE_FAILED" if where == "body" else "CLIENT_CLOSE_FAILED",
+    ]
+    assert t.result.metadata_state == "OBJECT_PROJECTION"
+    assert_stopped(t.result, "PARENT_DEFECT_PROPAGATED")
+
+
+def test_ad1_invalid_metadata_and_read_defect_preserve_primary_fixed_failure():
+    c = Client()
+    c.response["FunctionError"] = SECRET
+    c.response["Payload"] = c.stream = Stream([b"prefix"], error=RuntimeError(SECRET))
+    _, t = bound(c)
+    with pytest.raises(RuntimeError):
+        t.invoke_once()
+    assert t.result.code == "PARENT_RESPONSE_INVALID"
+    assert t.result.failures == ["PARENT_RESPONSE_INVALID", "PARENT_DEFECT_PROPAGATED"]
+    assert t.result.body == b"prefix" and c.stream.closes == c.closes == 1
+    assert "FunctionError" not in t.result.metadata
+    assert SECRET not in json.dumps(t.result.summary()) + json.dumps(t.result.metadata)
