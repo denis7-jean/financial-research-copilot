@@ -519,3 +519,119 @@ def test_expected_local_sdk_read_failure_consumes_attempt():
         value()
     assert sdk.sessions == 1 and not sdk.calls
     fail_again(value)
+
+
+@pytest.mark.parametrize("keylog", [None, "", "invented-keylog-destination"])
+def test_keylog_checked_at_invocation_before_sdk(keylog, monkeypatch, capsys):
+    # Preparation must not consult the variable, including if it is unsafe now.
+    import os
+
+    reads = []
+
+    class Environment(dict):
+        def get(self, key, *args):
+            reads.append(key)
+            assert key == "SSLKEYLOGFILE"
+            return super().get(key, *args)
+
+    environment = Environment()
+    if keylog is not None:
+        environment["SSLKEYLOGFILE"] = keylog
+    sdk = RecordingSDK()
+    value = prepared(sdk)
+    loads = []
+    value._loader = lambda: loads.append("SDK_DEFINITIONS") or sdk
+    with monkeypatch.context() as m:
+        m.setattr(os, "environ", environment)
+        assert not reads
+        if keylog:
+            with pytest.raises(adapter.AdapterError) as caught:
+                value()
+            assert str(caught.value) == "CLIENT_CONFIG_INVALID"
+            assert keylog not in repr(caught.value) + repr(value)
+            assert not loads and sdk.sessions == 0 and not sdk.calls
+        else:
+            assert value() is sdk.client
+            assert sdk.sessions == len(sdk.calls) == len(loads) == 1
+            assert sdk.calls[0][1]["verify"] is True
+            for key, expected in factory._config_args(SETTINGS).items():
+                assert getattr(sdk.calls[0][1]["config"], key) == expected
+        fail_again(value)
+        assert reads == ["SSLKEYLOGFILE"]
+    assert not capsys.readouterr().out
+
+
+def test_keylog_change_after_pure_prepare_and_conservative_ignore_flag(monkeypatch):
+    import sys
+
+    monkeypatch.delenv("SSLKEYLOGFILE", raising=False)
+    sdk = RecordingSDK()
+    value = prepared(sdk)
+    monkeypatch.setenv("SSLKEYLOGFILE", "invented-not-created-keylog")
+    # Construction refuses regardless of the interpreter's ignore flag.
+    monkeypatch.setattr(sys, "flags", SimpleNamespace(ignore_environment=1))
+    with pytest.raises(adapter.AdapterError, match="^CLIENT_CONFIG_INVALID$"):
+        value()
+    assert sdk.sessions == 0 and not sdk.calls
+    monkeypatch.delenv("SSLKEYLOGFILE")
+    fail_again(value)
+
+
+def test_prepare_does_not_read_unsafe_keylog_environment(monkeypatch):
+    import os
+
+    class ForbiddenEnvironment(dict):
+        def get(self, *args, **kwargs):
+            pytest.fail("PREPARATION_ENVIRONMENT_READ")
+
+    with monkeypatch.context() as m:
+        m.setattr(os, "environ", ForbiddenEnvironment())
+        value = factory.prepare(SETTINGS, access_key_id=KEY, secret_access_key=SECRET)
+        assert repr(value) == "LambdaClientFactory(single_use=True)"
+
+
+def test_concurrent_keylog_rejection_claims_once_before_loader(monkeypatch):
+    monkeypatch.setenv("SSLKEYLOGFILE", "invented-concurrent-keylog")
+    sdk = RecordingSDK()
+    value = prepared(sdk)
+    value._loader = lambda: pytest.fail("SDK_REACHED_BEFORE_TLS_REFUSAL")
+    barrier = Barrier(3)
+    outcomes = []
+
+    def call():
+        barrier.wait()
+        try:
+            value()
+        except adapter.AdapterError as error:
+            outcomes.append(str(error))
+
+    threads = [Thread(target=call) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+    assert sorted(outcomes) == ["CLIENT_CONFIG_INVALID", "PARENT_ALREADY_ATTEMPTED"]
+    assert sdk.sessions == 0 and not sdk.calls
+    fail_again(value)
+
+
+def test_consumer_keylog_refusal_retains_claim_and_holds(bundle, monkeypatch):
+    monkeypatch.setenv("SSLKEYLOGFILE", "invented-consumer-keylog")
+    result = consumer.invoke(bundle)
+    record = consumer.index(bundle, result)
+    assert result["status"] == "INTERRUPTED"
+    assert "CLIENT_CONFIG_INVALID" in {row["code"] for row in result["failures"]}
+    assert record["initial_reservations_usd"]["whole_run"] == "9.1"
+    assert record["reservation_release"] == "NONE_PARENT_HOLDS_RETAINED"
+    assert not record["assessment"]["evidence_complete"]
+    assert bundle["sdk"].sessions == bundle["client"].calls == 0
+    before = {p.name: p.read_bytes() for p in consumer.directory(bundle).iterdir()}
+    assert all(b"invented-consumer-keylog" not in data for data in before.values())
+    monkeypatch.delenv("SSLKEYLOGFILE")
+    with pytest.raises(consumer.op.OperatorError, match="^EXECUTION_ALREADY_CLAIMED$"):
+        consumer.invoke(bundle)
+    assert before == {
+        p.name: p.read_bytes() for p in consumer.directory(bundle).iterdir()
+    }

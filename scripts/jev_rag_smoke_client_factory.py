@@ -226,6 +226,11 @@ class _Factory:
         with self._lock:
             adapter.require(not self._used, "PARENT_ALREADY_ATTEMPTED")
             self._used = True
+        # Refusal-only access, after the one-use claim and before SDK loading.
+        # Conservative even under -E: never configure a TLS key-log sink here.
+        import os
+
+        adapter.require(not os.environ.get("SSLKEYLOGFILE"), "CLIENT_CONFIG_INVALID")
         sdk = self._loader()
         adapter.require(
             sdk.boto3_version == SDK_PIN and sdk.botocore_version == SDK_PIN,
