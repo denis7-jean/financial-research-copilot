@@ -15,6 +15,15 @@ from tests import test_jev_rag_smoke_accounting as accounting_tests
 from tests.test_jev_rag_smoke import Events, QUERY, SENTINEL
 
 
+def test_adapter_plan_cannot_enter_legacy_simulation(bundle):
+    plan = operator.strict_json(bundle["args"][0])
+    plan.update(schema=operator.ADAPTER_PLAN_SCHEMA, mode=operator.ADAPTER_MODE)
+    rehash(bundle, 0, "operator", plan)
+    with pytest.raises(operator.OperatorError, match="^PLAN_INVALID$"):
+        invoke(bundle)
+    assert not list(bundle["root"].iterdir()) and bundle["factories"] == 0
+
+
 class Parent:
     simulation_only = True
 

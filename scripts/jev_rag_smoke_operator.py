@@ -1,7 +1,8 @@
 """Offline injected parent seam. No SDK, credentials, live CLI or approval grant.
 
-Only invented simulated transports belong here. Hooks are reviewed checks, not
-a sandbox or authenticated observer. An operational adapter remains unbuilt.
+Simulation and adapter-backed consumption have distinct explicit plan contracts.
+Factories are injected; this module supplies no SDK or credential entry point.
+Hooks and local evidence are not authenticated observers or execution authority.
 """
 
 from datetime import datetime, timezone
@@ -19,6 +20,9 @@ from scripts import jev_rag_smoke_preinvoke as p0
 
 PLAN_SCHEMA = "jev-rag-smoke-operator-plan-v1"
 INDEX_SCHEMA = "jev-rag-smoke-operator-index-v1"
+ADAPTER_PLAN_SCHEMA = "jev-rag-smoke-adapter-operator-plan-v1"
+ADAPTER_INDEX_SCHEMA = "jev-rag-smoke-adapter-operator-index-v1"
+ADAPTER_MODE = "ADAPTER_BACKED"
 MAX_LOG_BYTES = 65_536
 RESPONSE_LIMIT = handler.MAX_RESULT_BYTES
 SERIAL_ERRORS = (ValueError, TypeError, UnicodeError, RecursionError, OverflowError)
@@ -44,7 +48,9 @@ ERROR_CODES = frozenset(
     "CEILING_BINDING_MISMATCH EXPECTED_SOURCE_IMPOSSIBLE HAIKU_CEILING_INSUFFICIENT "
     "TITAN_CEILING_INSUFFICIENT TOTAL_CEILING_INSUFFICIENT CLAIM_ROOT_INVALID "
     "CLAIM_SERIALIZATION_FAILED EXECUTION_ALREADY_CLAIMED CLAIM_CREATE_FAILED "
-    "CLAIM_PUBLICATION_FAILED_RETAINED CLAIM_INTERRUPTED_RETAINED CLAIM_READ_FAILED_RETAINED".split()
+    "CLAIM_PUBLICATION_FAILED_RETAINED CLAIM_INTERRUPTED_RETAINED CLAIM_READ_FAILED_RETAINED "
+    "PARENT_SERVICE_ERROR PARENT_DEFECT_PROPAGATED OPERATOR_DEFECT_PROPAGATED "
+    "PARENT_ALREADY_ATTEMPTED CLIENT_FACTORY_REQUIRED".split()
 )
 
 
@@ -81,7 +87,18 @@ def parse(raw, limit, code):
         raise OperatorError(code) from None
 
 
-def validate(plan_raw, p0_raw, invocation_raw, policy_raw, *, evidence, hashes, root):
+def _validate(
+    plan_raw,
+    p0_raw,
+    invocation_raw,
+    policy_raw,
+    *,
+    evidence,
+    hashes,
+    root,
+    schema,
+    mode,
+):
     """All joins before claims or factories. Separately supplied hashes are not authority."""
     exact(
         hashes,
@@ -117,7 +134,7 @@ def validate(plan_raw, p0_raw, invocation_raw, policy_raw, *, evidence, hashes, 
         "PLAN_INVALID",
     )
     require(
-        plan["schema"] == PLAN_SCHEMA and plan["mode"] == "SIMULATED_OFFLINE",
+        plan["schema"] == schema and plan["mode"] == mode,
         "PLAN_INVALID",
     )
     require(
@@ -165,6 +182,38 @@ def validate(plan_raw, p0_raw, invocation_raw, policy_raw, *, evidence, hashes, 
     )
     require(checked.config["run_id"] == original["run_id"], "RUN_BINDING_MISMATCH")
     return plan, original, preflight, parent
+
+
+def validate(plan_raw, p0_raw, invocation_raw, policy_raw, *, evidence, hashes, root):
+    """Legacy simulation validation; adapter-backed plans cannot enter simulate."""
+    return _validate(
+        plan_raw,
+        p0_raw,
+        invocation_raw,
+        policy_raw,
+        evidence=evidence,
+        hashes=hashes,
+        root=root,
+        schema=PLAN_SCHEMA,
+        mode="SIMULATED_OFFLINE",
+    )
+
+
+def validate_adapter(
+    plan_raw, p0_raw, invocation_raw, policy_raw, *, evidence, hashes, root
+):
+    """Adapter plan validation only; a hash match confers no invocation authority."""
+    return _validate(
+        plan_raw,
+        p0_raw,
+        invocation_raw,
+        policy_raw,
+        evidence=evidence,
+        hashes=hashes,
+        root=root,
+        schema=ADAPTER_PLAN_SCHEMA,
+        mode=ADAPTER_MODE,
+    )
 
 
 def clock_sample(utc, monotonic):
@@ -1018,6 +1067,260 @@ def simulate(
         else None,
         "execution_id": preflight["execution_id"],
         "dispatches": dispatches,
+        "release_authorized": False,
+    }
+
+
+def _publish_adapter(pub, transport):
+    """Private bounded projection, published before any handler interpretation."""
+    result = transport.result
+    summary = result.summary()
+    summary["hook_failed"] = transport.failed
+    published = [
+        pub.raw("response.bin", result.body),
+        pub.record("response-metadata.json", result.metadata),
+        pub.record("transport-result.json", summary),
+    ]
+    for code in result.failures:
+        pub.failure(code, "adapter")
+    clean = (
+        result.code == "RETURNED"
+        and not result.failures
+        and not transport.failed
+        and result.dispatch_entries == 1
+        and result.parameter_checks == 1
+        and result.approved_send_callbacks == 1
+        and result.blocked_send_callbacks == 0
+        and result.body_eof
+        and result.body_closed
+        and result.client_closed
+    )
+    if not clean and not result.failures:
+        pub.failure("PARENT_HOOKS_INVALID", "adapter-state")
+    return all(published) and clean
+
+
+def consume_adapter(
+    plan_raw,
+    p0_raw,
+    invocation_raw,
+    policy_raw,
+    *,
+    evidence,
+    hashes,
+    root,
+    client_factory,
+    utc=lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    monotonic=time.monotonic,
+):
+    """Explicit injected adapter seam. No live CLI, factory or credential defaults.
+
+    Programming defects propagate. Available local evidence is best-effort in
+    that case, never a returned completion confirmation. Parent holds never
+    settle here, even when an inner handler result is structurally acceptable.
+    """
+    from scripts import jev_rag_smoke_live_adapter as adapter
+
+    plan, original, preflight, parent = validate_adapter(
+        plan_raw,
+        p0_raw,
+        invocation_raw,
+        policy_raw,
+        evidence=evidence,
+        hashes=hashes,
+        root=root,
+    )
+    require(callable(client_factory), "CLIENT_FACTORY_REQUIRED")
+    try:
+        claim = p0.publish_claim(
+            p0_raw,
+            policy_raw,
+            evidence=evidence,
+            expected_hashes={
+                key: hashes[key] for key in ("plan", "policy", "haiku", "titan")
+            },
+            root=parent,
+        )
+    except p0.PreinvokeError as error:
+        raise OperatorError(str(error)) from None
+    directory = parent / preflight["execution_id"]
+    pub = Publication(directory)
+    try:
+        claim_size = (directory / "claim.json").stat().st_size
+    except OSError:
+        raise OperatorError("CLAIM_READ_FAILED_RETAINED") from None
+    pub.files["claim.json"] = {
+        "sha256": claim["claim_sha256"],
+        "size_bytes": claim_size,
+    }
+    request = {
+        "FunctionName": (
+            f"arn:aws:lambda:{plan['target']['region']}:{plan['target']['account']}:"
+            f"function:{plan['target']['function_name']}"
+        ),
+        "Qualifier": plan["target"]["qualifier"],
+        "InvocationType": "RequestResponse",
+        "LogType": "None",
+        "Payload": invocation_raw,
+    }
+    request_record = {
+        "schema": "jev-rag-smoke-parent-request-v1",
+        "mode": ADAPTER_MODE,
+        "request": {k: v for k, v in request.items() if k != "Payload"},
+        "payload_sha256": hashes["invocation"],
+        "payload_size_bytes": len(invocation_raw),
+        "input_hashes": hashes,
+        "preflight": preflight,
+        "owner_authorized": False,
+        "invocation_authorized": False,
+    }
+    assessment = {
+        "parent_transport": "NOT_DISPATCHED",
+        "handler_structure": "UNESTABLISHED",
+        "model_accounting": None,
+        "contract_exposure": "UNESTABLISHED",
+        "evidence_complete": False,
+        "experiment_success": False,
+        "semantic_assessment": "UNASSESSED",
+        "task_cost_established": False,
+        "report_evidence": "INCOMPLETE_NOT_CAPTURED",
+        "sdk_request_id_is_execution_id": False,
+        "authenticated_observation": False,
+    }
+    timings = {
+        "started_utc": None,
+        "received_utc": None,
+        "client_elapsed_seconds": None,
+    }
+    client = transport = None
+    index_hash = index_failure = None
+    status = "INTERRUPTED_UNINDEXED"
+    try:
+        for name, raw in (
+            ("operator-plan.json", plan_raw),
+            ("p0-plan.json", p0_raw),
+            ("invocation.json", invocation_raw),
+            ("policy.json", policy_raw),
+            ("haiku-price.json", evidence["haiku"]),
+            ("titan-price.json", evidence["titan"]),
+        ):
+            require(pub.raw(name, raw), "PUBLICATION_FAILED")
+        require(pub.record("request.json", request_record), "PUBLICATION_FAILED")
+        start = clock_sample(utc, monotonic)
+        timings["started_utc"] = start["utc"]
+        marker = {
+            "schema": "jev-rag-smoke-parent-attempt-v1",
+            "mode": ADAPTER_MODE,
+            "state": "FULL_P0_RESERVATIONS_RETAINED_OUTCOME_UNKNOWN",
+            "request_sha256": digest(encode(request_record)),
+            "started_utc": start["utc"],
+            "max_dispatches": 1,
+        }
+        require(pub.record("invocation-attempt.json", marker), "PUBLICATION_FAILED")
+        # Both durable files are closed before either injected factory or adapter.
+        client = client_factory()
+        transport = adapter.ParentTransport(
+            client, plan["target"], original["parent_invocation"], invocation_raw
+        )
+        require(transport.request == request, "PARENT_REQUEST_INVALID")
+        assessment["parent_transport"] = "UNKNOWN"
+        normal_return = False
+        try:
+            transport.invoke_once()
+            normal_return = True
+        finally:
+            # Only this evidence boundary suppresses secondary defects while a
+            # primary invoke/read defect is already propagating. No conversion.
+            try:
+                clean = _publish_adapter(pub, transport)
+            except BaseException:
+                if normal_return:
+                    raise
+                pub.failure("OPERATOR_DEFECT_PROPAGATED", "secondary-evidence")
+        end = clock_sample(utc, monotonic)
+        timings["received_utc"] = end["utc"]
+        timings["client_elapsed_seconds"] = elapsed(start, end)
+        require(clean, "PARENT_RESPONSE_INVALID")
+        assessment["parent_transport"] = "RETURNED"
+        if transport.result.metadata.get("FunctionError") is not None:
+            assessment["handler_structure"] = "FUNCTION_ERROR"
+        else:
+            inspected = inspect_handler(
+                transport.result.body, hashes["policy"], original["run_id"]
+            )
+            assessment["handler_structure"] = inspected["status"]
+            assessment["model_accounting"] = inspected["model_accounting"]
+            assessment["contract_exposure"] = inspected["contract_exposure"]
+    except (OperatorError, adapter.AdapterError) as error:
+        code = str(error)
+        if not pub.failures or pub.failures[-1]["code"] != code:
+            pub.failure(code, "adapter-consumer")
+    except (OSError, KeyboardInterrupt):
+        pub.failure(
+            "PARENT_OUTCOME_UNKNOWN"
+            if transport is not None
+            else "LOCAL_OPERATION_FAILED",
+            "adapter-consumer",
+        )
+    finally:
+        propagating = sys.exc_info()[0] is not None
+        if propagating:
+            pub.failure("OPERATOR_DEFECT_PROPAGATED", "adapter-consumer")
+        # A constructed adapter owns closure; if construction rejected, the
+        # consumer closes the supplied client without masking a primary defect.
+        if (
+            client is not None
+            and transport is None
+            and callable(getattr(client, "close", None))
+        ):
+            try:
+                client.close()
+            except (OSError, ValueError, KeyboardInterrupt):
+                pub.failure("CLIENT_CLOSE_FAILED", "client-close")
+            except BaseException:
+                pub.failure("CLIENT_CLOSE_FAILED", "client-close")
+                if not propagating:
+                    raise
+        result = transport.result if transport is not None else None
+        status = "INTERRUPTED" if pub.failures else "COMPLETE"
+        index = {
+            "schema": ADAPTER_INDEX_SCHEMA,
+            "mode": ADAPTER_MODE,
+            "status": status,
+            "execution_id": preflight["execution_id"],
+            "files": pub.files.copy(),
+            "failures": pub.failures.copy(),
+            "assessment": assessment,
+            "initial_reservations_usd": preflight["initial_reservations_usd"],
+            "reservation_release": "NONE_PARENT_HOLDS_RETAINED",
+            "external_gates": preflight["external_gates"],
+            "timings": timings,
+            "dispatches": result.dispatch_entries if result is not None else 0,
+            "owner_authorized": False,
+            "invocation_authorized": False,
+            "release_authorized": False,
+        }
+        try:
+            if pub.record("index.json", index):
+                index_hash = pub.files["index.json"]["sha256"]
+            else:
+                status = "INTERRUPTED_UNINDEXED"
+                index_failure = pub.failures[-1]["code"]
+        except BaseException:
+            if not propagating:
+                raise
+            # No returned confirmation is possible on a propagating defect.
+    return {
+        "schema": ADAPTER_INDEX_SCHEMA,
+        "mode": ADAPTER_MODE,
+        "status": status,
+        "code": pub.failures[0]["code"] if pub.failures else None,
+        "index_failure_code": index_failure,
+        "failure_count": len(pub.failures),
+        "failures": pub.failures.copy(),
+        "index_sha256": index_hash,
+        "execution_id": preflight["execution_id"],
+        "dispatches": transport.result.dispatch_entries if transport is not None else 0,
         "release_authorized": False,
     }
 
