@@ -170,12 +170,35 @@ def _pytest(tmp_path, *args):
     env.pop("NO_PROXY", None)
     env.pop("PYTEST_ADDOPTS", None)
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", *args],
+        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
+         "-p", "no:logfire", "-p", "no:pytest_logfire", "-q", *args],
         cwd=REPO, env=env, capture_output=True, text=True, timeout=300,
     )
     output = proc.stdout + proc.stderr
     assert not (tmp_path / "must-not-exist.json").exists(), output
     return proc.returncode, output
+
+
+def test_child_pytest_keeps_offline_plugin_policy(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    calls = []
+
+    def captured(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(returncode=0, stdout="invented stdout", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", captured)
+    assert _pytest(tmp_path, EVAL_TESTS) == (0, "invented stdout")
+    argv, options = calls[0]
+    assert argv == [sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
+                    "-p", "no:logfire", "-p", "no:pytest_logfire", "-q", EVAL_TESTS]
+    assert options["cwd"] == REPO
+    assert options["capture_output"] is True and options["timeout"] == 300
+    assert "PYTEST_ADDOPTS" not in options["env"]
+    assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD" not in options["env"]
+    assert options["env"]["PYTHON_DOTENV_DISABLED"] == "1"
+    assert options["env"]["AWS_ACCESS_KEY_ID"] == "unit-test-fake-key"
 
 
 def test_selecting_the_eval_file_alone_is_a_usage_error(tmp_path):
