@@ -997,7 +997,11 @@ class SmokePolicy:
         counts = dict.fromkeys(config["source_counts"], 0)
         for ordinal, row in enumerate(metadata):
             check(
-                type(row) is dict and set(row) == {"chunk_id", "source", "text"},
+                type(row) is dict
+                and set(row) in (
+                    {"chunk_id", "source", "text"},
+                    {"chunk_id", "chunk_preview", "source", "text"},
+                ),
                 "METADATA_INVALID",
             )
             check(
@@ -1007,6 +1011,11 @@ class SmokePolicy:
                 and row["source"] in counts
                 and type(row["text"]) is str
                 and 0 < len(row["text"].encode()) <= config["max_text_bytes"],
+                "METADATA_INVALID",
+            )
+            # Optional preview is non-operational compatibility metadata.
+            check(
+                "chunk_preview" not in row or type(row["chunk_preview"]) is str,
                 "METADATA_INVALID",
             )
             counts[row["source"]] += 1
