@@ -12,3 +12,6 @@ docs/experiments/reviewer-protocol-v2-recovered-records.json -text
 docs/experiments/reviewer-protocol-v2-rule-copy-receipt.json -text
 
 docs/experiments/reviewer-protocol-v2-ledger-reconciliation-lemma.md -text
+
+# Frozen source-only test fixture; preserve the production verifier's exact pin.
+tests/fixtures/reviewer/select_pilot.py.source -text

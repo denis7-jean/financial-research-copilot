@@ -159,16 +159,18 @@ class HaikuRouter:
         # RouterAgent reads BEDROCK_MODEL_ID (default: the pinned model). Fail closed before any client exists.
         _check_pinned_model(os.environ.get("BEDROCK_MODEL_ID", HAIKU_MODEL_ID))
         RouterAgent = _import_router_agent()
-        if bedrock_client is not None:
-            with _patched_boto3_client(bedrock_client):
+        # RouterAgent also calls load_dotenv in __init__; keep both boundaries disabled.
+        with _dotenv_disabled():
+            if bedrock_client is not None:
+                with _patched_boto3_client(bedrock_client):
+                    self.agent = RouterAgent()
+                self.live = False
+            else:
+                os.environ["AWS_MAX_ATTEMPTS"] = "1"  # one billed request per routed call: no silent SDK retries
                 self.agent = RouterAgent()
-            self.live = False
-        else:
-            os.environ["AWS_MAX_ATTEMPTS"] = "1"  # one billed request per routed call: no silent SDK retries
-            self.agent = RouterAgent()
-            if self.agent._client.meta.config.retries.get("total_max_attempts") != 1:
-                raise RuntimeError("the Bedrock client would retry; refusing a live run")
-            self.live = True
+                if self.agent._client.meta.config.retries.get("total_max_attempts") != 1:
+                    raise RuntimeError("the Bedrock client would retry; refusing a live run")
+                self.live = True
         _check_pinned_model(self.agent._model_id)
         self.model_id = self.agent._model_id
         self.reservation = reservation

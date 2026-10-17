@@ -24,11 +24,31 @@ from dotenv import load_dotenv
 
 from eval import test_llm_judge
 from tests import offline_guard
-from tests.conftest import NetworkBlockedError
+from tests.conftest import NetworkBlockedError, isolated_blocked_requests
 
 REPO = Path(__file__).resolve().parents[1]
 EVAL_TESTS = "eval/test_llm_judge.py"
 LIVE_TESTS = 5  # llm-marked tests in eval/test_llm_judge.py
+
+
+def test_attempt_logs_are_isolated_and_retained_even_on_failure(monkeypatch):
+    previous = ["invented:earlier-test"]
+    monkeypatch.setattr(offline_guard, "blocked_requests", previous)
+    with pytest.raises(RuntimeError, match="invented failure"):
+        with isolated_blocked_requests():
+            assert offline_guard.is_installed()
+            assert offline_guard.blocked_requests == []
+            with pytest.raises(NetworkBlockedError):
+                offline_guard._block("invented:current-test", "synthetic guard check")
+            assert offline_guard.blocked_requests == ["invented:current-test"]
+            assert previous == ["invented:earlier-test"]
+            raise RuntimeError("invented failure")
+    assert offline_guard.blocked_requests is previous
+    assert previous == ["invented:earlier-test", "invented:current-test"]
+    with isolated_blocked_requests():
+        assert offline_guard.blocked_requests == []
+    assert offline_guard.blocked_requests is previous
+    assert previous == ["invented:earlier-test", "invented:current-test"]
 
 
 def test_guard_is_installed_for_the_offline_session():

@@ -273,7 +273,7 @@ def test_an_injected_real_transport_is_refused():
 def test_authorization_is_checked_before_app_code_is_imported(monkeypatch):
     import sys
 
-    monkeypatch.delitem(sys.modules, "app.agents.router")
+    monkeypatch.delitem(sys.modules, "app.agents.router", raising=False)
     with pytest.raises(safety.LiveCallNotAuthorized):
         HaikuRouter()
     with pytest.raises(safety.LiveCallNotAuthorized):
@@ -287,12 +287,26 @@ def test_router_agent_is_imported_with_dotenv_disabled(monkeypatch):
     import dotenv
 
     seen = []
-    monkeypatch.delitem(sys.modules, "app.agents.router")
+    monkeypatch.delitem(sys.modules, "app.agents.router", raising=False)
     monkeypatch.delenv("PYTHON_DOTENV_DISABLED", raising=False)
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: seen.append(os.environ.get("PYTHON_DOTENV_DISABLED")))
     HaikuRouter(bedrock_client=SimulatedBedrock(LABELS, 1))
-    assert seen == ["1"]  # the module-level load_dotenv() ran with loading disabled
+    assert seen == ["1", "1"]  # module import and constructor both disable loading
     assert "PYTHON_DOTENV_DISABLED" not in os.environ  # and the setting was restored afterwards
+
+
+def test_router_construction_failure_restores_dotenv_setting(monkeypatch):
+    from experiments.router_bench import routers
+
+    def failing_constructor():
+        assert os.environ["PYTHON_DOTENV_DISABLED"] == "1"
+        raise RuntimeError("invented construction failure")
+
+    monkeypatch.delenv("PYTHON_DOTENV_DISABLED", raising=False)
+    monkeypatch.setattr(routers, "_import_router_agent", lambda: failing_constructor)
+    with pytest.raises(RuntimeError, match="invented construction failure"):
+        HaikuRouter(bedrock_client=SimulatedBedrock(LABELS, 1))
+    assert "PYTHON_DOTENV_DISABLED" not in os.environ
 
 
 # --- Credential exposure (audit findings 7 and 8) ---------------------------------------------------

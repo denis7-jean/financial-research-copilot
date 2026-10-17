@@ -7,18 +7,34 @@ fails loudly with NetworkBlockedError instead of reaching AWS.
 """
 import io
 import json
+from contextlib import contextmanager
 
 import pytest
 
 from tests.offline_guard import NetworkBlockedError  # noqa: F401  (re-exported for tests)
+from tests import offline_guard
 
 from app import observability
+
+
+@contextmanager
+def isolated_blocked_requests():
+    """Give each test its own attempt log, retaining every entry for the summary."""
+    session_attempts = offline_guard.blocked_requests
+    test_attempts = []
+    offline_guard.blocked_requests = test_attempts
+    try:
+        yield
+    finally:
+        session_attempts.extend(test_attempts)
+        offline_guard.blocked_requests = session_attempts
 
 
 @pytest.fixture(autouse=True)
 def _fresh_process_state():
     observability.reset_cold_start()
-    yield
+    with isolated_blocked_requests():
+        yield
 
 
 class FakeBedrock:

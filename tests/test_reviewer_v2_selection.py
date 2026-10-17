@@ -44,10 +44,13 @@ def bound_fixture(root, rows=None):
     # Read frozen source code only, never its data or execute its selector.
     # External, frozen evidence is not a file in the executing checkout. A
     # nonstandard test workspace can supply its location, never a different pin.
-    evidence_root = Path(os.environ.get("REVIEWER_TEST_EVIDENCE_ROOT", s.SOURCE_ROOT.parent))
-    target.write_bytes(verified_bytes(
-        evidence_root / "heldout-external/pilot-v1/select_pilot.py", s.SOURCE_SHA256,
-    ))
+    evidence_root = os.environ.get("REVIEWER_TEST_EVIDENCE_ROOT")
+    historical_source = (
+        Path(evidence_root) / "heldout-external/pilot-v1/select_pilot.py"
+        if evidence_root is not None
+        else Path(__file__).parent / "fixtures/reviewer/select_pilot.py.source"
+    )
+    target.write_bytes(verified_bytes(historical_source, s.SOURCE_SHA256))
     artifacts = {}
     for name, raw in (
         ("population", b"".join(canonical({k: row[k] for k in s.FIELDS}) for row in rows)),
