@@ -153,12 +153,36 @@ def assert_stopped(result, code):
     assert SECRET not in json.dumps(summary) + repr(result)
 
 
-def test_pure_import_source_and_fresh_execution(monkeypatch):
+def fresh_execution_with_tripwires(monkeypatch, raw, path):
     import builtins
     import os
     import boto3
     import dotenv
 
+    def forbidden(*args, **kwargs):
+        raise AssertionError("side effect")
+
+    class NoEnvironment(dict):
+        __getitem__ = get = __contains__ = forbidden
+
+    original = builtins.__import__
+
+    def checked(name, *args, **kwargs):
+        assert not name.startswith(("boto3", "botocore", "app", "dotenv"))
+        return original(name, *args, **kwargs)
+
+    # Undo every global before pytest/plugin reporting, even if compile/exec fails.
+    with monkeypatch.context() as tripwires:
+        tripwires.setattr(boto3, "client", forbidden)
+        tripwires.setattr(boto3, "Session", forbidden)
+        tripwires.setattr(dotenv, "load_dotenv", forbidden)
+        tripwires.setattr(os, "getenv", forbidden)
+        tripwires.setattr(os, "environ", NoEnvironment())
+        tripwires.setattr(builtins, "__import__", checked)
+        exec(compile(raw, str(path), "exec"), {"__name__": "invented_import"})
+
+
+def test_pure_import_source_and_fresh_execution(monkeypatch):
     path = Path(adapter.__file__)
     raw = path.read_text()
     tree = ast.parse(raw)
@@ -179,26 +203,40 @@ def test_pure_import_source_and_fresh_execution(monkeypatch):
         for n in imports
     )
 
-    def forbidden(*args, **kwargs):
-        raise AssertionError("side effect")
+    fresh_execution_with_tripwires(monkeypatch, raw, path)
 
-    monkeypatch.setattr(boto3, "client", forbidden)
-    monkeypatch.setattr(boto3, "Session", forbidden)
-    monkeypatch.setattr(dotenv, "load_dotenv", forbidden)
-    monkeypatch.setattr(os, "getenv", forbidden)
 
-    class NoEnvironment(dict):
-        __getitem__ = get = __contains__ = forbidden
+@pytest.mark.parametrize("raw,error", [
+    ("def invalid(:", SyntaxError),
+    ("raise RuntimeError('invented failure')", RuntimeError),
+    ("import boto3", AssertionError),
+    ("import botocore", AssertionError),
+    ("import app", AssertionError),
+    ("import dotenv", AssertionError),
+    ("import os; os.getenv('CI')", AssertionError),
+    ("import os; os.environ.get('CI')", AssertionError),
+    ("import os; os.environ['CI']", AssertionError),
+    ("import os; 'CI' in os.environ", AssertionError),
+    ("import sys; sys.modules['boto3'].client('lambda')", AssertionError),
+    ("import sys; sys.modules['boto3'].Session()", AssertionError),
+    ("import sys; sys.modules['dotenv'].load_dotenv()", AssertionError),
+])
+def test_fresh_execution_restores_all_globals_on_failure(monkeypatch, raw, error):
+    import builtins
+    import os
+    import boto3
+    import dotenv
 
-    monkeypatch.setattr(os, "environ", NoEnvironment())
-    original = builtins.__import__
+    def globals_under_test():
+        return (builtins.__import__, os.environ, os.getenv,
+                boto3.client, boto3.Session, dotenv.load_dotenv)
 
-    def checked(name, *args, **kwargs):
-        assert not name.startswith(("boto3", "botocore", "app", "dotenv"))
-        return original(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", checked)
-    exec(compile(raw, str(path), "exec"), {"__name__": "invented_import"})
+    before = globals_under_test()
+    with pytest.raises(error):
+        fresh_execution_with_tripwires(monkeypatch, raw, "invented_import.py")
+    assert all(actual is expected for actual, expected in zip(
+        globals_under_test(), before, strict=True,
+    ))
 
 
 def test_positive_and_exact_request():

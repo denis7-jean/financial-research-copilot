@@ -23,6 +23,9 @@ jobs:
         run: python -B -m pytest tests/test_lambda_package.py -q
   offline:
     runs-on: ubuntu-latest
+    env:
+      # Block only unrelated telemetry plugins; keep async and conftest discovery.
+      PYTEST_ADDOPTS: "-p no:logfire -p no:pytest_logfire"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -33,7 +36,22 @@ jobs:
         run: pip install -r requirements.txt
       - name: Offline guarded lint
         run: python -B -c "from tests.offline_guard import install; install(); import runpy; runpy.run_module('ruff', run_name='__main__')" check conftest.py app/ eval/ tests/ scripts/ experiments/
+      - name: Verify installed offline pytest plugin entry points
+        run: |
+          python -B - <<'PY'
+          from importlib.metadata import distribution
+          expected = {
+              "logfire": {"logfire": "logfire.testing", "pytest_logfire": "logfire._internal.integrations.pytest"},
+              "pytest-asyncio": {"asyncio": "pytest_asyncio.plugin"},
+              "anyio": {"anyio": "anyio.pytest_plugin"},
+          }
+          for name, required in expected.items():
+              dist = distribution(name)
+              actual = {ep.name: ep.value for ep in dist.entry_points if ep.group == "pytest11"}
+              print(name, dist.version, actual)
+              assert actual == required, (name, actual, required)
+          PY
       - name: Guarded synthetic regressions
-        run: python -B -m pytest tests/ -m "not llm and not integration" -k "not test_accepted_population_regression" -q
+        run: python -B -m pytest --trace-config tests/ -m "not llm and not integration" -k "not test_accepted_population_regression" -q
       - name: Synthetic comparison smoke
         run: python -B -m experiments.jev_candidate.smoke
