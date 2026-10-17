@@ -501,7 +501,7 @@ def test_normative_document_raw_hash_and_joins(tmp_path, kind, code):
 def test_mechanical_contract_matches_normative_literal_list():
     contract = e.rule_contract("eligibility_specification")
     document = (
-        s.SOURCE_ROOT / "main/docs/experiments/reviewer-protocol-v2-current-rules-v1.md"
+        s.repository_source_path("main/docs/experiments/reviewer-protocol-v2-current-rules-v1.md")
     ).read_text(encoding="utf-8")
     section = document.split("Count is 42:", 1)[1].split("**Algorithm:**", 1)[0]
     literals = [

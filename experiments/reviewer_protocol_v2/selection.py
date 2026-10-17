@@ -32,7 +32,20 @@ BUNDLE_PATHS = (
     PREFIX + "eligibility.py", PREFIX + "similarity.py", PREFIX + "selection.py",
     PREFIX + "packet_serialization.py",
 )
-SOURCE_ROOT = Path(__file__).resolve().parents[3]
+# Manifest keys retain their historical "main/" namespace. Physical sources
+# belong to this checkout, which need not itself be named "main".
+SOURCE_ROOT = Path(__file__).resolve().parents[2]
+
+
+def repository_source_path(relative):
+    """Resolve a logical repository binding, never an external evidence path."""
+    require(type(relative) is str and "\\" not in relative and ":" not in relative,
+            "repository_source_path")
+    parts = relative.split("/")
+    require(len(parts) > 1 and parts[0] == "main"
+            and all(p not in {"", ".", ".."} for p in parts),
+            "repository_source_path")
+    return contained(SOURCE_ROOT, "/".join(parts[1:]))
 
 
 def select(*args, **kwargs):
@@ -98,7 +111,7 @@ def runtime_binding():
 
 
 def selection_bundle():
-    files = {p: sha_bytes((SOURCE_ROOT / p).read_bytes()) for p in BUNDLE_PATHS}
+    files = {p: sha_bytes(repository_source_path(p).read_bytes()) for p in BUNDLE_PATHS}
     return {"files": files, "sha256": sha_bytes(canonical(files))}
 
 
@@ -161,7 +174,7 @@ def _verify_input_binding(root, binding, expected_sha256):
         exact_keys(code[name], ("path", "sha256"))
         require(code[name]["path"] == PREFIX + filename, "module_path")
         file_binding(root, code[name])
-        require(code[name]["sha256"] == sha_bytes((SOURCE_ROOT / (PREFIX + filename)).read_bytes()),
+        require(code[name]["sha256"] == sha_bytes(repository_source_path(PREFIX + filename).read_bytes()),
                 "executing_module_hash")
     historical_raw = read_file_binding(root, code["historical_similarity_source"])
     historical = bound_path(root, code["historical_similarity_source"]["path"])

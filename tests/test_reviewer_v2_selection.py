@@ -2,14 +2,18 @@
 
 import copy
 import json
+import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 from experiments.reviewer_protocol_v2 import selection as s
-from experiments.reviewer_protocol_v2.common import ProtocolError, canonical, question_hash, sha_bytes
+from experiments.reviewer_protocol_v2.common import (
+    ProtocolError, canonical, question_hash, sha_bytes, verified_bytes,
+)
 
 
 def synthetic_rows(extra=0):
@@ -33,12 +37,17 @@ def bound_fixture(root, rows=None):
     for relative in s.BUNDLE_PATHS:
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(s.SOURCE_ROOT / relative, target)
+        shutil.copyfile(s.repository_source_path(relative), target)
     historical = "heldout-external/synthetic/select_pilot.py"
     target = root / historical
     target.parent.mkdir(parents=True, exist_ok=True)
     # Read frozen source code only, never its data or execute its selector.
-    shutil.copyfile(s.SOURCE_ROOT / "heldout-external/pilot-v1/select_pilot.py", target)
+    # External, frozen evidence is not a file in the executing checkout. A
+    # nonstandard test workspace can supply its location, never a different pin.
+    evidence_root = Path(os.environ.get("REVIEWER_TEST_EVIDENCE_ROOT", s.SOURCE_ROOT.parent))
+    target.write_bytes(verified_bytes(
+        evidence_root / "heldout-external/pilot-v1/select_pilot.py", s.SOURCE_SHA256,
+    ))
     artifacts = {}
     for name, raw in (
         ("population", b"".join(canonical({k: row[k] for k in s.FIELDS}) for row in rows)),
@@ -296,7 +305,7 @@ import sys
 from experiments.reviewer_protocol_v2 import selection as s, packet_serialization
 loaded = {m.__file__ for name, m in sys.modules.items()
           if name == "experiments" or name.startswith("experiments.")}
-expected = {str(s.SOURCE_ROOT / p) for p in s.BUNDLE_PATHS}
+expected = {str(s.repository_source_path(p)) for p in s.BUNDLE_PATHS}
 assert loaded == expected, "unbound repository dependency"
 '''
     result = subprocess.run([sys.executable, "-B", "-c", program], capture_output=True, text=True)

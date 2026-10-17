@@ -14,7 +14,7 @@ from experiments.reviewer_protocol_v2.ledger_reconciliation import (
     verify_reconciliation,
 )
 from experiments.reviewer_protocol_v2.selection import (
-    SOURCE_ROOT,
+    repository_source_path,
     STRATUM_ENTRIES,
     exact_keys,
     hex256,
@@ -641,7 +641,7 @@ def freeze_roles(roles, values, history, current, read):
     exact_keys(tests["tests"], TEST_PATHS, "test_coverage_set")
     for path, digest in tests["tests"].items():
         raw = read(dict(path=path, sha256=digest))
-        require(raw == (SOURCE_ROOT / path).read_bytes(), "executing_test_binding")
+        require(raw == repository_source_path(path).read_bytes(), "executing_test_binding")
     selection_specification(values["selection_specification"])
     policy = object_header(
         values["definitive_heldout_exclusion_policy"],

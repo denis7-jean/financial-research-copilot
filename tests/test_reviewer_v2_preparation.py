@@ -40,7 +40,7 @@ def fixture(root, mutate=None, historical_eligibility=None):
     # Synthetic positive compatibility uses the corrected eligibility source;
     # this is invented history, not a claim about original audit execution.
     sources["eligibility.py"] = (
-        s.SOURCE_ROOT / (s.PREFIX + "eligibility.py")
+        s.repository_source_path(s.PREFIX + "eligibility.py")
     ).read_bytes()
 
     if historical_eligibility is not None:
@@ -122,7 +122,7 @@ def fixture(root, mutate=None, historical_eligibility=None):
     binding["code"]["ledger_audit_implementation_sha256"] = historical_digest
     executing = {}
     for path in p.VERIFICATION_BUNDLE_PATHS:
-        raw = (s.SOURCE_ROOT / path).read_bytes()
+        raw = (s.repository_source_path(path)).read_bytes()
         put(path, raw)
         executing[path] = raw
     return dict(
@@ -562,10 +562,10 @@ builtins.open = fail
 Path.read_bytes = fail
 Path.write_bytes = fail
 from experiments.reviewer_protocol_v2 import production_preparation as p
-from experiments.reviewer_protocol_v2.selection import SOURCE_ROOT
+from experiments.reviewer_protocol_v2.selection import repository_source_path
 assert os.environ == before
 loaded = {m.__file__ for n,m in sys.modules.items() if n == "experiments" or n.startswith("experiments.")}
-assert loaded == {str(SOURCE_ROOT/x) for x in p.VERIFICATION_BUNDLE_PATHS}
+assert loaded == {str(repository_source_path(x)) for x in p.VERIFICATION_BUNDLE_PATHS}
 assert not any(n.split(".")[0] in {"boto3","botocore","dotenv","httpx"} for n in sys.modules)
 """
     result = subprocess.run(

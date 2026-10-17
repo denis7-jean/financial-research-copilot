@@ -18,7 +18,7 @@ from experiments.reviewer_protocol_v2.ledger_adoption import (
 )
 from experiments.reviewer_protocol_v2.selection import (
     PREFIX,
-    SOURCE_ROOT,
+    repository_source_path,
     STRATUM_ENTRIES,
     SEED,
     bound_path,
@@ -64,12 +64,12 @@ def _executing_sources(root, sources):
             module is not None
             and module.__spec__ is not None
             and Path(module.__spec__.origin).resolve()
-            == (SOURCE_ROOT / path).resolve(),
+            == repository_source_path(path),
             "executing_source_origin",
         )
         require(
             type(raw) is bytes
-            and raw == (SOURCE_ROOT / path).read_bytes()
+            and raw == repository_source_path(path).read_bytes()
             and raw == bound_path(root, path).read_bytes(),
             "executing_source_mismatch",
         )

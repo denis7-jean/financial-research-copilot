@@ -272,7 +272,7 @@ def complete_fixture(root, mutate=None, historical_eligibility=None):
     )
     test_hashes = {}
     for test in e.TEST_PATHS:
-        raw = (s.SOURCE_ROOT / test).read_bytes()
+        raw = (s.repository_source_path(test)).read_bytes()
         target = root / test
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(raw)

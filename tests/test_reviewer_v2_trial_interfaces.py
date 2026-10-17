@@ -12,7 +12,7 @@ from experiments.reviewer_protocol_v2 import (
 )
 from experiments.reviewer_protocol_v2.common import ProtocolError, canonical, sha_bytes
 from experiments.reviewer_protocol_v2.packet_serialization import build_external_outputs
-from experiments.reviewer_protocol_v2.selection import SOURCE_ROOT
+from experiments.reviewer_protocol_v2.selection import repository_source_path
 from tests.offline_guard import NetworkBlockedError
 from tests.test_reviewer_v2_controls import control_fixture
 from tests.test_reviewer_v2_selection import synthetic_rows
@@ -279,8 +279,8 @@ from experiments.reviewer_protocol_v2 import trial_interfaces as t
 assert dict(os.environ) == before
 loaded = {m.__file__ for name,m in sys.modules.items()
           if name == "experiments" or name.startswith("experiments.")}
-from experiments.reviewer_protocol_v2.selection import SOURCE_ROOT
-assert loaded == {str(SOURCE_ROOT / p) for p in t.INTERFACE_BUNDLE_PATHS}
+from experiments.reviewer_protocol_v2.selection import repository_source_path
+assert loaded == {str(repository_source_path(p)) for p in t.INTERFACE_BUNDLE_PATHS}
 assert not any(n.split(".")[0] in {"boto3","botocore","dotenv","httpx"} for n in sys.modules)
 """
     result = subprocess.run(
@@ -288,7 +288,7 @@ assert not any(n.split(".")[0] in {"boto3","botocore","dotenv","httpx"} for n in
     )
     assert result.returncode == 0, result.stdout + result.stderr
     bundle = t.interface_bundle(
-        {p: (SOURCE_ROOT / p).read_bytes() for p in t.INTERFACE_BUNDLE_PATHS}
+        {p: (repository_source_path(p)).read_bytes() for p in t.INTERFACE_BUNDLE_PATHS}
     )
     assert len(bundle["files"]) == 10
 

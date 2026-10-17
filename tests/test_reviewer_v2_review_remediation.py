@@ -62,7 +62,7 @@ def test_owner_and_lazy_dependency_closure(tmp_path):
         and m.__file__
     }
     expected = {
-        str((s.SOURCE_ROOT / path).resolve()) for path in p.VERIFICATION_BUNDLE_PATHS
+        str((s.repository_source_path(path)).resolve()) for path in p.VERIFICATION_BUNDLE_PATHS
     }
     assert expected <= loaded
     assert {

@@ -13,7 +13,7 @@ from experiments.reviewer_protocol_v2.analysis import analyze_external
 from experiments.reviewer_protocol_v2.common import ProtocolError, canonical, sha_bytes
 from experiments.reviewer_protocol_v2.control_serialization import records_bytes, schema
 from experiments.reviewer_protocol_v2.packet_serialization import build_external_outputs
-from experiments.reviewer_protocol_v2.selection import SOURCE_ROOT
+from experiments.reviewer_protocol_v2.selection import repository_source_path
 from tests.offline_guard import NetworkBlockedError
 from tests.test_reviewer_v2_selection import synthetic_rows
 
@@ -351,10 +351,10 @@ builtins.open = fail
 Path.read_bytes = fail
 Path.write_bytes = fail
 from experiments.reviewer_protocol_v2 import owner_audit as a
-from experiments.reviewer_protocol_v2.selection import SOURCE_ROOT
+from experiments.reviewer_protocol_v2.selection import repository_source_path
 assert os.environ == before
 loaded = {m.__file__ for n,m in sys.modules.items() if n == "experiments" or n.startswith("experiments.")}
-assert loaded == {str(SOURCE_ROOT/p) for p in a.OWNER_BUNDLE_PATHS}
+assert loaded == {str(repository_source_path(p)) for p in a.OWNER_BUNDLE_PATHS}
 assert not any(n.split(".")[0] in {"boto3","botocore","dotenv","httpx"} for n in sys.modules)
 """
     result = subprocess.run(
@@ -364,7 +364,7 @@ assert not any(n.split(".")[0] in {"boto3","botocore","dotenv","httpx"} for n in
     assert (
         len(
             a.owner_bundle(
-                {p: (SOURCE_ROOT / p).read_bytes() for p in a.OWNER_BUNDLE_PATHS}
+                {p: (repository_source_path(p)).read_bytes() for p in a.OWNER_BUNDLE_PATHS}
             )["files"]
         )
         == 12
