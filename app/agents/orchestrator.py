@@ -86,8 +86,18 @@ class CopilotOrchestrator:
             if configuration.provider == "haiku" and jev_transport is None
             else build_router(configuration, jev_transport=jev_transport)
         )
-        self._qa = QAAgent()
-        self._summarizer = SummarizerAgent()
+        try:
+            self._qa = QAAgent()
+            self._summarizer = SummarizerAgent()
+        except Exception:
+            self.close()
+            raise
+
+    def close(self):
+        """Release the owned Jev HTTP client (the default router has none)."""
+        close = getattr(self._router, "close", None)
+        if close is not None:
+            close()
 
     def process(self, query: str, trace_id: str | None = None) -> dict:
         trace_id = _resolve_trace_id(trace_id)

@@ -1,8 +1,4 @@
-"""Binary Jev deployment candidate. Only invented HTTP transports are enabled.
-
-No credentials are read and no real transport, retry, redirect or secondary
-model exists here. Production enablement needs later review and authorization.
-"""
+"""Pinned binary Jev classifier with explicit key or offline mock construction."""
 
 import json
 import math
@@ -107,15 +103,33 @@ def _nonfinite(value):
 
 
 class JevRouterAgent:
-    def __init__(self, *, transport):
-        if type(transport) is not httpx.MockTransport:
+    def __init__(self, *, transport=None, api_key=None):
+        # Injected transports remain strictly offline. Real HTTP is owned here
+        # and requires an explicitly selected key; no ambient lookup on import.
+        if transport is not None and type(transport) is not httpx.MockTransport:
             raise ServiceFailure("router", "configuration", "jev_live_disabled")
-        self._http = httpx.Client(
-            transport=transport,
-            trust_env=False,
-            follow_redirects=False,
-            timeout=httpx.Timeout(READ_TIMEOUT_S, connect=CONNECT_TIMEOUT_S),
-        )
+        if transport is not None and api_key is not None:
+            raise ServiceFailure("router", "configuration", "jev_ambiguous_configuration")
+        self._live = transport is None
+        headers = {}
+        if self._live:
+            if type(api_key) is not str or not api_key.strip():
+                raise ServiceFailure("router", "configuration", "missing_jev_api_key")
+            if not api_key.isascii() or any(ord(char) < 33 or ord(char) == 127 for char in api_key):
+                raise ServiceFailure("router", "configuration", "invalid_jev_api_key")
+            headers["Authorization"] = f"Bearer {api_key}"
+            transport = httpx.HTTPTransport(retries=0, trust_env=False)
+        try:
+            self._http = httpx.Client(
+                transport=transport,
+                headers=headers,
+                trust_env=False,
+                follow_redirects=False,
+                timeout=httpx.Timeout(READ_TIMEOUT_S, connect=CONNECT_TIMEOUT_S),
+            )
+        except Exception:
+            transport.close()
+            raise ServiceFailure("router", "configuration", "jev_client_configuration") from None
         self.latency_ms = 0.0
 
     def close(self):
@@ -177,7 +191,7 @@ class JevRouterAgent:
         estimated = incoming * INPUT_USD_PER_MTOK / 1e6 if incoming else None
         set_route(
             router_provider="jev",
-            router_live=False,
+            router_live=self._live,
             router_attempts=int(attempted),
             router_latency_ms=round(self.latency_ms, 3),
             router_http_status=status,

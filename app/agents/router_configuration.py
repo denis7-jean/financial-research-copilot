@@ -1,4 +1,4 @@
-"""Explicit configuration; Jev and shadow cannot execute with real transports."""
+"""Haiku by default; explicit Jev opt-in; shadow remains disabled."""
 
 import os
 from dataclasses import dataclass
@@ -26,7 +26,9 @@ def build_router(configuration=None, *, jev_transport=None):
     if configuration.provider == "jev":
         from app.agents.jev_router import JevRouterAgent
 
-        return JevRouterAgent(transport=jev_transport)
+        if jev_transport is not None:
+            return JevRouterAgent(transport=jev_transport)
+        return JevRouterAgent(api_key=os.getenv("TYPESAFE_API_KEY"))
     if jev_transport is not None:
         raise ServiceFailure("router", "configuration", "unused_jev_transport")
     from app.agents.router import RouterAgent
