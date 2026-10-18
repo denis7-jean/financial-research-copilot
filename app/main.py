@@ -2,6 +2,7 @@ import hmac
 import json
 import os
 import time
+from contextlib import asynccontextmanager
 
 import boto3
 from dotenv import load_dotenv
@@ -16,7 +17,15 @@ from app.agents.orchestrator import CopilotOrchestrator
 from app.errors import http_status_for
 from app.observability import RequestTrace, annotate, emit, request_trace, stage
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app):
+    try:
+        yield
+    finally:
+        orchestrator.close()
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

@@ -227,7 +227,7 @@ def test_configuration_default_invalid_and_disabled_modes(monkeypatch):
     monkeypatch.delenv("COPILOT_ROUTER_PROVIDER", raising=False)
     assert RouterConfiguration.from_environment().provider == "haiku"
     for provider, code in [
-        ("jev", "jev_live_disabled"),
+        ("jev", "missing_jev_api_key"),
         ("shadow", "router_shadow_disabled"),
         ("unknown", "invalid_router_provider"),
     ]:
@@ -237,7 +237,7 @@ def test_configuration_default_invalid_and_disabled_modes(monkeypatch):
         assert error.value.code == code
     with pytest.raises(ServiceFailure) as error:
         j.JevRouterAgent(transport=None)
-    assert error.value.code == "jev_live_disabled"
+    assert error.value.code == "missing_jev_api_key"
 
 
 def test_mock_only_factory_and_real_transport_refusal():

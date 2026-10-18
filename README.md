@@ -10,10 +10,11 @@ A single qualified, end-to-end RAG smoke returned successfully, retrieved **five
 JPMorgan hits**, and produced a non-abstaining answer supported by the bound test
 corpus. See the [completion note](docs/experiments/upgrade-completion.md).
 
-**Haiku remains the default.** This isolated smoke does not establish Jev
-qualification, Jev application live/shadow operation, production rollout or
-general performance. Production routing was not changed. The ordinary HTTP
-application and the isolated smoke handler are separate entry points.
+**Haiku remains the default.** The ordinary application now supports explicit
+Jev intent routing, demonstrated live on two in-sample queries with downstream
+Haiku generation. This does not establish routing-quality qualification or a
+production rollout. No deployment/default configuration was changed. The
+ordinary HTTP application and isolated smoke handler remain separate entry points.
 
 ## What This Demonstrates
 
@@ -30,7 +31,7 @@ application and the isolated smoke handler are separate entry points.
 ## Architecture
 
 ```text
-FastAPI /ask -> CopilotOrchestrator -> RouterAgent (Haiku by default)
+FastAPI /ask -> CopilotOrchestrator -> Haiku (default) or Jev (explicit opt-in)
                                       | qa                 | summarize
                                       v                    v
                                    QAAgent           SummarizerAgent
@@ -59,7 +60,8 @@ billable operation, not a prerequisite to rerun for an existing snapshot.
 
 | Component | Implementation |
 |---|---|
-| Routing and generation | Claude Haiku 4.5 through Amazon Bedrock Converse |
+| Intent routing | Claude Haiku 4.5 by default; explicit Jev HTTP opt-in |
+| Generation | Claude Haiku 4.5 through Amazon Bedrock Converse |
 | Query embeddings | Amazon Titan Embeddings V2 |
 | Retrieval | FAISS IndexFlatIP with S3-backed index and metadata |
 | API | FastAPI, Pydantic and Mangum |
@@ -67,9 +69,54 @@ billable operation, not a prerequisite to rerun for an existing snapshot.
 | Testing | pytest, offline network guards and synthetic fixtures |
 | CI | Offline packaging checks, lint and guarded regressions |
 
-The repository also contains an experimental Jev adapter and evaluation tools.
-The application accepts only an injected mock Jev transport; shadow routing is
-disabled. These implementation seams are not live Jev qualification.
+## Jev Intent Routing
+
+Set `COPILOT_ROUTER_PROVIDER=jev` and supply a nonempty `TYPESAFE_API_KEY` through
+your authorized environment or secret store **before starting/importing the
+application**. The HTTP classifier is pinned to `jev-1.13.0`. Missing or invalid
+keys fail configuration; arbitrary injected live transports remain rejected.
+Shadow routing remains disabled.
+
+For the unconfigured default or rollback, leave `COPILOT_ROUTER_PROVIDER` unset
+or set it to `haiku`, then restart the application. Haiku does not need the Jev
+key. Keep `BEDROCK_MODEL_ID` set to Haiku: Jev replaces only the existing binary
+`qa`/`summarize` classifier. QA still uses the same S3-backed index, Titan query
+embedding, FAISS top-five retrieval and downstream Haiku generation. Summarize
+still uses direct Haiku generation without retrieval. `/summarize` still bypasses
+intent classification; `/ask` exercises the selected router.
+
+Jev uses the selected label's probability and the existing 0.6 threshold.
+A lower score, malformed response or invocation error falls back to QA with
+confidence 0.5 and sanitized fallback reasoning. It does not call Haiku for a
+second classification. Missing-key configuration errors fail before routing.
+Existing downstream error handling and public response shapes are unchanged.
+The Jev client disables retries, redirects and environment proxy discovery;
+its owned connection is closed at application shutdown.
+
+### Observed application integration
+
+On **2026-10-18**, one explicitly authorized run exercised the ordinary
+in-process `/ask` endpoint with two fixed, in-sample queries:
+
+| Query | Jev intent / dispatch | Observed downstream result |
+|---|---|---|
+| JPMorgan Chase total net revenue for fiscal year 2025 | `qa` / QAAgent | Five retrieval hits, source citation and a substantive Haiku answer |
+| Summarize the key risks in Goldman Sachs 2025 annual report | `summarize` / SummarizerAgent | Nonempty Haiku summary, key points and risk flags |
+
+Both cases reported provider `jev`, model `jev-1.13.0`, `router_live=true`, HTTP
+200 and `router_outcome=model`, with one classifier attempt each and no fallback.
+Both passed the bounded test's completion assertions. The run used two Jev POSTs,
+two Haiku Converse calls, one Titan embedding call and two S3 HEAD plus two GET
+attempts, with no retry or rejected extra attempt. Generation used a **test-only
+`maxTokens=1024`** cap; ordinary generation behavior was not changed.
+
+This demonstrates real Jev application intent integration on two in-sample
+queries. It adds no routing-quality qualification, held-out accuracy evidence,
+external-server validation or production deployment. The summary is not grounded
+in a retrieved filing, and the QA result does not independently authenticate
+financial facts or establish exact answer-to-passage attribution. Private results,
+credentials and operational evidence remain outside Git. This completed one-use
+test provides no authority to rerun live calls.
 
 ## Deployment and Observed RAG Result
 
@@ -132,6 +179,7 @@ With `.venv` activated, use
 [`.env.example`](.env.example) as the configuration template. Set the region,
 model and S3 index/metadata keys for your own authorized environment. Keep real
 credentials outside Git. `COPILOT_ROUTER_PROVIDER=haiku` preserves the default;
+Jev opt-in additionally requires `TYPESAFE_API_KEY` as described above.
 `COPILOT_CW_REQUEST_LOG=false` disables the optional custom request log.
 
 For an authorized AWS-backed local session:
@@ -219,8 +267,8 @@ historical metadata-source rename; no new migration or cleanup is implied.
 - Source citations do not by themselves validate every answer claim.
 - Index structure and metadata row consistency do not prove semantic
   vector-to-passage alignment.
-- The accepted smoke demonstrates this isolated deployed path once; it does not
-  establish general Lambda compatibility, production rollout or Jev readiness.
+- The isolated smoke and two-query Jev application test have distinct scopes;
+  neither establishes general Lambda compatibility or production rollout.
 - Lambda packaging needs target-specific, verified wheels. The offline
   `scripts/package_lambda.ps1` wrapper requires explicit target/lock/allocation
   inputs; it does not download dependencies or deploy. Development requirements
