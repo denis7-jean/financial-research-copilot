@@ -1,0 +1,168 @@
+start 2026-09-28T02:32:02Z
+[1/34] L01 numeric_qa: What was JPMorgan Chase's total net revenue for fiscal year ...
+{"event": "orchestrator.routed", "trace_id": "197f44d9-571b-4aaf-af94-4e976ff24c2a", "intent": "qa", "confidence": 0.95, "router_latency_ms": 909.2}
+Loading FAISS index from S3...
+Index loaded: 2220 vectors, 2220 metadata entries
+{"event": "qa.completed", "trace_id": "197f44d9-571b-4aaf-af94-4e976ff24c2a", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "197f44d9-571b-4aaf-af94-4e976ff24c2a", "intent": "qa"}
+[2/34] L02 numeric_qa: What was Goldman Sachs net earnings for fiscal year 2025?...
+{"event": "orchestrator.routed", "trace_id": "45798e8a-75a5-4e3c-a585-4fbafd136c6f", "intent": "qa", "confidence": 0.95, "router_latency_ms": 862.6}
+{"event": "qa.completed", "trace_id": "45798e8a-75a5-4e3c-a585-4fbafd136c6f", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "45798e8a-75a5-4e3c-a585-4fbafd136c6f", "intent": "qa"}
+[3/34] L03 out_of_corpus: What is Mastercard's total net revenue for fiscal year 2025?...
+{"event": "orchestrator.routed", "trace_id": "de368d92-df8a-4d20-9678-2e053284c8af", "intent": "qa", "confidence": 0.95, "router_latency_ms": 815.9}
+{"event": "qa.completed", "trace_id": "de368d92-df8a-4d20-9678-2e053284c8af", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "de368d92-df8a-4d20-9678-2e053284c8af", "intent": "qa"}
+[4/34] L04 numeric_qa: What was BlackRock's total assets under management in 2025?...
+{"event": "orchestrator.routed", "trace_id": "beb50a8d-cc35-44f8-98fb-840479ec1641", "intent": "qa", "confidence": 0.95, "router_latency_ms": 889.7}
+{"event": "qa.completed", "trace_id": "beb50a8d-cc35-44f8-98fb-840479ec1641", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "beb50a8d-cc35-44f8-98fb-840479ec1641", "intent": "qa"}
+[5/34] L05 numeric_qa: What was Bank of America's net income for fiscal year 2025?...
+{"event": "orchestrator.routed", "trace_id": "0e56f82b-e634-4c3d-a5a0-d4eae1c96e1c", "intent": "qa", "confidence": 0.95, "router_latency_ms": 775.3}
+{"event": "qa.completed", "trace_id": "0e56f82b-e634-4c3d-a5a0-d4eae1c96e1c", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "0e56f82b-e634-4c3d-a5a0-d4eae1c96e1c", "intent": "qa"}
+[6/34] L06 metric_qa: What was JPMorgan Chase's return on equity in 2025?...
+{"event": "orchestrator.routed", "trace_id": "14e5d6e7-93bf-479a-907e-5cd6f795c636", "intent": "qa", "confidence": 0.95, "router_latency_ms": 885.9}
+{"event": "qa.completed", "trace_id": "14e5d6e7-93bf-479a-907e-5cd6f795c636", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "14e5d6e7-93bf-479a-907e-5cd6f795c636", "intent": "qa"}
+[7/34] L07 metric_qa: How many employees did JPMorgan Chase have in 2025?...
+{"event": "orchestrator.routed", "trace_id": "38cc5304-ac65-446e-820d-12676b7ec38d", "intent": "qa", "confidence": 0.95, "router_latency_ms": 870.5}
+{"event": "qa.completed", "trace_id": "38cc5304-ac65-446e-820d-12676b7ec38d", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "38cc5304-ac65-446e-820d-12676b7ec38d", "intent": "qa"}
+[8/34] L08 out_of_corpus: What was Mastercard's net income margin in 2025?...
+{"event": "orchestrator.routed", "trace_id": "c375f782-5925-483a-8fcb-a0309744697c", "intent": "qa", "confidence": 0.95, "router_latency_ms": 796.6}
+{"event": "qa.completed", "trace_id": "c375f782-5925-483a-8fcb-a0309744697c", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "c375f782-5925-483a-8fcb-a0309744697c", "intent": "qa"}
+[9/34] L09 metric_qa: What dividends did Goldman Sachs pay in fiscal year 2025?...
+{"event": "orchestrator.routed", "trace_id": "d4c3f6f5-a378-4775-a36a-9fc722b5656c", "intent": "qa", "confidence": 0.95, "router_latency_ms": 899.1}
+{"event": "qa.completed", "trace_id": "d4c3f6f5-a378-4775-a36a-9fc722b5656c", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "d4c3f6f5-a378-4775-a36a-9fc722b5656c", "intent": "qa"}
+[10/34] L10 cross_company: Which had higher net revenue in 2025, JPMorgan Chase or Gold...
+{"event": "orchestrator.routed", "trace_id": "e26867bf-93a6-49ec-a31a-dbd587e3c98e", "intent": "qa", "confidence": 0.95, "router_latency_ms": 920.5}
+{"event": "qa.completed", "trace_id": "e26867bf-93a6-49ec-a31a-dbd587e3c98e", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "e26867bf-93a6-49ec-a31a-dbd587e3c98e", "intent": "qa"}
+[11/34] L12 summarize: Summarize the key risks in Goldman Sachs 2025 annual report....
+{"event": "orchestrator.routed", "trace_id": "489a7d3e-73dc-4d45-b9cb-24e4517cdafd", "intent": "summarize", "confidence": 0.95, "router_latency_ms": 801.2}
+{"event": "summarizer.completed", "trace_id": "489a7d3e-73dc-4d45-b9cb-24e4517cdafd"}
+{"event": "orchestrator.completed", "trace_id": "489a7d3e-73dc-4d45-b9cb-24e4517cdafd", "intent": "summarize"}
+[12/34] L13 summarize: What are the main business segments of JPMorgan Chase?...
+{"event": "orchestrator.routed", "trace_id": "c07cfd91-7195-4960-b490-e215688047f9", "intent": "summarize", "confidence": 0.85, "router_latency_ms": 931.1}
+{"event": "summarizer.completed", "trace_id": "c07cfd91-7195-4960-b490-e215688047f9"}
+{"event": "orchestrator.completed", "trace_id": "c07cfd91-7195-4960-b490-e215688047f9", "intent": "summarize"}
+[13/34] L14 summarize: Summarize BlackRock's investment strategy as described in th...
+{"event": "orchestrator.routed", "trace_id": "456bf195-13dd-40b7-aced-a31a09f7e5dc", "intent": "summarize", "confidence": 0.95, "router_latency_ms": 1076.1}
+{"event": "summarizer.completed", "trace_id": "456bf195-13dd-40b7-aced-a31a09f7e5dc"}
+{"event": "orchestrator.completed", "trace_id": "456bf195-13dd-40b7-aced-a31a09f7e5dc", "intent": "summarize"}
+[14/34] L15 summarize: What is Bank of America's approach to managing credit risk?...
+{"event": "orchestrator.routed", "trace_id": "571fb0c7-3b9d-49a6-b461-c68c25b3e6dd", "intent": "summarize", "confidence": 0.92, "router_latency_ms": 1023.9}
+{"event": "summarizer.completed", "trace_id": "571fb0c7-3b9d-49a6-b461-c68c25b3e6dd"}
+{"event": "orchestrator.completed", "trace_id": "571fb0c7-3b9d-49a6-b461-c68c25b3e6dd", "intent": "summarize"}
+[15/34] L17 boundary: What is a financial statement?...
+{"event": "orchestrator.routed", "trace_id": "534f9b92-e380-4520-9db5-0ed3895ea64b", "intent": "summarize", "confidence": 0.85, "router_latency_ms": 902.7}
+{"event": "summarizer.completed", "trace_id": "534f9b92-e380-4520-9db5-0ed3895ea64b"}
+{"event": "orchestrator.completed", "trace_id": "534f9b92-e380-4520-9db5-0ed3895ea64b", "intent": "summarize"}
+[16/34] L18 out_of_corpus: What was Apple's revenue in 2025?...
+{"event": "orchestrator.routed", "trace_id": "c4742838-581b-4edd-aa7d-ea2386a17b60", "intent": "qa", "confidence": 0.95, "router_latency_ms": 826.6}
+{"event": "qa.completed", "trace_id": "c4742838-581b-4edd-aa7d-ea2386a17b60", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "c4742838-581b-4edd-aa7d-ea2386a17b60", "intent": "qa"}
+[17/34] L19 boundary: Goldman Sachs 2025...
+{"event": "orchestrator.routed", "trace_id": "52da79a1-f01e-49b4-ade1-9c63f2293ead", "intent": "summarize", "confidence": 0.75, "router_latency_ms": 880.9}
+{"event": "summarizer.completed", "trace_id": "52da79a1-f01e-49b4-ade1-9c63f2293ead"}
+{"event": "orchestrator.completed", "trace_id": "52da79a1-f01e-49b4-ade1-9c63f2293ead", "intent": "summarize"}
+[18/34] L20 boundary: What was JPMorgan Chase's revenue and also summarize their r...
+{"event": "orchestrator.routed", "trace_id": "30dd6fc4-1a28-4222-8b07-e0369a914484", "intent": "summarize", "confidence": 0.85, "router_latency_ms": 1116.7}
+{"event": "summarizer.completed", "trace_id": "30dd6fc4-1a28-4222-8b07-e0369a914484"}
+{"event": "orchestrator.completed", "trace_id": "30dd6fc4-1a28-4222-8b07-e0369a914484", "intent": "summarize"}Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Projects\AWS Project\main\eval\llm_judge.py", line 576, in <module>
+    print("Gates:", [g["metric"] for g in GATES if g.enforced], "enforced")
+                     ~^^^^^^^^^^
+TypeError: 'Gate' object is not subscriptable
+
+[19/34] N01 numeric_qa: What was JPMorgan Chase's net income in 2025?...
+{"event": "orchestrator.routed", "trace_id": "5015d6c6-d965-4c94-bb31-b821813ead40", "intent": "qa", "confidence": 0.95, "router_latency_ms": 840.7}
+{"event": "qa.completed", "trace_id": "5015d6c6-d965-4c94-bb31-b821813ead40", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "5015d6c6-d965-4c94-bb31-b821813ead40", "intent": "qa"}
+[20/34] N02 metric_qa: What were JPMorgan Chase's diluted earnings per share for 20...
+{"event": "orchestrator.routed", "trace_id": "a38db8ad-4128-4c70-90a4-d91edaf81837", "intent": "qa", "confidence": 0.95, "router_latency_ms": 835.6}
+{"event": "qa.completed", "trace_id": "a38db8ad-4128-4c70-90a4-d91edaf81837", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "a38db8ad-4128-4c70-90a4-d91edaf81837", "intent": "qa"}
+[21/34] N03 numeric_qa: What was Bank of America's total revenue, net of interest ex...
+{"event": "orchestrator.routed", "trace_id": "d51744b7-db94-4f96-bfa5-99065fe15956", "intent": "qa", "confidence": 0.95, "router_latency_ms": 856.2}
+{"event": "qa.completed", "trace_id": "d51744b7-db94-4f96-bfa5-99065fe15956", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "d51744b7-db94-4f96-bfa5-99065fe15956", "intent": "qa"}
+[22/34] N04 metric_qa: What was Bank of America's return on average common sharehol...
+{"event": "orchestrator.routed", "trace_id": "e1c14e0c-ad75-4b97-aa4c-fad57ee00ab5", "intent": "qa", "confidence": 0.95, "router_latency_ms": 798.0}
+{"event": "qa.completed", "trace_id": "e1c14e0c-ad75-4b97-aa4c-fad57ee00ab5", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "e1c14e0c-ad75-4b97-aa4c-fad57ee00ab5", "intent": "qa"}
+[23/34] N05 metric_qa: How many employees did Bank of America have at the end of 20...
+{"event": "orchestrator.routed", "trace_id": "331a72db-16e3-40ae-a372-649b30118e7a", "intent": "qa", "confidence": 0.95, "router_latency_ms": 878.1}
+{"event": "qa.completed", "trace_id": "331a72db-16e3-40ae-a372-649b30118e7a", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "331a72db-16e3-40ae-a372-649b30118e7a", "intent": "qa"}
+[24/34] N06 metric_qa: What was Goldman Sachs' return on equity for 2025?...
+{"event": "orchestrator.routed", "trace_id": "6da17422-bb10-4492-8340-7a6cee02f13b", "intent": "qa", "confidence": 0.95, "router_latency_ms": 886.5}
+{"event": "qa.completed", "trace_id": "6da17422-bb10-4492-8340-7a6cee02f13b", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "6da17422-bb10-4492-8340-7a6cee02f13b", "intent": "qa"}
+[25/34] N07 numeric_qa: What were Goldman Sachs' net revenues in 2025?...
+{"event": "orchestrator.routed", "trace_id": "316e7f90-ea61-4433-8035-6ec0c803e6e3", "intent": "qa", "confidence": 0.95, "router_latency_ms": 837.1}
+{"event": "qa.completed", "trace_id": "316e7f90-ea61-4433-8035-6ec0c803e6e3", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "316e7f90-ea61-4433-8035-6ec0c803e6e3", "intent": "qa"}
+[26/34] N08 numeric_qa: What was BlackRock's total revenue in 2025?...
+{"event": "orchestrator.routed", "trace_id": "f79acc57-dcbc-4205-b34d-99dcd0a0d8ac", "intent": "qa", "confidence": 0.95, "router_latency_ms": 794.2}
+{"event": "qa.completed", "trace_id": "f79acc57-dcbc-4205-b34d-99dcd0a0d8ac", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "f79acc57-dcbc-4205-b34d-99dcd0a0d8ac", "intent": "qa"}
+[27/34] N09 numeric_qa: What was BlackRock's GAAP net income attributable to BlackRo...
+{"event": "orchestrator.routed", "trace_id": "3059aad2-213c-4eff-ac25-49de688c91b8", "intent": "qa", "confidence": 0.95, "router_latency_ms": 818.6}
+{"event": "qa.completed", "trace_id": "3059aad2-213c-4eff-ac25-49de688c91b8", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "3059aad2-213c-4eff-ac25-49de688c91b8", "intent": "qa"}
+[28/34] N10 numeric_qa: What was Visa's net revenue for fiscal year 2025?...
+{"event": "orchestrator.routed", "trace_id": "05a6f200-830a-4204-82f5-8a836da904f6", "intent": "qa", "confidence": 0.95, "router_latency_ms": 807.1}
+{"event": "qa.completed", "trace_id": "05a6f200-830a-4204-82f5-8a836da904f6", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "05a6f200-830a-4204-82f5-8a836da904f6", "intent": "qa"}
+[29/34] N11 out_of_corpus: What was Wells Fargo's net income in 2025?...
+{"event": "orchestrator.routed", "trace_id": "2e89dd38-44a6-4b3a-b6aa-05561649517d", "intent": "qa", "confidence": 0.95, "router_latency_ms": 1170.9}
+{"event": "qa.completed", "trace_id": "2e89dd38-44a6-4b3a-b6aa-05561649517d", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "2e89dd38-44a6-4b3a-b6aa-05561649517d", "intent": "qa"}
+[30/34] N13 summarize: Summarize JPMorgan Chase's key risk factors in its 2025 10-K...
+{"event": "orchestrator.routed", "trace_id": "ed8f73b9-0596-4415-a3bf-29bb1a88a1eb", "intent": "summarize", "confidence": 0.95, "router_latency_ms": 857.5}
+{"event": "summarizer.completed", "trace_id": "ed8f73b9-0596-4415-a3bf-29bb1a88a1eb"}
+{"event": "orchestrator.completed", "trace_id": "ed8f73b9-0596-4415-a3bf-29bb1a88a1eb", "intent": "summarize"}
+[31/34] N14 summarize: Give an overview of Bank of America's 2025 business performa...
+{"event": "orchestrator.routed", "trace_id": "1457faa2-9323-4cd1-82d0-5d3da22704d8", "intent": "summarize", "confidence": 0.95, "router_latency_ms": 1012.6}
+{"event": "summarizer.completed", "trace_id": "1457faa2-9323-4cd1-82d0-5d3da22704d8"}
+{"event": "orchestrator.completed", "trace_id": "1457faa2-9323-4cd1-82d0-5d3da22704d8", "intent": "summarize"}
+[32/34] V01 summarize: Compare the risk factors of BlackRock and Visa in 2025....
+{"event": "orchestrator.routed", "trace_id": "e8553bbd-b64e-4804-8a0d-7a36d88d2eae", "intent": "summarize", "confidence": 0.85, "router_latency_ms": 1072.7}
+{"event": "summarizer.completed", "trace_id": "e8553bbd-b64e-4804-8a0d-7a36d88d2eae"}
+{"event": "orchestrator.completed", "trace_id": "e8553bbd-b64e-4804-8a0d-7a36d88d2eae", "intent": "summarize"}
+[33/34] V02 summarize: Describe Visa's competitive position in the payments industr...
+{"event": "orchestrator.routed", "trace_id": "3bd4217a-d9d9-4bf7-9a56-5c03989371e6", "intent": "summarize", "confidence": 0.95, "router_latency_ms": 853.4}
+{"event": "summarizer.completed", "trace_id": "3bd4217a-d9d9-4bf7-9a56-5c03989371e6"}
+{"event": "orchestrator.completed", "trace_id": "3bd4217a-d9d9-4bf7-9a56-5c03989371e6", "intent": "summarize"}
+[34/34] V03 metric_qa: What were Visa's diluted earnings per share for fiscal year ...
+{"event": "orchestrator.routed", "trace_id": "439b0173-c56d-4779-9e9e-7293e05fa781", "intent": "qa", "confidence": 0.95, "router_latency_ms": 3261.2}
+{"event": "qa.completed", "trace_id": "439b0173-c56d-4779-9e9e-7293e05fa781", "chunks_retrieved": 5, "outcome": "generated"}
+{"event": "orchestrator.completed", "trace_id": "439b0173-c56d-4779-9e9e-7293e05fa781", "intent": "qa"}
+
+--- Evaluation Summary ---
+Run id           : 6a13ffb1634e40258f283838935ff339
+Valid baseline   : True  
+Completion       : 34/34 (ceiling $5.00)
+Cases            : 34 (gated QA population: 19)
+context_relevance_pass_rate       100.00%  >= 80%  PASS  [ENFORCED]
+faithfulness_pass_rate             94.74%  >= 80%  PASS  [ENFORCED]
+routing_accuracy_clear            100.00%  >= 90%  PASS  [report-only]
+answer_correctness_pass_rate       76.19%  >= 80%  FAIL  [report-only]
+abstention_appropriate_rate        90.62%  >= 80%  PASS  [report-only]
+summary_grounding_pass_rate        18.18%  >= 80%  FAIL  [report-only]
+Router mismatches: ['L17', 'L19', 'L20']
+Contaminated     : []
+Fact leaks       : {}
+System errors    : []
+Judge errors     : 0
+Overall pass     : True  (enforced gates only)
+
+Overall pass: True
+exit=1
+end 2026-09-28T02:37:47Z

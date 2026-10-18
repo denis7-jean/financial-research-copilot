@@ -1,0 +1,304 @@
+"""Pre-registered pilot candidate-pool selection (procedure pilot-v1, see PROCEDURE.md).
+
+Offline and deterministic. No model, router or network call. Question text is copied verbatim.
+Usage: python select_pilot.py            (writes out/*)
+"""
+import hashlib
+import json
+import math
+import re
+import statistics
+import sys
+from collections import Counter, defaultdict
+from pathlib import Path
+
+sys.stdout.reconfigure(encoding="utf-8")
+
+PROC_ID = "pilot-v1"
+SEED = 20260929
+BASE = Path(__file__).resolve().parent
+RAW = BASE / "raw"
+OUT = BASE / "out"
+REPO = Path(r"C:\Projects\AWS Project\main")
+
+SOURCES = {
+    "tatqa": dict(file="tatqa_dataset_test_gold.json", location="github:NExTplusplus/TAT-QA",
+                  revision="870accc41953dcde885aabeb963d94aabdc0fbc3", path="dataset_raw/tatqa_dataset_test_gold.json",
+                  split="test_gold", license="CC BY 4.0 (data, README); MIT (code)"),
+    "finqa": dict(file="finqa_test.json", location="github:czyssrs/FinQA",
+                  revision="0f16e2867befa6840783e58be38c9efb9229d742", path="dataset/test.json",
+                  split="test", license="MIT (repo LICENSE); underlying FinTabNet CDLA-Permissive-1.0"),
+    "finlfqa": dict(file="finlfqa_test.json", location="hf:Dragongon/FinLFQA",
+                    revision="22900e97366d0b977b6f37863486bc9828e5bdc0", path="data/test.json",
+                    split="test", license="MIT (HF dataset card)"),
+}
+QUOTAS = {("tatqa", "T1_qa"): 13, ("finqa", "T1_qa"): 13,
+          ("finlfqa", "num"): 14, ("finlfqa", "interp"): 50, ("finlfqa", "other"): 10, ("finlfqa", "mixed"): 15}
+TATQA_TYPES = {"span", "multi-span", "arithmetic", "count"}
+
+EXPLAIN_START = re.compile(r"^\s*(why\b|how\s+(does|do|did|has|have|is|are|was|were|might|could|would|will|can|should)\b"
+                           r"|explain\b|describe\b|discuss\b)", re.I)
+NUM = re.compile(r"(^\s*(what|which)\s+(is|was|are|were)\s+(the\s+)?(total|combined|difference|ratio|percentage|percent|sum"
+                 r"|average|net|gross|amount|value|change|increase|decrease|growth|margin|rate)\b)"
+                 r"|\b(calculate|compute)\b|(^\s*how\s+(much|many)\b)|\bby\s+how\s+much\b|\bwhat\s+percentage\b", re.I)
+INT = re.compile(r"\b(indicate|indicates|indicated|suggest|suggests|imply|implies|implication|implications|reflect|reflects"
+                 r"|explain|explains|why|insight|insights|interpret|significance|signify|strategy|strategies|strategic"
+                 r"|approach|approaches|positioning|outlook|assess|evaluate|impact|impacts)\b"
+                 r"|^\s*how\s+(do|does|did|might|could|would|can|will|should)\b", re.I)
+DEICTIC = re.compile(r"\b(the company|the group|the firm|the entity|the table|the above|the following|the same period"
+                     r"|the respective)\b", re.I)
+ALLCAPS = re.compile(r"\b[A-Z]{2,5}\b")
+
+
+def sha(s):
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+def file_sha(p):
+    return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+
+
+def order_key(source, oid):
+    return sha(f"{PROC_ID}|{SEED}|{source}|{oid}")
+
+
+def grams(s, n=4):
+    s = re.sub(r"\s+", " ", s.lower())
+    return Counter(s[i:i + n] for i in range(max(1, len(s) - n + 1)))
+
+
+def cos(a, b):
+    num = sum(v * b[k] for k, v in a.items() if k in b)
+    den = math.sqrt(sum(v * v for v in a.values())) * math.sqrt(sum(v * v for v in b.values()))
+    return num / den if den else 0.0
+
+
+def style(q):
+    words = q.split()
+    has_entity = bool(ALLCAPS.search(q)) or any(w[:1].isupper() for w in words[1:])
+    return {
+        "words": len(words),
+        "ends_q": q.strip().endswith("?"),
+        "lower_first": q[:1].islower(),
+        "allcaps_token": bool(ALLCAPS.search(q)),
+        "tokenized_spacing": " , " in q or " ( " in q,
+        "ctx_dependent": bool(DEICTIC.search(q)) or not has_entity,
+        "mixed_intent_cue": bool(NUM.search(q)) and bool(INT.search(q)),
+    }
+
+
+def load_json_any(p):
+    text = Path(p).read_text(encoding="utf-8")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return [json.loads(line) for line in text.splitlines() if line.strip()]
+    if isinstance(data, dict):
+        for k in ("data", "rows", "test"):
+            if isinstance(data.get(k), list):
+                return data[k]
+    return data
+
+
+def load_tatqa():
+    out = []
+    for ctx in load_json_any(RAW / SOURCES["tatqa"]["file"]):
+        group = ctx["table"]["uid"]
+        for q in ctx["questions"]:
+            out.append(dict(oid=q["uid"], question=q["question"], group=group,
+                            task={"answer_type": q.get("answer_type"), "answer_from": q.get("answer_from"),
+                                  "req_comparison": q.get("req_comparison"), "scale": q.get("scale")}))
+    return out
+
+
+def load_finqa():
+    out = []
+    for r in load_json_any(RAW / SOURCES["finqa"]["file"]):
+        prog = r.get("qa", {}).get("program")
+        ops = re.findall(r"([a-z_]+)\(", prog or "")
+        parts = r["id"].split("/")
+        out.append(dict(oid=r["id"], question=r["qa"]["question"], group="/".join(parts[:2]),
+                        task={"has_program": bool(prog), "program_ops": ops}))
+    return out
+
+
+def load_finlfqa():
+    out = []
+    for r in load_json_any(RAW / SOURCES["finlfqa"]["file"]):
+        out.append(dict(oid=str(r["id"]), question=r["question"], group=sha(r.get("context") or "")[:16],
+                        task={"topic": r.get("topic"), "n_numerical_values": len(r.get("numerical_values") or [])}))
+    return out
+
+
+def stratum(source, item):
+    q = item["question"]
+    if source in ("tatqa", "finqa"):
+        return "T1_qa"
+    n, i = bool(NUM.search(q)), bool(INT.search(q))
+    return {(True, False): "num", (False, True): "interp", (True, True): "mixed", (False, False): "other"}[(n, i)]
+
+
+def pre_screen(source, item, seen_norm):
+    """Rules E1-E4, X2, X1 (independent of selection state)."""
+    q = item["question"] or ""
+    if not q.strip():
+        return "E1"
+    if sum(c.isascii() for c in q) / len(q) < 0.98:
+        return "E2"
+    if not 5 <= len(q.split()) <= 60:
+        return "E3"
+    norm = re.sub(r"\s+", " ", q.lower()).strip()
+    if norm in seen_norm:
+        return "E4"
+    seen_norm.add(norm)
+    if source == "tatqa" and item["task"]["answer_type"] not in TATQA_TYPES:
+        return "X2"
+    if source == "finqa" and not item["task"]["has_program"]:
+        return "X2"
+    if source in ("tatqa", "finqa") and EXPLAIN_START.search(q):
+        return "X1"
+    return None
+
+
+def main():
+    OUT.mkdir(exist_ok=True)
+    sys.path.insert(0, str(REPO))
+    from eval.routing_datasets import routing_dataset  # read-only: question strings only
+    phase_a = [(c.case_id if hasattr(c, "case_id") else str(i), grams(c.query)) for i, c in enumerate(routing_dataset("v2"))]
+
+    loaders = {"tatqa": load_tatqa, "finqa": load_finqa, "finlfqa": load_finlfqa}
+    selected, exclusions, dup_pairs = [], [], []
+    stats = {}
+    for source, loader in loaders.items():
+        items = sorted(loader(), key=lambda it: order_key(source, it["oid"]))
+        seen_norm = set()
+        pool_counts = Counter()
+        prelim = []
+        for it in items:
+            it["order_key"] = order_key(source, it["oid"])
+            it["stratum"] = stratum(source, it)
+            it["flags"] = style(it["question"] or "")
+            reason = pre_screen(source, it, seen_norm)
+            if reason is None:
+                g = grams(it["question"])
+                best = max(phase_a, key=lambda p: cos(g, p[1]))
+                sim = cos(g, best[1])
+                it["phase_a_max_cos"] = round(sim, 3)
+                if sim >= 0.80:
+                    reason = "E6"
+            if reason is None:
+                pool_counts[it["stratum"]] += 1
+            prelim.append((it, reason))
+        stats[source] = {"items_in_split": len(items), "eligible_by_stratum": dict(pool_counts),
+                         "pre_screen_reasons": dict(Counter(r for _, r in prelim if r))}
+
+        taken_by_stratum = Counter()
+        group_use = Counter()
+        chosen_ids = set()
+        final_reason = {}
+        for cap, pass_no in ((1, 1), (2, 2)):
+            if pass_no == 2 and all(taken_by_stratum[s] >= QUOTAS.get((source, s), 0)
+                                    for s in {st for (src, st) in QUOTAS if src == source}):
+                break
+            for it, reason in prelim:
+                if reason is not None or it["oid"] in chosen_ids:
+                    if reason is not None:
+                        final_reason[it["oid"]] = reason
+                    continue
+                quota = QUOTAS.get((source, it["stratum"]), 0)
+                if taken_by_stratum[it["stratum"]] >= quota:
+                    final_reason.setdefault(it["oid"], "Q1")
+                    continue
+                g = grams(it["question"])
+                dup = next(((s["cand_id"], round(cos(g, s["_grams"]), 3)) for s in selected
+                            if cos(g, s["_grams"]) >= 0.90), None)
+                if dup:
+                    final_reason[it["oid"]] = "E5"
+                    dup_pairs.append({"source": source, "original_id": it["oid"], "near_duplicate_of": dup[0],
+                                      "cosine": dup[1]})
+                    continue
+                if group_use[it["group"]] >= cap:
+                    final_reason[it["oid"]] = "G1"
+                    continue
+                group_use[it["group"]] += 1
+                taken_by_stratum[it["stratum"]] += 1
+                chosen_ids.add(it["oid"])
+                final_reason.pop(it["oid"], None)
+                t1 = source in ("tatqa", "finqa")
+                selected.append({
+                    "cand_id": "c_" + sha(f"{PROC_ID}|{SEED}|cand|{source}|{it['oid']}")[:10],
+                    "question": it["question"],
+                    "source": source,
+                    "source_location": SOURCES[source]["location"],
+                    "source_revision": SOURCES[source]["revision"],
+                    "source_path": SOURCES[source]["path"],
+                    "split": SOURCES[source]["split"],
+                    "license": SOURCES[source]["license"],
+                    "original_id": it["oid"],
+                    "context_group": it["group"],
+                    "source_task": it["task"],
+                    "sampling_stratum": it["stratum"],
+                    "provenance_tier": "T1" if t1 else "T2a-pending",
+                    "label_status": "source_derived" if t1 else "unlabeled_pending_review",
+                    "provisional_label": "qa" if t1 else None,
+                    "flags": it["flags"],
+                    "phase_a_max_cos": it["phase_a_max_cos"],
+                    "selection_pass": pass_no,
+                    "order_key": it["order_key"],
+                    "_grams": g,
+                })
+        stats[source]["selected_by_stratum"] = dict(taken_by_stratum)
+        stats[source]["quota_shortfall"] = {s: QUOTAS[(src, s)] - taken_by_stratum[s]
+                                            for (src, s) in QUOTAS if src == source
+                                            and taken_by_stratum[s] < QUOTAS[(src, s)]}
+        stats[source]["final_reasons"] = dict(Counter(final_reason.values()))
+        for it, _ in prelim:
+            if it["oid"] in final_reason:
+                exclusions.append({"source": source, "original_id": it["oid"], "reason": final_reason[it["oid"]],
+                                   "sampling_stratum": it["stratum"], "flags": it["flags"]})
+
+    for s in selected:
+        s.pop("_grams")
+    with open(OUT / "candidates.jsonl", "w", encoding="utf-8", newline="\n") as f:
+        for s in selected:
+            f.write(json.dumps(s, ensure_ascii=False) + "\n")
+    with open(OUT / "exclusions.jsonl", "w", encoding="utf-8", newline="\n") as f:
+        for e in exclusions:
+            f.write(json.dumps(e, ensure_ascii=False) + "\n")
+    with open(OUT / "duplicates.jsonl", "w", encoding="utf-8", newline="\n") as f:
+        for d in dup_pairs:
+            f.write(json.dumps(d, ensure_ascii=False) + "\n")
+    blind = sorted(({"cand_id": s["cand_id"], "question": s["question"]} for s in selected),
+                   key=lambda b: sha(f"{PROC_ID}|{SEED}|blind|{b['cand_id']}"))
+    with open(OUT / "blind_review_packet.jsonl", "w", encoding="utf-8", newline="\n") as f:
+        for b in blind:
+            f.write(json.dumps(b, ensure_ascii=False) + "\n")
+
+    # Style profile per (source, stratum), and the explanation-form borderline items (X1).
+    prof = {}
+    by = defaultdict(list)
+    for s in selected:
+        by[f"{s['source']}:{s['sampling_stratum']}"].append(s["flags"])
+    for k, fl in sorted(by.items()):
+        n = len(fl)
+        prof[k] = {"n": n, "median_words": statistics.median(x["words"] for x in fl),
+                   **{f: round(sum(x[f] for x in fl) / n, 2) for f in
+                      ("ends_q", "lower_first", "allcaps_token", "tokenized_spacing", "ctx_dependent",
+                       "mixed_intent_cue")}}
+    summary = {"procedure": PROC_ID, "seed": SEED, "quotas": {f"{a}:{b}": v for (a, b), v in QUOTAS.items()},
+               "per_source": stats, "style_profile_selected": prof, "selected_total": len(selected),
+               "near_duplicate_pairs": len(dup_pairs),
+               "reason_codes": {"E1": "empty", "E2": "non-English proxy", "E3": "length", "E4": "exact duplicate",
+                                "X2": "source task ineligible", "X1": "explanation-form (borderline, not T1)",
+                                "E6": "near-duplicate of Phase A", "Q1": "quota filled", "E5": "near-duplicate of selected",
+                                "G1": "context group cap"}}
+    (OUT / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    manifest = {"procedure_sha256": file_sha(BASE / "PROCEDURE.md"), "script_sha256": file_sha(__file__),
+                "inputs": {k: {"file": v["file"], "sha256": file_sha(RAW / v["file"]), **v} for k, v in SOURCES.items()},
+                "outputs": {p.name: file_sha(p) for p in sorted(OUT.glob("*.jsonl"))} | {"summary.json": file_sha(OUT / "summary.json")}}
+    (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    print(json.dumps(summary, indent=1, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

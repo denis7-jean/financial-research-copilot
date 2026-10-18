@@ -1,0 +1,2635 @@
+{
+  "schema": "jev-rag-smoke-acceptance-scenarios-v2",
+  "previous_schema": "jev-rag-smoke-acceptance-scenarios-v1",
+  "contract": "docs/experiments/jev-rag-smoke-acceptance.md",
+  "base_commit": "274e283e353261c4d50b0d4f18ee97366d80d7ef",
+  "notice": "Declarative, invented placeholders for offline review. Not production facts, limits, prices or approvals, and not executed by any acceptance engine. Map each scenario onto the accepted implementation's seams; a scenario the implementation cannot express is a review finding.",
+  "vocabulary": {
+    "clauses": [
+      "AC-01",
+      "AC-02",
+      "AC-03",
+      "AC-04",
+      "AC-05",
+      "AC-06",
+      "AC-07",
+      "AC-08",
+      "AC-09",
+      "AC-10",
+      "AC-11",
+      "AC-12",
+      "AC-13"
+    ],
+    "phases": {
+      "P0": "Operator side before the parent Invoke: approved bindings, parent client, owner decisions, worst-case sufficiency, exclusive operator claim.",
+      "P1": "Inside the function before each inner dispatch: actual inner clients and send gates, stage gates, per-attempt reservation.",
+      "P2": "Observations after dispatch: sends, retries, usage, results, REPORT, publication."
+    },
+    "stages": [
+      "PARENT_INVOKE",
+      "ROUTE",
+      "INDEX_READ",
+      "DESERIALIZE",
+      "EMBED",
+      "SEARCH",
+      "GENERATE",
+      "SUMMARIZE",
+      "INFRASTRUCTURE",
+      "EVIDENCE_PUBLISH"
+    ],
+    "experiment_outcomes": {
+      "STOP_BEFORE_DISPATCH": "Stopped at P0; no outbound call of any kind.",
+      "STOP_AT_STAGE": "A gate stopped the run at stop_at; nothing after it may be sent.",
+      "FAIL_RECORD_ONLY": "All approved calls happened; a P2 observation fails acceptance.",
+      "NOT_RAG_SUCCESS_RECORD_ONLY": "Valid HTTP outcome that is not structural RAG success (AC-09).",
+      "PASS_STRUCTURAL": "Structural and numeric acceptance only (AC-09, AC-11). Requires EVIDENCE_COMPLETE_CONFIRMED.",
+      "RESULT_NOT_ESTABLISHED": "Evidence is incomplete, so no experiment result can be certified."
+    },
+    "evidence_outcomes": {
+      "EVIDENCE_COMPLETE_CONFIRMED": "Every attempt, send, usage and stop published; returned status and matching evidence-index hash held. Independent of the experiment result.",
+      "EVIDENCE_INCOMPLETE": "Partial, unconfirmed or missing publication or REPORT. Never reported complete, even if the answer looks successful."
+    },
+    "delivered": [
+      "YES",
+      "NO",
+      "UNKNOWN"
+    ],
+    "usage": {
+      "VALID": "Built-in non-negative integers within bound, independently established for this request.",
+      "VALID_OVER_BOUND": "Independently established but exceeding the cap or bound.",
+      "MISSING": "Absent.",
+      "MALFORMED": "Present but not a built-in non-negative integer.",
+      "UNKNOWN": "No response, or delivery unknown.",
+      "UNTRUSTED": "Response rejected as a whole; usage not independently established.",
+      "NONE": "Not dispatched, or not a token-billed request."
+    },
+    "treatments": {
+      "NO_DISPATCH_THIS_ATTEMPT": "This attempt sent nothing for the entry and took no new hold. Never releases, refunds or alters any other attempt's or run's hold.",
+      "SETTLE_ACTUAL": "Approved request with VALID usage; settle at the bound rate.",
+      "RETAIN_FULL_RESERVATION": "Approved request delivered or possibly delivered with usage not VALID; the full reservation stays charged as potentially billed.",
+      "RECORD_UNCLAMPED_OVERRUN": "VALID_OVER_BOUND usage recorded exactly; abort latched.",
+      "RECORD_UNRESERVED_ACTUAL": "Unapproved delivered request with known usage; recorded as its own unreserved exposure, never covered by another reservation and never authorized.",
+      "RECORD_UNRESERVED_EXPOSURE": "Unapproved delivered model request with unknown usage; recorded as unknown, unbounded-by-reservation exposure.",
+      "INFRASTRUCTURE_ALLOWANCE": "Non-model request (storage, logs); recorded against the infrastructure allowance, not a model reservation."
+    },
+    "reservation_coverage": [
+      "WITHIN_RESERVATIONS",
+      "VIOLATED",
+      "NO_NEW_EXPOSURE"
+    ],
+    "ceiling_status": [
+      "WITHIN_APPROVED_CEILING",
+      "NOT_ESTABLISHED",
+      "NO_NEW_EXPOSURE"
+    ],
+    "prohibited": [
+      "PARENT_INVOKE",
+      "ROUTE",
+      "INDEX_READ",
+      "DESERIALIZE",
+      "EMBED",
+      "SEARCH",
+      "GENERATE",
+      "SUMMARIZE",
+      "RETRY",
+      "REPLACEMENT_REQUEST",
+      "RERUN",
+      "ALTERNATE_SNAPSHOT",
+      "INDEX_REBUILD",
+      "REPAIR_INPUT",
+      "PROMPT_TUNING",
+      "CHANGE_K_OR_QUERY",
+      "MEMORY_OR_TIMEOUT_INCREASE",
+      "CLAMP_USAGE",
+      "REPORT_EVIDENCE_COMPLETE",
+      "RELEASE_PRIOR_HOLD",
+      "DELETE_PRIOR_CLAIM"
+    ],
+    "claims": [
+      "EVIDENCE_COMPLETE",
+      "EVIDENCE_COMPLETE_FOR_PRIOR_RUN",
+      "RAG_SUCCESS",
+      "ACCOUNTING_SUCCESS",
+      "ANSWER_CORRECT",
+      "CITATIONS_VALIDATED",
+      "SEMANTIC_ALIGNMENT",
+      "QUALITY_QUALIFIED",
+      "JEV_READY",
+      "RELEASE_PERMITTED",
+      "REQUEST_CANCELLED",
+      "NOT_BILLED",
+      "MEMORY_SUFFICIENT",
+      "PRIOR_HOLD_RELEASED",
+      "SENDS_AUTHORIZED",
+      "CEILING_HELD"
+    ]
+  },
+  "invented_baseline": {
+    "question": "What was invented-bank's total net revenue for fiscal year 2099?",
+    "source_allowlist": [
+      "s3://invented-bucket/docs/invented-bank-a.pdf",
+      "s3://invented-bucket/docs/invented-bank-b.pdf",
+      "s3://invented-bucket/docs/invented-bank-c.pdf"
+    ],
+    "expected_source": "s3://invented-bucket/docs/invented-bank-a.pdf",
+    "objects": {
+      "index": {
+        "owner": "000000000000",
+        "bucket": "invented-bucket",
+        "key": "index/index",
+        "etag": "\"invented-etag-index\"",
+        "version_id": "invented-version-index",
+        "size_bytes": 4096,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "metadata": {
+        "owner": "000000000000",
+        "bucket": "invented-bucket",
+        "key": "index/metadata",
+        "etag": "\"invented-etag-metadata\"",
+        "version_id": "invented-version-metadata",
+        "size_bytes": 2048,
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    "index": {
+      "class": "IndexFlatIP",
+      "metric": "INNER_PRODUCT",
+      "dimension": 1024,
+      "ntotal": 12
+    },
+    "metadata_rows": 12,
+    "k": 5,
+    "caps": {
+      "routing_output_tokens": 100,
+      "generation_output_tokens": 200,
+      "titan_input_tokens": 100
+    },
+    "reservation_units": {
+      "ROUTE": "3.000000",
+      "EMBED": "1.000000",
+      "GENERATE": "5.000000",
+      "task_total": "9.000000",
+      "infrastructure_allowance": "0.100000"
+    }
+  },
+  "scenarios": [
+    {
+      "id": "S01-structural-pass",
+      "clauses": [
+        "AC-01",
+        "AC-07",
+        "AC-09",
+        "AC-11"
+      ],
+      "phase": "P2",
+      "given": "Route qa (0.92) with valid usage; both objects pass AC-03; valid 1024 unit vector with valid usage; five distinct in-range hits, finite non-increasing scores, two from expected_source; nonempty non-abstaining answer (operator-classified); all usage valid within caps; one send per request; evidence published and confirmed (returned status plus matching index hash).",
+      "experiment_outcome": "PASS_STRUCTURAL",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": null,
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "RETRY",
+        "RERUN",
+        "SUMMARIZE"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "ANSWER_CORRECT",
+        "CITATIONS_VALIDATED",
+        "SEMANTIC_ALIGNMENT",
+        "QUALITY_QUALIFIED",
+        "JEV_READY",
+        "RELEASE_PERMITTED"
+      ]
+    },
+    {
+      "id": "S02-missing-approved-cap",
+      "clauses": [
+        "AC-07",
+        "AC-13"
+      ],
+      "phase": "P0",
+      "given": "The generation output cap is absent from the approved binding (only a proposed value exists).",
+      "experiment_outcome": "STOP_BEFORE_DISPATCH",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "PARENT_INVOKE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "PARENT_INVOKE",
+        "ROUTE",
+        "EMBED",
+        "GENERATE"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "NO_NEW_EXPOSURE",
+      "ceiling_status": "NO_NEW_EXPOSURE",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S03-worst-case-sufficiency",
+      "clauses": [
+        "AC-07"
+      ],
+      "phase": "P0",
+      "given": "Worst-case reservations for every approved inner attempt sum to 9.000000 units plus a 0.100000 infrastructure allowance; the approved task ceiling is 9.000000. Per-attempt checks inside the function would not cure this.",
+      "experiment_outcome": "STOP_BEFORE_DISPATCH",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "PARENT_INVOKE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "PARENT_INVOKE"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "NO_NEW_EXPOSURE",
+      "ceiling_status": "NO_NEW_EXPOSURE",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S04-parent-client-retries",
+      "clauses": [
+        "AC-01"
+      ],
+      "phase": "P0",
+      "given": "The operator's resolved parent invocation client shows total attempts 2 (or a retry mode allowing resends). A zero-retry observation from an earlier dry run is offered instead.",
+      "experiment_outcome": "STOP_BEFORE_DISPATCH",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "PARENT_INVOKE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "PARENT_INVOKE"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "NO_NEW_EXPOSURE",
+      "ceiling_status": "NO_NEW_EXPOSURE",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S05-duplicate-run-claim",
+      "clauses": [
+        "AC-08",
+        "AC-01",
+        "AC-07"
+      ],
+      "phase": "P0",
+      "given": "An exclusive claim for the same bound plan exists from an earlier crashed run whose parent Invoke outcome is unknown and which holds 9.000000 units. A new attempt is refused before dispatch.",
+      "experiment_outcome": "STOP_BEFORE_DISPATCH",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "PARENT_INVOKE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "PARENT_INVOKE",
+        "RERUN",
+        "REPLACEMENT_REQUEST",
+        "RELEASE_PRIOR_HOLD",
+        "DELETE_PRIOR_CLAIM"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "NO_NEW_EXPOSURE",
+      "ceiling_status": "NO_NEW_EXPOSURE",
+      "claims_not_permitted": [
+        "NOT_BILLED",
+        "PRIOR_HOLD_RELEASED",
+        "EVIDENCE_COMPLETE_FOR_PRIOR_RUN"
+      ],
+      "prior_run": {
+        "claim": "PRESERVED",
+        "attempt_records": "PRESERVED",
+        "holds_units": {
+          "ROUTE": "3.000000",
+          "EMBED": "1.000000",
+          "GENERATE": "5.000000",
+          "task_total": "9.000000"
+        },
+        "post_state": "UNCHANGED"
+      }
+    },
+    {
+      "id": "S06-router-invoke-error",
+      "clauses": [
+        "AC-02",
+        "AC-07",
+        "AC-12"
+      ],
+      "phase": "P1",
+      "given": "The routing request was sent; a transport error follows; no response or usage. Production code would fall back to qa.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "ROUTE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "INDEX_READ",
+        "EMBED",
+        "GENERATE",
+        "SUMMARIZE",
+        "RETRY",
+        "REPLACEMENT_REQUEST"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "UNKNOWN",
+          "usage": "UNKNOWN",
+          "treatment": "RETAIN_FULL_RESERVATION"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "NOT_BILLED",
+        "REQUEST_CANCELLED",
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S07-router-parse-failure",
+      "clauses": [
+        "AC-02",
+        "AC-07"
+      ],
+      "phase": "P1",
+      "given": "The routing response envelope is valid with independently valid usage; only its text is not the expected JSON object.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "ROUTE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "INDEX_READ",
+        "EMBED",
+        "GENERATE",
+        "SUMMARIZE",
+        "RETRY"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S08-router-low-confidence",
+      "clauses": [
+        "AC-02"
+      ],
+      "phase": "P1",
+      "given": "Route qa with confidence 0.55 (below 0.6); valid usage.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "ROUTE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "INDEX_READ",
+        "EMBED",
+        "GENERATE",
+        "RETRY"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S09-misroute-summarize",
+      "clauses": [
+        "AC-02",
+        "AC-13"
+      ],
+      "phase": "P1",
+      "given": "Route summarize with confidence 0.95; valid usage.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "ROUTE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "SUMMARIZE",
+        "INDEX_READ",
+        "EMBED",
+        "GENERATE",
+        "RETRY"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S10-second-send-blocked-before-delivery",
+      "clauses": [
+        "AC-01",
+        "AC-07"
+      ],
+      "phase": "P1",
+      "given": "The first routing send was delivered and failed with a retryable error and no usage; the SDK attempted a second send, which the send gate blocked before delivery.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "ROUTE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "INDEX_READ",
+        "EMBED",
+        "GENERATE",
+        "RETRY"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "UNKNOWN",
+          "treatment": "RETAIN_FULL_RESERVATION"
+        },
+        {
+          "request": "route-2-blocked",
+          "stage": "ROUTE",
+          "approved": false,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "NOT_BILLED",
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S11-index-hash-mismatch",
+      "clauses": [
+        "AC-03"
+      ],
+      "phase": "P1",
+      "given": "Conditional request and response identity match; index bytes have the exact approved size but a SHA-256 differing in one byte.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "DESERIALIZE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "DESERIALIZE",
+        "EMBED",
+        "GENERATE",
+        "ALTERNATE_SNAPSHOT",
+        "INDEX_REBUILD",
+        "REPAIR_INPUT",
+        "RETRY"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S12-metadata-duplicate-key-or-nonfinite",
+      "clauses": [
+        "AC-03"
+      ],
+      "phase": "P1",
+      "given": "Both objects pass identity, size and hash; strict metadata parse finds a duplicate key in one row, or a NaN literal.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "DESERIALIZE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "DESERIALIZE",
+        "EMBED",
+        "GENERATE",
+        "REPAIR_INPUT"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S13-metadata-source-outside-allowlist",
+      "clauses": [
+        "AC-03",
+        "AC-06"
+      ],
+      "phase": "P1",
+      "given": "Identity, size and hash pass; one metadata row names s3://invented-bucket/private/invented-memo.pdf.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "DESERIALIZE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "DESERIALIZE",
+        "EMBED",
+        "GENERATE"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S14-precondition-failed-or-ambiguous-read",
+      "clauses": [
+        "AC-03",
+        "AC-01"
+      ],
+      "phase": "P1",
+      "given": "The conditional index read fails its IfMatch precondition (object changed), or times out with unknown completion.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "INDEX_READ",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "DESERIALIZE",
+        "EMBED",
+        "GENERATE",
+        "RETRY",
+        "ALTERNATE_SNAPSHOT"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S15-index-structure-mismatch",
+      "clauses": [
+        "AC-04"
+      ],
+      "phase": "P1",
+      "given": "Deserialized index reports dimension 768, or ntotal 11 against 12 metadata rows.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "EMBED",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "EMBED",
+        "SEARCH",
+        "GENERATE",
+        "INDEX_REBUILD"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S16-embedding-wrong-length",
+      "clauses": [
+        "AC-05"
+      ],
+      "phase": "P1",
+      "given": "Embedding response has 1023 values; its usage field is present and independently valid (5 tokens, within bound).",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "SEARCH",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "SEARCH",
+        "GENERATE",
+        "RETRY"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S17-embedding-nonfinite",
+      "clauses": [
+        "AC-05",
+        "AC-07"
+      ],
+      "phase": "P1",
+      "given": "The embedding response body contains a NaN token at position 7, so strict parsing rejects the whole body; no independently trustworthy usage can be established.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "SEARCH",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "SEARCH",
+        "GENERATE"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "UNTRUSTED",
+          "treatment": "RETAIN_FULL_RESERVATION"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS",
+        "NOT_BILLED"
+      ]
+    },
+    {
+      "id": "S18-embedding-not-normalized",
+      "clauses": [
+        "AC-05"
+      ],
+      "phase": "P1",
+      "given": "1024 finite values with L2 norm 0.5 although normalization was requested; usage present and independently valid.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "SEARCH",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "SEARCH",
+        "GENERATE"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S19-embedding-usage-missing-or-malformed",
+      "clauses": [
+        "AC-05",
+        "AC-07"
+      ],
+      "phase": "P1",
+      "given": "Valid 1024 unit vector, but the input-token usage is absent, or -1, or 5.0, or true, or a string.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "SEARCH",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "SEARCH",
+        "GENERATE"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "MISSING",
+          "treatment": "RETAIN_FULL_RESERVATION"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS",
+        "NOT_BILLED"
+      ]
+    },
+    {
+      "id": "S20-search-negative-index-wrap",
+      "clauses": [
+        "AC-06"
+      ],
+      "phase": "P1",
+      "given": "Search returns indices [3, -2, 0, 5, 1]; list indexing would silently map -2 to row 10.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "GENERATE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "GENERATE",
+        "CHANGE_K_OR_QUERY"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S21-search-sentinel-or-out-of-range",
+      "clauses": [
+        "AC-06"
+      ],
+      "phase": "P1",
+      "given": "Search returns indices [3, -1, 0, 12, 1]: a -1 sentinel and 12 equal to ntotal.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "GENERATE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "GENERATE",
+        "CHANGE_K_OR_QUERY"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S22-search-duplicate-or-nonfinite-score",
+      "clauses": [
+        "AC-06"
+      ],
+      "phase": "P1",
+      "given": "Indices [4, 4, 0, 2, 1], or scores [0.81, NaN, 0.60, 0.55, 0.50], or increasing scores [0.5, 0.9, 0.4, 0.3, 0.2].",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "GENERATE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "GENERATE"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S23-no-expected-source",
+      "clauses": [
+        "AC-06"
+      ],
+      "phase": "P1",
+      "given": "Five valid in-range hits, all from invented-bank-b and invented-bank-c; none from expected_source.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "GENERATE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "GENERATE",
+        "CHANGE_K_OR_QUERY",
+        "RETRY"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S24-empty-retrieval-confirmed-failure",
+      "clauses": [
+        "AC-06",
+        "AC-08",
+        "AC-09"
+      ],
+      "phase": "P1",
+      "given": "Search yields zero usable hits; the application path would return the no-evidence answer with HTTP 200. The stop and all prior usage are fully published and confirmed.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "GENERATE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "GENERATE"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S25-generation-unknown-outcome",
+      "clauses": [
+        "AC-07",
+        "AC-12",
+        "AC-01"
+      ],
+      "phase": "P1",
+      "given": "The generation request was delivered; the client read times out with no response.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "GENERATE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "RETRY",
+        "REPLACEMENT_REQUEST",
+        "RERUN"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "UNKNOWN",
+          "treatment": "RETAIN_FULL_RESERVATION"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "NOT_BILLED",
+        "REQUEST_CANCELLED",
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S26-generation-overrun-confirmed-failure",
+      "clauses": [
+        "AC-07",
+        "AC-08"
+      ],
+      "phase": "P2",
+      "given": "Generation usage reports 260 output tokens against the invented cap 200; answer nonempty. The overrun is recorded unclamped and all evidence is published and confirmed.",
+      "experiment_outcome": "FAIL_RECORD_ONLY",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": null,
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "CLAMP_USAGE",
+        "RETRY",
+        "RERUN"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID_OVER_BOUND",
+          "treatment": "RECORD_UNCLAMPED_OVERRUN"
+        }
+      ],
+      "reservation_coverage": "VIOLATED",
+      "ceiling_status": "NOT_ESTABLISHED",
+      "claims_not_permitted": [
+        "RAG_SUCCESS",
+        "ACCOUNTING_SUCCESS"
+      ]
+    },
+    {
+      "id": "S27-generation-usage-malformed",
+      "clauses": [
+        "AC-07",
+        "AC-09"
+      ],
+      "phase": "P2",
+      "given": "Nonempty answer, but output-token usage is -3 (or a string, or 12.5).",
+      "experiment_outcome": "FAIL_RECORD_ONLY",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": null,
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "CLAMP_USAGE",
+        "RETRY"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "MALFORMED",
+          "treatment": "RETAIN_FULL_RESERVATION"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS",
+        "NOT_BILLED"
+      ]
+    },
+    {
+      "id": "S28-http200-empty-or-operator-classified-abstention",
+      "clauses": [
+        "AC-09",
+        "AC-11"
+      ],
+      "phase": "P2",
+      "given": "Nested HTTP 200 with retrieved context; the answer is whitespace, or the operator, reviewing the privately retained answer under the approved disclosure, classifies it as a genuine abstention (recording the answer hash and classifier identity). No automatic judge.",
+      "experiment_outcome": "NOT_RAG_SUCCESS_RECORD_ONLY",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": null,
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "PROMPT_TUNING",
+        "RETRY",
+        "RERUN"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS",
+        "ANSWER_CORRECT"
+      ]
+    },
+    {
+      "id": "S29-answer-differs-from-historical-reference",
+      "clauses": [
+        "AC-11"
+      ],
+      "phase": "P2",
+      "given": "Structurally valid run with confirmed evidence; the answer states an invented figure 101,000 while the recorded historical reference is 100,000.",
+      "experiment_outcome": "PASS_STRUCTURAL",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": null,
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "PROMPT_TUNING",
+        "RETRY",
+        "RERUN"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "ANSWER_CORRECT",
+        "QUALITY_QUALIFIED",
+        "CITATIONS_VALIDATED"
+      ]
+    },
+    {
+      "id": "S30-answer-matches-historical-reference",
+      "clauses": [
+        "AC-11"
+      ],
+      "phase": "P2",
+      "given": "Structurally valid run with confirmed evidence; the answer states exactly the recorded historical figure and lists retrieved sources.",
+      "experiment_outcome": "PASS_STRUCTURAL",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": null,
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "RERUN"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "ANSWER_CORRECT",
+        "CITATIONS_VALIDATED",
+        "SEMANTIC_ALIGNMENT",
+        "QUALITY_QUALIFIED",
+        "JEV_READY",
+        "RELEASE_PERMITTED"
+      ]
+    },
+    {
+      "id": "S31-lambda-oom-or-runtime-exit",
+      "clauses": [
+        "AC-10",
+        "AC-07"
+      ],
+      "phase": "P2",
+      "given": "Invoke reports a function error; REPORT shows max memory equal to the configured size after embedding settled and with generation delivery unknown. REPORT and journal are published and confirmed.",
+      "experiment_outcome": "FAIL_RECORD_ONLY",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": null,
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "RERUN",
+        "MEMORY_OR_TIMEOUT_INCREASE",
+        "RETRY"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "UNKNOWN",
+          "usage": "UNKNOWN",
+          "treatment": "RETAIN_FULL_RESERVATION"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS",
+        "MEMORY_SUFFICIENT",
+        "NOT_BILLED"
+      ]
+    },
+    {
+      "id": "S32-memory-recorded-against-health-figures",
+      "clauses": [
+        "AC-10"
+      ],
+      "phase": "P2",
+      "given": "Structurally valid run with confirmed evidence; REPORT max memory 470 of 512 MB, init 3100 ms. The health-only figures were 155-156 MB and 2141.94 ms.",
+      "experiment_outcome": "PASS_STRUCTURAL",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": null,
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "MEMORY_OR_TIMEOUT_INCREASE",
+        "RERUN"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "MEMORY_SUFFICIENT",
+        "QUALITY_QUALIFIED"
+      ]
+    },
+    {
+      "id": "S33-lambda-report-missing",
+      "clauses": [
+        "AC-08",
+        "AC-10"
+      ],
+      "phase": "P2",
+      "given": "Invoke and nested HTTP 200 succeed and usage is valid, but the REPORT/INIT record cannot be retrieved.",
+      "experiment_outcome": "RESULT_NOT_ESTABLISHED",
+      "evidence_outcome": "EVIDENCE_INCOMPLETE",
+      "stop_at": null,
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "RERUN",
+        "REPORT_EVIDENCE_COMPLETE"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "EVIDENCE_COMPLETE",
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S34-evidence-partial-write",
+      "clauses": [
+        "AC-08"
+      ],
+      "phase": "P2",
+      "given": "The journal file is half-written when the disk fills; the evidence index either publishes without it or fails to close with parseable bytes on disk.",
+      "experiment_outcome": "RESULT_NOT_ESTABLISHED",
+      "evidence_outcome": "EVIDENCE_INCOMPLETE",
+      "stop_at": null,
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "RERUN",
+        "REPORT_EVIDENCE_COMPLETE"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "EVIDENCE_COMPLETE",
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S35-diagnostic-leak",
+      "clauses": [
+        "AC-08"
+      ],
+      "phase": "P2",
+      "given": "A generation error message embeds invented chunk text INVENTED-CHUNK-TEXT-7731 and an invented signed URL query X-Amz-Signature=invented; the sanitized stop is published and confirmed.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "GENERATE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "RETRY"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "UNKNOWN",
+          "treatment": "RETAIN_FULL_RESERVATION"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS",
+        "NOT_BILLED"
+      ],
+      "must_not_appear_in_console_or_journal": [
+        "INVENTED-CHUNK-TEXT-7731",
+        "X-Amz-Signature=invented"
+      ]
+    },
+    {
+      "id": "S36-local-abort-after-delivery",
+      "clauses": [
+        "AC-12",
+        "AC-07"
+      ],
+      "phase": "P1",
+      "given": "The operator aborts locally after the generation request was delivered and before any response arrives.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "GENERATE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "RETRY",
+        "REPLACEMENT_REQUEST",
+        "RERUN"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "UNKNOWN",
+          "treatment": "RETAIN_FULL_RESERVATION"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "REQUEST_CANCELLED",
+        "NOT_BILLED"
+      ]
+    },
+    {
+      "id": "S37-unexpected-endpoint-blocked-before-delivery",
+      "clauses": [
+        "AC-13",
+        "AC-01"
+      ],
+      "phase": "P1",
+      "given": "A request to an endpoint outside the approved set (for example the custom request-log API) is attempted; the send gate blocks it before delivery.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "GENERATE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "GENERATE",
+        "SUMMARIZE",
+        "RETRY"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "unexpected-endpoint-blocked",
+          "stage": "INFRASTRUCTURE",
+          "approved": false,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S38-parent-invoke-unknown",
+      "clauses": [
+        "AC-01",
+        "AC-07",
+        "AC-12"
+      ],
+      "phase": "P1",
+      "given": "The parent Invoke times out client-side; whether the function ran, and which inner requests it delivered, is unknown.",
+      "experiment_outcome": "RESULT_NOT_ESTABLISHED",
+      "evidence_outcome": "EVIDENCE_INCOMPLETE",
+      "stop_at": "PARENT_INVOKE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "PARENT_INVOKE",
+        "RETRY",
+        "REPLACEMENT_REQUEST",
+        "RERUN"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "UNKNOWN",
+          "usage": "UNKNOWN",
+          "treatment": "RETAIN_FULL_RESERVATION"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "UNKNOWN",
+          "usage": "UNKNOWN",
+          "treatment": "RETAIN_FULL_RESERVATION"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "UNKNOWN",
+          "usage": "UNKNOWN",
+          "treatment": "RETAIN_FULL_RESERVATION"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "NOT_ESTABLISHED",
+      "claims_not_permitted": [
+        "NOT_BILLED",
+        "REQUEST_CANCELLED",
+        "EVIDENCE_COMPLETE",
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S39-object-read-without-condition",
+      "clauses": [
+        "AC-03"
+      ],
+      "phase": "P1",
+      "given": "The index GetObject request carried no IfMatch (and no VersionId although the binding has one); the returned bytes have the exact approved size and full SHA-256. Size and hash do not cure the missing condition.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "DESERIALIZE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "DESERIALIZE",
+        "EMBED",
+        "GENERATE",
+        "RETRY"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S40-object-identity-changed",
+      "clauses": [
+        "AC-03"
+      ],
+      "phase": "P1",
+      "given": "The metadata response comes from a different bucket owner or key, or reports a different VersionId/ETag than approved, although its bytes are identical in size and SHA-256 to the approved object.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "DESERIALIZE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "DESERIALIZE",
+        "EMBED",
+        "GENERATE",
+        "ALTERNATE_SNAPSHOT"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S41-extra-routing-send-already-delivered",
+      "clauses": [
+        "AC-01",
+        "AC-07"
+      ],
+      "phase": "P2",
+      "given": "Send evidence shows two delivered routing sends. The first has unknown usage (full 3.000000 hold retained); the second returns valid usage worth 1.000000. Only one routing reservation (3.000000) was approved; recorded exposure is 4.000000.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "ROUTE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "INDEX_READ",
+        "EMBED",
+        "GENERATE",
+        "RETRY"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "UNKNOWN",
+          "treatment": "RETAIN_FULL_RESERVATION"
+        },
+        {
+          "request": "route-2-delivered",
+          "stage": "ROUTE",
+          "approved": false,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "RECORD_UNRESERVED_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "VIOLATED",
+      "ceiling_status": "NOT_ESTABLISHED",
+      "claims_not_permitted": [
+        "SENDS_AUTHORIZED",
+        "CEILING_HELD",
+        "NOT_BILLED",
+        "RAG_SUCCESS"
+      ],
+      "exposure_units": {
+        "route_reservation": "3.000000",
+        "retained_hold": "3.000000",
+        "unreserved_actual": "1.000000",
+        "recorded_total": "4.000000"
+      }
+    },
+    {
+      "id": "S42-unexpected-summarizer-delivered",
+      "clauses": [
+        "AC-01",
+        "AC-07",
+        "AC-13"
+      ],
+      "phase": "P2",
+      "given": "After a qa route, send evidence shows a summarizer model request was delivered before generation; its usage is unknown. It is not part of GENERATE.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "GENERATE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "GENERATE",
+        "SUMMARIZE",
+        "RETRY"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "summarize-1-delivered",
+          "stage": "SUMMARIZE",
+          "approved": false,
+          "delivered": "YES",
+          "usage": "UNKNOWN",
+          "treatment": "RECORD_UNRESERVED_EXPOSURE"
+        }
+      ],
+      "reservation_coverage": "VIOLATED",
+      "ceiling_status": "NOT_ESTABLISHED",
+      "claims_not_permitted": [
+        "SENDS_AUTHORIZED",
+        "CEILING_HELD",
+        "NOT_BILLED",
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S43-unexpected-infrastructure-request-delivered",
+      "clauses": [
+        "AC-07",
+        "AC-13"
+      ],
+      "phase": "P2",
+      "given": "Send evidence shows a delivered custom request-log API call (an infrastructure request, not a model request).",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "GENERATE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "GENERATE",
+        "RETRY"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "request-log-1-delivered",
+          "stage": "INFRASTRUCTURE",
+          "approved": false,
+          "delivered": "YES",
+          "usage": "NONE",
+          "treatment": "INFRASTRUCTURE_ALLOWANCE"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "NOT_ESTABLISHED",
+      "claims_not_permitted": [
+        "SENDS_AUTHORIZED",
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S44-embedding-usage-overrun",
+      "clauses": [
+        "AC-05",
+        "AC-07"
+      ],
+      "phase": "P1",
+      "given": "Valid 1024 unit vector; the input-token count is 150 against the invented Titan bound 100.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "SEARCH",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "SEARCH",
+        "GENERATE",
+        "CLAMP_USAGE"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID_OVER_BOUND",
+          "treatment": "RECORD_UNCLAMPED_OVERRUN"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "VIOLATED",
+      "ceiling_status": "NOT_ESTABLISHED",
+      "claims_not_permitted": [
+        "RAG_SUCCESS",
+        "ACCOUNTING_SUCCESS"
+      ]
+    },
+    {
+      "id": "S45-inner-client-resolved-with-retries",
+      "clauses": [
+        "AC-01"
+      ],
+      "phase": "P1",
+      "given": "Inside the function, the actually resolved inner Bedrock client shows total attempts 2 although the reviewed factory intended 1. Detected before its first request.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "ROUTE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "ROUTE",
+        "INDEX_READ",
+        "EMBED",
+        "GENERATE"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S46-answer-looks-successful-publication-unconfirmed",
+      "clauses": [
+        "AC-08",
+        "AC-09"
+      ],
+      "phase": "P2",
+      "given": "Every gate passed and a nonempty grounded-looking answer returned, but the evidence index failed to close: no returned confirmation and no matching index hash.",
+      "experiment_outcome": "RESULT_NOT_ESTABLISHED",
+      "evidence_outcome": "EVIDENCE_INCOMPLETE",
+      "stop_at": null,
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "RERUN",
+        "REPORT_EVIDENCE_COMPLETE"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "EVIDENCE_COMPLETE",
+        "RAG_SUCCESS"
+      ]
+    },
+    {
+      "id": "S47-confirmed-failed-retrieval-record",
+      "clauses": [
+        "AC-08"
+      ],
+      "phase": "P1",
+      "given": "The index SHA-256 mismatches (stop before deserialization). The claim, every attempt, usage and the stop are published; returned status and matching index hash are held. Complete evidence of a failed experiment.",
+      "experiment_outcome": "STOP_AT_STAGE",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": "DESERIALIZE",
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "DESERIALIZE",
+        "EMBED",
+        "GENERATE",
+        "RERUN"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "NO",
+          "usage": "NONE",
+          "treatment": "NO_DISPATCH_THIS_ATTEMPT"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "RAG_SUCCESS"
+      ],
+      "permitted_claims": [
+        "EVIDENCE_COMPLETE"
+      ]
+    },
+    {
+      "id": "S48-structural-success-full-evidence",
+      "clauses": [
+        "AC-08",
+        "AC-09"
+      ],
+      "phase": "P2",
+      "given": "As S01, with every journal event, the Lambda REPORT and the returned status plus matching evidence-index hash confirmed.",
+      "experiment_outcome": "PASS_STRUCTURAL",
+      "evidence_outcome": "EVIDENCE_COMPLETE_CONFIRMED",
+      "stop_at": null,
+      "dispatches_allowed_after": [],
+      "prohibited_after": [
+        "RETRY",
+        "RERUN"
+      ],
+      "accounting": [
+        {
+          "request": "route-1",
+          "stage": "ROUTE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "embed-1",
+          "stage": "EMBED",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        },
+        {
+          "request": "generate-1",
+          "stage": "GENERATE",
+          "approved": true,
+          "delivered": "YES",
+          "usage": "VALID",
+          "treatment": "SETTLE_ACTUAL"
+        }
+      ],
+      "reservation_coverage": "WITHIN_RESERVATIONS",
+      "ceiling_status": "WITHIN_APPROVED_CEILING",
+      "claims_not_permitted": [
+        "ANSWER_CORRECT",
+        "CITATIONS_VALIDATED",
+        "SEMANTIC_ALIGNMENT",
+        "QUALITY_QUALIFIED",
+        "JEV_READY",
+        "RELEASE_PERMITTED"
+      ],
+      "permitted_claims": [
+        "EVIDENCE_COMPLETE",
+        "RAG_SUCCESS"
+      ]
+    }
+  ]
+}

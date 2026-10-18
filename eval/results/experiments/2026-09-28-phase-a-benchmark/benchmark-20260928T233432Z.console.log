@@ -1,0 +1,41 @@
+ROUTER BENCHMARK - LIVE RUN: billable calls to bedrock, typesafe
+Models (pinned; a run refuses any other): Bedrock us.anthropic.claude-haiku-4-5-20251001-v1:0; TypeSafe jev-1.13.0
+
+Frozen fingerprints
+  routing dataset v2: 9d4f2da1393b3ddd42728740d5c8c08e9ccc0051edc7ae0746260cb456cc5e5d
+  Jev payload template: 54e2deaa70a529ca7eb70d5e896c6118e8a7993b228013ca3b9e53ec8f67c0c9
+  rules router: 86cea35d458a75af6456803eec068b288dab748d0d001ef89a1f43ec8b352ab9
+
+Approved questions (34 IDs)
+  strict, qa (24): L01 L02 L03 L04 L05 L06 L07 L08 L09 L10 L13 L18 N01 N02 N03 N04 N05 N06 N07 N08 N09 N10 N11 V03
+  strict, summarize (7): L12 L14 L15 N13 N14 V01 V02
+  policy 'unclear -> qa' (report-only) (1): L19
+  exploratory (report-only) (2): L17 L20
+
+Routers: haiku, rules, jev; repetitions 10; warm-up 3 per paid router; seed 20260928
+Planned calls: Bedrock 343, TypeSafe 343, local rules 340 (warm-up 6; total 1026)
+Estimated cost: Bedrock $0.1626, TypeSafe $0.0059, total $0.1685
+Hard ceilings: Bedrock $0.60 and 343 requests; TypeSafe $0.05 and 343 requests; total $1.00
+Worst-case reservation per call: Bedrock $0.322000, TypeSafe $0.002688 (if every call hit it: $110.45 / $0.92; informational only, reservations are reconciled to recorded usage after each call)
+Ceiling status: Bedrock $0.60 proposed 2026-09-28, pending final approval; TypeSafe $0.05 and total $1.00 unchanged
+Cost basis: Haiku 214 in / 52 out tokens per call (measured, baseline 6a13ffb1) at $1/$5 per 1M; Jev 410 input tokens per call (measured, verification 2026-09-28) at $0.042 per 1M; Jev output tokens reported but documented free
+Budget guarantee, bedrock: hard cap: committed spend cannot exceed the ceiling; headroom at expected cost $0.1154
+Budget guarantee, typesafe: hard cap: committed spend cannot exceed the ceiling; headroom at expected cost $0.0414
+  (assumptions: Haiku 4.5 output is at most 64000 tokens per call (RouterAgent sets no maxTokens); Haiku input is at most 2,000 tokens per call; Jev requests are at most 64,000 tokens (documented); list prices: Haiku $1/$5 per 1M; Jev $0.042 per 1M input, output free (documented); Bedrock does not bill requests rejected before inference (throttling, auth, validation, 503))
+Plan feasible: True
+Journal (per-call, crash-resistant): eval/results/experiments/benchmark-20260928T233432Z.json.journal.jsonl
+
+Execution: 1026/1026 calls; complete=True; valid=True
+  ledger bedrock: 343/343 requests, $0.165786 of $0.60; 0 charged at worst case
+  ledger typesafe: 343/343 requests, $0.005865 of $0.05; 0 charged at worst case
+
+Downstream isolation: CLEAN - QA, summarization and retrieval code: 0 calls intercepted; modules imported during the run: none; loaded in this process: none
+Live authorization: yes; real clients constructed: ['bedrock-runtime', 'typesafe']
+
+Metrics
+  Benchmark validity: VALID
+  haiku  strict majority 30/31, pooled 0.968; recall qa 23/24, summarize 7/7; fallback 0.000; infra 0.000; p95 1669.69 ms; cost $0.164365; decision mismatches 0
+  rules  strict majority 31/31, pooled 1.000; recall qa 24/24, summarize 7/7; fallback 0.000; infra 0.000; p95 0.02 ms; cost $0.000000; decision mismatches 0
+  jev    strict majority 31/31, pooled 1.000; recall qa 24/24, summarize 7/7; fallback 0.021; infra 0.000; p95 183.72 ms; cost $0.005814; decision mismatches 0
+
+Artifact written: eval/results/experiments/benchmark-20260928T233432Z.json

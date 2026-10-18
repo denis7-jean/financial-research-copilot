@@ -1,0 +1,30 @@
+# Runtime declarations reused from requirements.txt, NOT a resolved wheel lock.
+# No layer omission: the attached layer's contents have not been inspected.
+# PyMuPDF/indexing, uvicorn, model frameworks, pytest and Ruff are not required here.
+# All transitive dependencies must also appear in a supplied hash-bound wheel lock.
+fastapi==0.136.1
+mangum==0.21.0
+pydantic==2.13.3
+pydantic_core==2.46.3
+python-dotenv==1.2.2
+boto3==1.42.96
+botocore==1.42.96
+s3transfer==0.16.1
+jmespath==1.1.0
+python-dateutil==2.9.0.post0
+six==1.17.0
+urllib3==2.6.3
+faiss-cpu==1.9.0
+numpy==1.26.4
+packaging==25.0
+starlette==1.0.0
+anyio==4.13.0
+sniffio==1.3.1
+idna==3.13
+annotated-types==0.7.0
+typing_extensions==4.15.0
+python-multipart==0.0.26
+httpx==0.28.1
+httpcore==1.0.9
+h11==0.16.0
+certifi==2026.4.22

@@ -1,0 +1,17 @@
+# Archived evaluation records are stored byte-for-byte so their SHA-256 manifests stay valid.
+eval/results/baselines/*.json -text
+eval/results/baselines/*.log -text
+eval/results/experiments/**/*.json -text
+eval/results/experiments/**/*.jsonl -text
+eval/results/experiments/**/*.log -text
+
+# Current rule evidence is hash-bound as saved; prevent checkout newline rewriting.
+docs/experiments/reviewer-protocol-v2-current-rules-v1.md -text
+docs/experiments/reviewer-protocol-v2-current-rule-reconciliation.json -text
+docs/experiments/reviewer-protocol-v2-recovered-records.json -text
+docs/experiments/reviewer-protocol-v2-rule-copy-receipt.json -text
+
+docs/experiments/reviewer-protocol-v2-ledger-reconciliation-lemma.md -text
+
+# Frozen source-only test fixture; preserve the production verifier's exact pin.
+tests/fixtures/reviewer/select_pilot.py.source -text

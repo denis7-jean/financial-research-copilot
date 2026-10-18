@@ -1,0 +1,1 @@
+{"bedrock_model_id":"us.anthropic.claude-haiku-4-5-20251001-v1:0","handler":"app.lambda_handler.handler","live_eval_enabled":false,"region":"us-east-1","router_provider":"haiku","shadow_enabled":false,"target_python":"3.11"}

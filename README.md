@@ -1,225 +1,243 @@
 # Financial Research Multi-Agent Copilot
 
-A production-grade agentic AI system built on AWS that answers questions
-and generates summaries from FY2025 SEC 10-K filings using a router-based
-multi-agent architecture.
+A financial-document research application built with FastAPI, Amazon Bedrock,
+S3 and FAISS. It routes questions to retrieval-backed QA or a summarization
+agent, using a five-company corpus labelled as FY2025 10-K filings.
 
-**Deployment:** Live on AWS Lambda (endpoint available on request)
+**Upgrade status:** the agreed three-item Upgrade scope is complete. The repaired
+artifact was deployed to an isolated Lambda function and published as **Version 1**.
+A single qualified, end-to-end RAG smoke returned successfully, retrieved **five
+JPMorgan hits**, and produced a non-abstaining answer supported by the bound test
+corpus. See the [completion note](docs/experiments/upgrade-completion.md).
 
----
+**Haiku remains the default.** This isolated smoke does not establish Jev
+qualification, Jev application live/shadow operation, production rollout or
+general performance. Production routing was not changed. The ordinary HTTP
+application and the isolated smoke handler are separate entry points.
 
 ## What This Demonstrates
 
-- **Multi-agent orchestration** — RouterAgent classifies intent and dispatches to specialized agents
-- **Manual RAG pipeline** — PDF extraction → chunking → Titan Embeddings V2 → FAISS vector search → Claude generation, all via pure boto3
-- **Production CI/CD** — 5-job GitHub Actions pipeline with an LLM-as-Judge eval gate enforcing 80% quality threshold
-- **Serverless deployment** — FastAPI + Mangum on AWS Lambda with Function URL
-- **Observability** — UUID trace_id threaded through every layer, structured JSON logs queryable in CloudWatch Logs Insights
-
----
+- **Agent orchestration:** intent routing to QA or summarization.
+- **Manual RAG:** PDF extraction, chunking, Titan embeddings, FAISS search and
+  Haiku answer generation through boto3.
+- **Explicit experimental controls:** isolated smoke inputs, object integrity,
+  request budgets, one-use claims and no-retry gates.
+- **Serverless application:** FastAPI through Mangum, plus a dedicated isolated
+  smoke handler on Lambda.
+- **Observability and evaluation:** structured timings, token accounting,
+  guarded offline tests and separately authorized live evaluation tools.
 
 ## Architecture
 
-```
-User Query
-↓
-FastAPI (/ask or /summarize)          ← Mangum ASGI adapter on AWS Lambda
-↓
-CopilotOrchestrator
-↓
-RouterAgent (Claude Haiku 4.5)        ← classifies: "qa" or "summarize"
-↓                    ↓
-QAAgent              SummarizerAgent
-↓
-retriever.py                          ← FAISS similarity search
-↓
-bedrock_client.py                     ← Claude Haiku 4.5 via Converse API
-↓
-Pydantic validated response + trace_id
-```
-
-**RAG Pipeline (one-time indexing):**
-
-```
-5 x FY2025 SEC 10-K PDFs (S3)
-↓ PyMuPDF extraction
-↓ 500-word chunks
-↓ Titan Embeddings V2 (1024 dims)
-↓ FAISS IndexFlatIP
-→ 2,220 vectors stored on S3
+```text
+FastAPI /ask -> CopilotOrchestrator -> RouterAgent (Haiku by default)
+                                      | qa                 | summarize
+                                      v                    v
+                                   QAAgent           SummarizerAgent
+                                      |              direct generation
+                         S3 index + metadata               (no retrieval)
+                                      |
+                         Titan query embedding (1024 dimensions)
+                                      |
+                         FAISS IndexFlatIP top-5 search
+                                      |
+                         Haiku generation from retrieved context
+                                      |
+                         Answer, citations and response metadata
 ```
 
----
+`/summarize` bypasses intent routing. The separate
+`app.rag_smoke_handler.handler` uses the reviewed, bounded smoke path; it is not
+an HTTP endpoint or a switch that enables Jev in the application.
+
+The indexing utility extracts PDFs into 500-word chunks with 50-word overlap,
+embeds them with Titan Embeddings V2 and writes an index and metadata to S3.
+The accepted test snapshot has 2,220 vectors. Index construction is a separate,
+billable operation, not a prerequisite to rerun for an existing snapshot.
 
 ## Tech Stack
 
-| Component | Technology |
+| Component | Implementation |
 |---|---|
-| LLM | Claude Haiku 4.5 (main), Claude Sonnet 4.6 (eval judge) |
-| Embeddings | Amazon Titan Embeddings V2 |
-| Vector store | FAISS IndexFlatIP (manual, $0/month) |
-| API framework | FastAPI + Mangum |
-| Deployment | AWS Lambda + Function URL |
-| Storage | Amazon S3 |
-| LLM API | Amazon Bedrock (pure boto3, no wrappers) |
-| CI/CD | GitHub Actions (5-job pipeline) |
-| Eval | Custom LLM-as-Judge (RAGAS-inspired) |
-| Linting | Ruff |
+| Routing and generation | Claude Haiku 4.5 through Amazon Bedrock Converse |
+| Query embeddings | Amazon Titan Embeddings V2 |
+| Retrieval | FAISS IndexFlatIP with S3-backed index and metadata |
+| API | FastAPI, Pydantic and Mangum |
+| Runtime | Local Python application; isolated Lambda ZIP deployment |
+| Testing | pytest, offline network guards and synthetic fixtures |
+| CI | Offline packaging checks, lint and guarded regressions |
 
-**Hard constraints (no exceptions):**
-- Pure boto3 for all Bedrock calls — no LangChain, no Anthropic SDK, no OpenAI SDK
-- No Docker, no provisioned concurrency, no managed vector stores
-- requirements.txt only — no pyproject.toml
+The repository also contains an experimental Jev adapter and evaluation tools.
+The application accepts only an injected mock Jev transport; shadow routing is
+disabled. These implementation seams are not live Jev qualification.
 
----
+## Deployment and Observed RAG Result
 
-## Eval Results
+The repaired, self-contained Linux/Python 3.11 artifact uses the explicit smoke
+handler. Its published **Version 1** received one qualified
+`RequestResponse`/`Tail` Invoke: HTTP 200, executed version 1, no function error,
+and a structural-success result.
 
-Evaluated against 20 queries across 5 categories using Claude Sonnet 4.6 as judge:
+| Bound test-corpus question | Observed result |
+|---|---|
+| JPMorgan Chase total net revenue for fiscal year 2025 | Five of five JPMorgan hits; answer **$182.447 billion**, comprising $87.004 billion noninterest revenue and $95.443 billion net interest income |
 
-| Metric | Score | Threshold |
-|---|---|---|
-| Context Relevance | 80% | 80% ✅ |
-| Faithfulness | 90% | 80% ✅ |
-| Mean Context Relevance | 3.8 / 5 | — |
-| Mean Faithfulness | 4.8 / 5 | — |
+The answer's year, metric, units and arithmetic were independently reviewed
+against the **bound test corpus**. These are not independently verified SEC
+facts. The retained response has retrieval source/score pairs, but no exact
+chunk IDs, passage text or generation prompt; exact retrieved-passage attribution
+and answer-to-actual-context grounding remain unestablished.
 
-Eval gate runs automatically on every push to main via GitHub Actions.
+The sample recorded one parent Invoke, five inner calls and three model
+inferences, with no recorded retry or extra request. **USD 0.00625386 is sample
+model accounting**, not total task, infrastructure or AWS invoice cost. The
+retained reservation is not an enforceable billing cap and was not released.
 
----
+This was one isolated request, not a benchmark or production release. Earlier
+ordinary-function observations describe older builds; they are not evidence
+that this branch was rolled out to production. No current public endpoint or
+production configuration was checked during this documentation update.
 
-## CI/CD Pipeline
+## Local Setup
 
+The current offline CI uses Python **3.13.12** for development regressions.
+The deployed smoke artifact uses Python **3.11** and a separately reviewed Linux
+dependency closure. `requirements.txt` describes the development environment;
+it is not a recipe for reproducing that deployed artifact.
+
+From a checkout, create the virtual environment:
+
+```bash
+python -m venv .venv
 ```
-lint → unit-tests → integration-tests → eval-gate → deploy-ready
+
+Then activate it and install dependencies using the block for your platform.
+The activated `python` installs into `.venv`.
+
+**Windows PowerShell:**
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-- **lint** — Ruff checks app/, eval/, tests/
-- **unit-tests** — pytest, no AWS calls
-- **integration-tests** — live uvicorn, /health + /ask smoke test
-- **eval-gate** — 20-query LLM-as-Judge eval, fails build if below 80%
-- **deploy-ready** — confirms all gates passed
+**Linux/macOS (bash):**
 
----
+```bash
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+```
+
+With `.venv` activated, use
+[`.env.example`](.env.example) as the configuration template. Set the region,
+model and S3 index/metadata keys for your own authorized environment. Keep real
+credentials outside Git. `COPILOT_ROUTER_PROVIDER=haiku` preserves the default;
+`COPILOT_CW_REQUEST_LOG=false` disables the optional custom request log.
+
+For an authorized AWS-backed local session:
+
+```bash
+uvicorn app.main:app --reload --port 8000
+```
+
+QA, summarization and indexing use AWS services and may incur charges. They are
+not offline demos. This README does not authorize running retained smoke or
+deployment commands; their one-use permissions are consumed.
+
+### Offline checks
+
+```bash
+python -B -m pytest tests/ -m "not llm and not integration" -k "not test_accepted_population_regression" -q
+```
+
+This is the guarded regression selection used by offline CI. The root
+`conftest.py` and `tests/offline_guard.py` install fake test credentials, disable
+dotenv loading and block outbound service traffic. Live tests require explicit
+opt-in and separate authorization. Do not run billable checks as a substitute
+for offline tests.
 
 ## API Usage
 
-**Health check:**
-```bash
-curl https://<lambda-url>.lambda-url.us-east-1.on.aws/health
-```
+These examples address the local server:
 
-**Ask a question (RAG):**
 ```bash
-curl -X POST https://<lambda-url>.lambda-url.us-east-1.on.aws/ask \
+curl http://localhost:8000/health
+
+curl -X POST http://localhost:8000/ask \
   -H "Content-Type: application/json" \
   -d '{"query": "What was JPMorgan net revenue in FY2025?"}'
-```
 
-**Summarize:**
-```bash
-curl -X POST https://<lambda-url>.lambda-url.us-east-1.on.aws/summarize \
+curl -X POST http://localhost:8000/summarize \
   -H "Content-Type: application/json" \
   -d '{"query": "Summarize Goldman Sachs key risks in 2025"}'
 ```
 
-**Example response:**
-```json
-{
-  "task_type": "qa",
-  "router_confidence": 0.95,
-  "result": {
-    "answer": "JPMorgan Chase total net revenue for FY2025 was $182.447 billion...",
-    "confidence": 1.0,
-    "agent": "qa",
-    "latency_ms": 2736.9
-  },
-  "agent_used": "qa",
-  "total_latency_ms": 3630.0,
-  "trace_id": "c48be98d-c164-40bd-99cd-a0d30dfc0e78"
-}
-```
+`/ask` returns the selected task, router confidence, agent result, timings and
+trace ID. Ordinary routing can fall back to QA; the isolated smoke instead
+stops on routing errors or fallback. An ordinary empty retrieval or abstention
+can return HTTP 200, so HTTP status alone does not establish answer success.
+Infrastructure/model failures use classified error responses.
 
----
+`/evaluate` is disabled by default. Enabling it requires both
+`ENABLE_EVALUATE_ENDPOINT=true` and a non-empty `EVALUATE_ENDPOINT_TOKEN`, checked
+through `X-Evaluate-Token`. `/ask` and `/summarize` do not provide authentication,
+and the app permits CORS from any origin; public exposure needs separate review.
 
-## Data Sources
+## Evaluation and CI
 
-Five FY2025 SEC 10-K filings stored in S3:
+The [evaluation guide](eval/README.md) describes the 34-case harness, label-based
+gate populations, historical results and report-only retrieval metrics. Archived
+evaluations and exploratory routing experiments have their own scopes; they do
+not establish held-out Jev qualification or broad answer quality.
 
-- JPMorgan Chase
-- Goldman Sachs
-- Bank of America
-- BlackRock
-- Mastercard
+[GitHub Actions](.github/workflows/eval-ci.yml) currently has two offline jobs:
+synthetic packaging-contract checks, and guarded lint/regressions plus a
+synthetic comparison smoke. It does **not** automatically invoke models, run the
+live evaluation gate or deploy Lambda resources. Live evaluation remains a
+separate, explicitly authorized operation.
 
----
+## Observability
 
-## Known Limitations
+The ordinary API emits structured `request.timing` records with trace IDs, stage
+latencies, model usage, router outcomes and classified failures. Query text is
+excluded from this timing record; its shortened digest is pseudonymous, not
+anonymous. The optional custom CloudWatch request log is enabled by default.
 
-- **Mastercard FAISS retrieval** — cross-company vector confusion; Mastercard queries occasionally return JPMorgan/Goldman chunks due to overlapping financial terminology in the shared index
-- **Summarizer context** — SummarizerAgent makes direct Converse API calls without RAG retrieval; it does not ground responses in the 10-K documents
+The isolated smoke retains bounded private responses and request/accounting
+records. Its Tail/REPORT measurements are same-response, unauthenticated
+telemetry, not a complete execution log, process-tree audit or latency baseline.
 
----
+## Data Sources and Limitations
 
-## Local Setup
+The bound corpus covers JPMorgan Chase, Goldman Sachs, Bank of America,
+BlackRock and Visa. Mastercard is not covered. The
+[Visa migration runbook](docs/runbooks/visa-source-migration.md) records the
+historical metadata-source rename; no new migration or cleanup is implied.
 
-```bash
-# Clone
-git clone https://github.com/denis7-jean/financial-research-copilot.git
-cd financial-research-copilot
-
-# Environment
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1   # Windows
-pip install -r requirements.txt
-
-# Configure
-cp .env.example .env
-# Add your AWS credentials and config to .env
-
-# Run locally
-uvicorn app.main:app --reload --port 8000
-```
-
-**Required `.env` keys:**
-```
-AWS_ACCESS_KEY_ID=
-AWS_SECRET_ACCESS_KEY=
-AWS_DEFAULT_REGION=us-east-1
-BEDROCK_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
-JUDGE_MODEL_ID=us.anthropic.claude-sonnet-4-6
-S3_BUCKET_NAME=financial-copilot-hl
-FAISS_INDEX_S3_KEY=index/financial_index.faiss
-FAISS_META_S3_KEY=index/financial_meta.json
-```
-
----
+- Retrieval searches a shared index without company filtering.
+- Summarization uses direct generation and is not grounded in retrieved filings.
+- Source citations do not by themselves validate every answer claim.
+- Index structure and metadata row consistency do not prove semantic
+  vector-to-passage alignment.
+- The accepted smoke demonstrates this isolated deployed path once; it does not
+  establish general Lambda compatibility, production rollout or Jev readiness.
+- Lambda packaging needs target-specific, verified wheels. The offline
+  `scripts/package_lambda.ps1` wrapper requires explicit target/lock/allocation
+  inputs; it does not download dependencies or deploy. Development requirements
+  retain different FAISS/NumPy pins from the accepted smoke artifact.
 
 ## Project Structure
 
+```text
+app/main.py                     FastAPI endpoints
+app/lambda_handler.py           Mangum adapter for the ordinary API
+app/rag_smoke_handler.py         Isolated, opt-in smoke entry
+app/agents/                     Routing, QA and summarization
+app/services/                   Retrieval, generation, indexing and smoke controls
+eval/                           Evaluation harness, metrics and archived results
+experiments/                    Isolated routing and qualification tooling
+tests/                          Guarded offline tests and synthetic fixtures
+scripts/                        Packaging, preflight and gated operational tools
+docs/experiments/                Design, acceptance contracts and completion note
+docs/runbooks/                   Operational history and procedures
 ```
-app/
-├── main.py                  ← FastAPI app + CloudWatch logging
-├── lambda_handler.py        ← Mangum ASGI adapter for Lambda
-├── agents/
-│   ├── orchestrator.py      ← CopilotOrchestrator
-│   ├── router.py            ← RouterAgent (intent classification)
-│   ├── qa_agent.py          ← QAAgent (RAG-grounded answers)
-│   └── summarizer_agent.py  ← SummarizerAgent
-└── services/
-    ├── build_index.py       ← One-time PDF → FAISS indexing pipeline
-    ├── retriever.py         ← FAISS similarity search
-    └── bedrock_client.py    ← RAG generation via Bedrock
-
-eval/
-├── llm_judge.py             ← LLM-as-Judge evaluation pipeline
-├── eval_queries.py          ← 20 test queries + boundary cases
-└── test_llm_judge.py        ← pytest wrapper for CI eval gate
-
-.github/workflows/
-└── eval-ci.yml              ← 5-job CI/CD pipeline
-```
-
----
-
-*Built as a portfolio project demonstrating production agentic AI engineering on AWS.*
